@@ -1,3 +1,6 @@
+2005.147: version 3.7
+	- Fix a few small typos.
+
 2005.108:
 	- Printing of stream and gap lists will now report when stream
 	checking is not enabled on the server if a verbose option is used.
