@@ -870,7 +870,7 @@ static void
 usage (void)
 {
   fprintf (stderr, "%s version %s\n\n", PACKAGE, VERSION);
-  fprintf (stderr, "Usage: %s [options] [host][:port]\n\n", PACKAGE);
+  fprintf (stderr, "Usage: %s [options] [host][:][port]\n\n", PACKAGE);
   fprintf (stderr,
 	   " ## General program options ##\n"
 	   " -V              report program version\n"
