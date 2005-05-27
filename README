@@ -18,8 +18,7 @@ In most environments a simple 'make' will compile the program.
 Using GCC under Linux or Solaris, running 'make static' will compile a
 static version if the appropriate libraries are present.
  
-To use a compiler other than GCC 'src/Makefile' and 'libslink/Makefile'
-need to be modfied, comments are included in the Makefiles.
+GCC can be explicitly used by running 'make gcc'.
 
 SunOS/Solaris:
  
