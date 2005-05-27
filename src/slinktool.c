@@ -24,7 +24,7 @@
 #include "archive.h"
 
 #define PACKAGE   "slinktool"
-#define VERSION   "3.7pre1"
+#define VERSION   "3.7"
 
 /* Idle archive stream timeout */ 
 #define  IDLE_ARCH_STREAM_TIMEOUT  120
@@ -869,7 +869,8 @@ term_handler (int sig)
 static void
 usage (void)
 {
-  fprintf (stderr, "\nUsage: %s [options] [host][:port]\n\n", PACKAGE);
+  fprintf (stderr, "%s version %s\n\n", PACKAGE, VERSION);
+  fprintf (stderr, "Usage: %s [options] [host][:port]\n\n", PACKAGE);
   fprintf (stderr,
 	   " ## General program options ##\n"
 	   " -V              report program version\n"
