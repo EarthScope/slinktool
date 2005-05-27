@@ -9,7 +9,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2005.103
+ * modified 2005.147
  ***************************************************************************/
 
 #include <stdio.h>
@@ -106,15 +106,15 @@ main (int argc, char **argv)
       sl_log (2, 0, "parameter processing failed.\n");
       return -1;
     }
-
+  
   /* Print important parameters if verbose enough */
   if ( verbose >= 3 )
     report_environ ();
   
-  /* Do a ping only if requestecd */
+  /* Only do a ping if requested */
   if ( pingonly )
     exit (ping_server (slconn));
-
+  
   /* Loop with the connection manager */
   while ( sl_collect (slconn, &slpack) )
     {
@@ -579,7 +579,7 @@ parameter_proc (int argcount, char **argvec)
 	}
       
       timeptr = timelist;
-
+      
       if (strlen (timeptr->element) == 0)
 	{
 	  sl_log (2, 0, "time window must specify a begin time\n");
@@ -587,7 +587,7 @@ parameter_proc (int argcount, char **argvec)
 	}
 
       slconn->begin_time = strdup (timeptr->element);
-
+      
       timeptr = timeptr->next;
 
       if (timeptr != 0)
