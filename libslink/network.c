@@ -258,9 +258,8 @@ sl_negotiate_uni (SLCD * slconn)
  * If 'curstream->selectors' != 0 then the string is parsed on space
  * and each selector is sent.
  *
- * If 'curstream->seqnum' != -1 and the SLCD 'resume' flag is true then data
- * is requested starting at
- * seqnum.
+ * If 'curstream->seqnum' != -1 and the SLCD 'resume' flag is true
+ * then data is requested starting at seqnum.
  *
  * Returns -1 on errors, otherwise returns the link descriptor.
  ***************************************************************************/

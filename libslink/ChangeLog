@@ -1,3 +1,11 @@
+2005.342: version 1.6rc1
+	- Test for NULL pointers int logging.c routines and handle
+	them as best as possible.
+	- Add 'b' to the mode of all fopen() calls; WIN32 then does
+	not try to translate line endings.
+	- Add createlinks.sh in doc directory to re-create symbolic
+	links after CVS checkout.
+
 2005.103: version 1.5
 	- Fixup some in-line comments.
 	- Add an SLP_PACKED defined to __attribute__ ((packed))

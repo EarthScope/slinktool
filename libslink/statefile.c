@@ -34,7 +34,7 @@ sl_savestate (SLCD * slconn, const char *statefile)
   curstream = slconn->streams;
 
   /* Open the state file */
-  if ((statefp = fopen (statefile, "w")) == NULL)
+  if ((statefp = fopen (statefile, "wb")) == NULL)
     {
       sl_log_r (slconn, 2, 0, "cannot open state file for writing\n");
       return -1;
@@ -91,7 +91,7 @@ sl_recoverstate (SLCD * slconn, const char *statefile)
   timestamp[0] = '\0';
 
   /* Open the state file */
-  if ((statefp = fopen (statefile, "r")) == NULL)
+  if ((statefp = fopen (statefile, "rb")) == NULL)
     {
       if (errno == ENOENT)
 	{

@@ -56,7 +56,7 @@ sl_read_streamlist (SLCD * slconn, const char * streamfile,
   selectors[0] = '\0';
 
   /* Open the stream list file */
-  if ((streamfp = fopen (streamfile, "r")) == NULL)
+  if ((streamfp = fopen (streamfile, "rb")) == NULL)
     {
       if (errno == ENOENT)
 	{

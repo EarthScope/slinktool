@@ -5,7 +5,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2004.196
+ * modified: 2005.332
  ***************************************************************************/
 
 #include <stdio.h>
@@ -55,6 +55,9 @@ sl_loginit_r (SLCD * slconn, int verbosity,
 	      void (*log_print)(const char*), const char * logprefix,
 	      void (*diag_print)(const char*), const char * errprefix)
 {
+  if ( ! slconn )
+    return;
+
   if ( slconn->log == NULL )
     {
       slconn->log = (SLlog *) malloc (sizeof(SLlog));
@@ -136,6 +139,8 @@ sl_loginit_main (SLlog * logp, int verbosity,
 		 void (*log_print)(const char*), const char * logprefix,
 		 void (*diag_print)(const char*), const char * errprefix)
 {
+  if ( ! logp )
+    return;
 
   logp->verbosity = verbosity;
 
@@ -201,7 +206,7 @@ sl_log (int level, int verb, ...)
  *
  * A wrapper to sl_log_main() that uses the logging parameters in a
  * supplied SLCD. If the supplied pointer is NULL the global logging
- * parameters will be used..
+ * parameters will be used.
  *
  * See sl_log_main() description for return values.
  ***************************************************************************/
@@ -212,7 +217,9 @@ sl_log_r (const SLCD * slconn, int level, int verb, ...)
   va_list varlist;
   SLlog *logp;
 
-  if ( slconn->log == NULL )
+  if ( ! slconn )
+    logp = &gSLlog;
+  else if ( ! slconn->log )
     logp = &gSLlog;
   else
     logp = slconn->log;
@@ -243,7 +250,7 @@ sl_log_rl (SLlog * log, int level, int verb, ...)
   va_list varlist;
   SLlog *logp;
 
-  if ( log == NULL )
+  if ( ! log )
     logp = &gSLlog;
   else
     logp = log;
@@ -387,4 +394,3 @@ sl_log_main (SLlog * logp, int level, int verb, va_list * varlist)
 
   return retvalue;
 }  /* End of sl_log_main() */
-
