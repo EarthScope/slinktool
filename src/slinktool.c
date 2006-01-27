@@ -24,7 +24,7 @@
 #include "archive.h"
 
 #define PACKAGE   "slinktool"
-#define VERSION   "3.8rc1"
+#define VERSION   "3.8"
 
 /* Idle archive stream timeout */ 
 #define  IDLE_ARCH_STREAM_TIMEOUT  120
