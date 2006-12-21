@@ -1,0 +1,28 @@
+
+# Use 'nmake -f Makefile.win'
+#
+# THIS HAS NEVER BEEN TESTED
+# Some modification might be required.
+
+NODEBUG=1
+
+!include <ntwin32.mak>
+
+INCS = /I..\libslink
+LIBS = ..\libslink\libslink.lib
+
+BIN = ..\slinktool.exe
+
+cflags = $(cflags) -DWIN32
+
+all: $(BIN)
+
+$(BIN):	archive.obj dsarchive.obj slinkxml.obj slinktool.obj
+	link.exe /nologo /out:$(BIN) $(LIBS) archive.obj dsarchive.obj slinkxml.obj slinktool.obj
+
+.c.obj:
+   $(cc) /nologo $(cflags) $(cdebug) $(cvarsmt) $(tflags) $(INCS) $<
+
+# Clean-up directives
+clean:
+	-del a.out core *.o *.obj *% *~ $(BIN)

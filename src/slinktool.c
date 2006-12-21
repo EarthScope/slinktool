@@ -1,5 +1,4 @@
-/***************************************************************************
- * slinktool.c
+
  * A SeedLink client for data stream inspection, data collection and server
  * testing.
  *
@@ -24,7 +23,7 @@
 #include "archive.h"
 
 #define PACKAGE   "slinktool"
-#define VERSION   "3.8"
+#define VERSION   "3.9"
 
 /* Idle archive stream timeout */ 
 #define  IDLE_ARCH_STREAM_TIMEOUT  120
