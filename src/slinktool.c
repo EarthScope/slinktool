@@ -259,7 +259,7 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   /* Write packet to dumpfile if defined */
   if ( dumpfile )
     {
-      if (fwrite (msrecord, packet_size, 1, outfile) <= 0)
+      if (fwrite (msrecord, packet_size, 1, outfile) == 0)
 	sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
     }
 
@@ -375,6 +375,7 @@ static int
 parameter_proc (int argcount, char **argvec)
 {
   int error = 0;
+  int optind;
 
   char *streamfile  = 0;	/* stream list file for configuring streams */
   char *multiselect = 0;
@@ -682,6 +683,8 @@ getoptval (int argcount, char **argvec, int argopt)
 
   fprintf (stderr, "Option %s requires a value\n", argvec[argopt]);
   exit (1);
+
+  return NULL; /* To stop compiler warnings about no return */
 }  /* End of getoptval() */
 
 

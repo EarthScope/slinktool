@@ -2,6 +2,8 @@
 	- Update to libslink 1.7, only API naming changes.
 	- Include Makefile.wat and Makefile.win for WIN32. libxml2 is
 	required to compile, which might have other dependencies.
+	- Numerous small changes for compiling under WIN32: no signal
+	handling when WIN32 defined, etc.
 
 2006.027: version 3.8
 	- Update to libslink 1.6, no changes.
