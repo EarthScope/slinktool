@@ -1,4 +1,4 @@
-
+/***************************************************************************
  * A SeedLink client for data stream inspection, data collection and server
  * testing.
  *
