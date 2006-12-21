@@ -1,4 +1,5 @@
-
+#
+# Wmake file - For Watcom's wmake
 # Use 'wmake -f Makefile.wat'
 
 all: .SYMBOLIC

@@ -1,4 +1,6 @@
-
+#
+# Wmake file - For Watcom's wmake
+# Use 'wmake -f Makefile.wat'
 
 .BEFORE
 	@set INCLUDE=.;$(%watcom)\H;$(%watcom)\H\NT
@@ -31,3 +33,4 @@ slinktool.obj:	slinktool.c dsarchive.h slinkxml.h
 # Clean-up directives:
 clean:	.SYMBOLIC
 	del *.obj *.map $(BIN)
+

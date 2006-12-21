@@ -1,4 +1,5 @@
-
+#
+# Nmake file - Windows version
 # Use 'nmake -f Makefile.win'
 #
 # THIS HAS NEVER BEEN TESTED
@@ -26,3 +27,4 @@ $(BIN):	archive.obj dsarchive.obj slinkxml.obj slinktool.obj
 # Clean-up directives
 clean:
 	-del a.out core *.o *.obj *% *~ $(BIN)
+
