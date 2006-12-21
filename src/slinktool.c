@@ -8,14 +8,17 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2005.147
+ * modified 2006.355
  ***************************************************************************/
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
 #include <time.h>
+
+#if !defined(SLP_WIN32)
+  #include <signal.h>
+#endif
 
 #include <libslink.h>
 
@@ -69,9 +72,11 @@ static void print_samples (SLMSrecord *msr);
 static int  ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
 static void report_environ ();
-static void term_handler (int sig);
 static void usage (void);
 
+#if !defined(SLP_WIN32)
+  static void term_handler (int sig);
+#endif
 
 int
 main (int argc, char **argv)
@@ -81,6 +86,7 @@ main (int argc, char **argv)
   int ptype;
   int packetcnt = 0;
 
+#if !defined(SLP_WIN32)
   /* Signal handling, use POSIX calls with standardized semantics */
   struct sigaction sa;
 
@@ -95,6 +101,7 @@ main (int argc, char **argv)
   sa.sa_handler = SIG_IGN;
   sigaction (SIGHUP, &sa, NULL);
   sigaction (SIGPIPE, &sa, NULL);
+#endif
 
   /* Allocate and initialize a new connection description */
   slconn = sl_newslcd();
@@ -850,6 +857,7 @@ report_environ ()
 }  /* End of report_environ() */
 
 
+#if !defined(SLP_WIN32)
 /***************************************************************************
  * term_handler:
  * Signal handler routine to set the termination flag.
@@ -859,6 +867,7 @@ term_handler (int sig)
 {
   sl_terminate(slconn);
 }
+#endif
 
 
 /***************************************************************************
