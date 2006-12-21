@@ -6,7 +6,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2004.196
+ * modified: 2006.344
  ***************************************************************************/
 
 #include <stdio.h>
@@ -148,16 +148,16 @@ sl_parse_streamlist (SLCD * slconn, const char * streamlist,
   char *net;
   char *sta;
 
-  strlist *ringlist   = NULL;       /* split streamlist on ',' */
-  strlist *reqlist    = NULL;       /* split ringlist on ':' */
-  strlist *netstalist = NULL;       /* split reqlist[0] on "_" */
+  SLstrlist *ringlist   = NULL;       /* split streamlist on ',' */
+  SLstrlist *reqlist    = NULL;       /* split ringlist on ':' */
+  SLstrlist *netstalist = NULL;       /* split reqlist[0] on "_" */
 
-  strlist *ringptr    = NULL;
-  strlist *reqptr     = NULL;
-  strlist *netstaptr  = NULL;
+  SLstrlist *ringptr    = NULL;
+  SLstrlist *reqptr     = NULL;
+  SLstrlist *netstaptr  = NULL;
 
   /* Parse the streams and selectors */
-  strparse (streamlist, ",", &ringlist);
+  sl_strparse (streamlist, ",", &ringlist);
   ringptr = ringlist;
 
   while (ringptr != 0)
@@ -166,11 +166,11 @@ sl_parse_streamlist (SLCD * slconn, const char * streamlist,
       sta = NULL;
       staselect = NULL;
       
-      fields = strparse (ringptr->element, ":", &reqlist);
+      fields = sl_strparse (ringptr->element, ":", &reqlist);
       reqptr = reqlist;
 
       /* Fill in the NET and STA fields */
-      if (strparse (reqptr->element, "_", &netstalist) != 2)
+      if (sl_strparse (reqptr->element, "_", &netstalist) != 2)
 	{
 	  sl_log_r (slconn, 2, 0, "not in NET_STA format: %s\n", reqptr->element);
 	  count = -1;
@@ -222,21 +222,21 @@ sl_parse_streamlist (SLCD * slconn, const char * streamlist,
 	}
 
       /* Free the netstalist (the 'NET_STA' part) */
-      strparse (NULL, NULL, &netstalist);
+      sl_strparse (NULL, NULL, &netstalist);
       
       /* Free the reqlist (the 'NET_STA:selector' part) */
-      strparse (NULL, NULL, &reqlist);
+      sl_strparse (NULL, NULL, &reqlist);
       
       ringptr = ringptr->next;
     }
 
   if ( netstalist != NULL )
     {
-      strparse (NULL, NULL, &netstalist);
+      sl_strparse (NULL, NULL, &netstalist);
     }
   if ( reqlist != NULL )
     {
-      strparse (NULL, NULL, &reqlist);
+      sl_strparse (NULL, NULL, &reqlist);
     }
   
   if ( count == 0 )
@@ -249,7 +249,7 @@ sl_parse_streamlist (SLCD * slconn, const char * streamlist,
     }
 
   /* Free the ring list */
-  strparse (NULL, NULL, &ringlist);
+  sl_strparse (NULL, NULL, &ringlist);
   
   return count;
 }  /* End of sl_parse_streamlist() */

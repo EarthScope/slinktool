@@ -5,7 +5,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2005.097
+ * modified: 2006.344
  ***************************************************************************/
 
 #include <stdlib.h>
@@ -753,7 +753,7 @@ int
 update_stream (SLCD * slconn, SLpacket * slpack)
 {
   SLstream *curstream;
-  struct fsdh_s fsdh;
+  struct sl_fsdh_s fsdh;
   int seqnum;
   int swapflag = 0;
   char net[3];
@@ -766,7 +766,7 @@ update_stream (SLCD * slconn, SLpacket * slpack)
     }
 
   /* Copy fixed header */
-  memcpy (&fsdh, &slpack->msrecord, sizeof(struct fsdh_s));
+  memcpy (&fsdh, &slpack->msrecord, sizeof(struct sl_fsdh_s));
 
   /* Check to see if byte swapping is needed (bogus year makes good test) */
   if ((fsdh.start_time.year < 1900) || (fsdh.start_time.year > 2050))
@@ -775,8 +775,8 @@ update_stream (SLCD * slconn, SLpacket * slpack)
   /* Change byte order? */
   if ( swapflag )
     {
-      gswap2 (&fsdh.start_time.year);
-      gswap2 (&fsdh.start_time.day);
+      sl_gswap2 (&fsdh.start_time.year);
+      sl_gswap2 (&fsdh.start_time.day);
     }
 
   curstream = slconn->streams;
@@ -784,8 +784,8 @@ update_stream (SLCD * slconn, SLpacket * slpack)
   /* Generate some "clean" net and sta strings */
   if ( curstream != NULL )
     {
-      strncpclean (net, fsdh.network, 2);
-      strncpclean (sta, fsdh.station, 5);
+      sl_strncpclean (net, fsdh.network, 2);
+      sl_strncpclean (sta, fsdh.station, 5);
     }
 
   /* For uni-station mode */
@@ -1180,7 +1180,7 @@ int
 sl_packettype (const SLpacket * slpack)
 {
   int b2000 = 0;
-  struct fsdh_s *fsdh;
+  struct sl_fsdh_s *fsdh;
 
   uint16_t  num_samples;
   int16_t   samprate_fact;
@@ -1188,8 +1188,8 @@ sl_packettype (const SLpacket * slpack)
   uint16_t  blkt_type;
   uint16_t  next_blkt;
 
-  const struct blkt_head_s *p;
-  fsdh = (struct fsdh_s *) &slpack->msrecord;
+  const struct sl_blkt_head_s *p;
+  fsdh = (struct sl_fsdh_s *) &slpack->msrecord;
 
   /* Check for an INFO packet */
   if ( !strncmp (slpack->slhead, INFOSIGNATURE, 6) )
@@ -1205,8 +1205,8 @@ sl_packettype (const SLpacket * slpack)
   samprate_fact   = (int16_t)  ntohs(fsdh->samprate_fact);
   begin_blockette = (int16_t)  ntohs(fsdh->begin_blockette);
 
-  p = (const struct blkt_head_s *) ((const char *) fsdh + 
-				    begin_blockette);
+  p = (const struct sl_blkt_head_s *) ((const char *) fsdh + 
+				       begin_blockette);
 
   blkt_type       = (uint16_t) ntohs(p->blkt_type);
   next_blkt       = (uint16_t) ntohs(p->next_blkt);
@@ -1228,13 +1228,13 @@ sl_packettype (const SLpacket * slpack)
       if (blkt_type == 2000)
 	b2000 = 1;
 
-      p = (const struct blkt_head_s *) ((const char *) fsdh +
+      p = (const struct sl_blkt_head_s *) ((const char *) fsdh +
 				    next_blkt);
       
       blkt_type       = (uint16_t) ntohs(p->blkt_type);
       next_blkt       = (uint16_t) ntohs(p->next_blkt);
     }
-  while ((const struct fsdh_s *) p != fsdh);
+  while ((const struct sl_fsdh_s *) p != fsdh);
 
   if (samprate_fact == 0)
     {

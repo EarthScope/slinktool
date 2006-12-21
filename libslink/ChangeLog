@@ -1,3 +1,25 @@
+2006.354: version 1.7
+	- No functionality changes since 1.6; only function, macro and 
+	struct name changes to avoid collisions with other libraries.
+
+2006.344: version 1.7rc2
+	- Add "sl_" prefix to sl_strparse, sl_strncpclean and sl_gswap
+	functions.
+	- Add "SL" prefix to SLstrlist typedef and SL_SWAPBTIME macro.
+	No functionality changes, symbol renaming only.
+
+2006.336: version 1.7rc1
+	- Add "sl_" prefix to SEED structures to avoid collision,
+	changed structs: sl_blkt_head_s, sl_btime_s, sl_blkt_100_s,
+	sl_blkt_1000_s, sl_blkt_1001_s, sl_fsdh_s.
+	- Add "sl_" prefix to the following routines to avoid
+	collision with libmseed functions: sl_msr_new, sl_msr_free,
+	sl_msr_parse, sl_msr_print, sl_msr_dsamprate,
+	sl_msr_dnomsamprate, sl_msr_depochstime.
+	- Add "SL" to the record structure and typedef which are
+	now: struct SLMSrecord_s, typedef SLMSrecord.
+	No functionality changes, symbol renaming only.
+
 2006.028: version 1.6
 	- No changes, only update version.
 

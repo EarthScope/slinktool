@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2005.087
+ * modified 2006.336
  ***************************************************************************/
 
 #include <stdio.h>
@@ -107,7 +107,7 @@ main (int argc, char **argv)
 static void
 packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 {
-  static MSrecord * msr = NULL;
+  static SLMSrecord * msr = NULL;
 
   double dtime;			/* Epoch time */
   double secfrac;		/* Fractional part of epoch time */
@@ -135,10 +135,10 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
       sl_log (0, 1, "%s, seq %d, Received %s blockette:\n",
 	      timestamp, seqnum, type[packet_type]);
 
-      msr_parse (slconn->log, msrecord, &msr, 1, 0);
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
 
       if ( verbose || ppackets )
-	msr_print (slconn->log, msr, ppackets);
+	sl_msr_print (slconn->log, msr, ppackets);
     }
   else if ( packet_type == SLKEEP )
     {
