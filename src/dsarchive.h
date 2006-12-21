@@ -6,6 +6,12 @@
 #include <time.h>
 #include <libslink.h>
 
+#if defined (SLP_WIN32)
+  #include <io.h>
+  #define mkdir _mkdir
+  #define access _access
+#endif
+
 /* For the data stream chains */
 typedef struct DataStream_s
 {

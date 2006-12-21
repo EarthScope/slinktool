@@ -220,6 +220,15 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
 	      if ( errno == ENOENT )
 		{
 		  sl_log (0, 1, "Creating directory: %s\n", filename);
+#if defined(SLP_WIN32)
+		  if (mkdir (filename))
+		    {
+		      sl_log (0, 1, "ds_streamproc: mkdir(%s) %s\n", filename,
+			      strerror (errno));
+		      sl_strparse (NULL, NULL, &fnlist);
+		      return -1;
+		    }
+#else
 		  if (mkdir
 		      (filename, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH))
 		    {
@@ -228,6 +237,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
 		      sl_strparse (NULL, NULL, &fnlist);
 		      return -1;
 		    }
+#endif
 		}
 	      else
 		{
