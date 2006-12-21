@@ -8,6 +8,7 @@
 
 #if defined (SLP_WIN32)
   #include <io.h>
+  #include <direct.h>
   #define mkdir _mkdir
   #define access _access
 #endif
