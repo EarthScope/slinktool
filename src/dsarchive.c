@@ -1,10 +1,9 @@
 /***************************************************************************
- * dsarchive.c
  * Routines to archive Mini-SEED data records.
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2003.275
+ * modified: 2006.355
  ***************************************************************************/
 
 #include <stdio.h>
@@ -18,7 +17,7 @@
 #include "dsarchive.h"
 
 /* Functions internal to this source file */
-static DataStream *ds_getstream (DataStream **dstream, const MSrecord *msr,
+static DataStream *ds_getstream (DataStream **dstream, const SLMSrecord *msr,
 				 const char *defkey, const char *filename,
 				 int type, int idletimeout);
 static void ds_shutdown (DataStream * dstream);
@@ -36,11 +35,11 @@ static char sl_typecode (int type);
  * Returns 0 on success, -1 on error.
  ***************************************************************************/
 extern int
-ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
+ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
 	       int reclen, int type, int idletimeout)
 {
   DataStream *foundstream = NULL;
-  strlist    *fnlist, *fnptr;
+  SLstrlist    *fnlist, *fnptr;
   char net[3], sta[6], loc[3], chan[4];
   char filename[400];
   char definition[400];
@@ -55,7 +54,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
   /* Build file path and name from pathformat */
   filename[0] = '\0';
   definition[0] = '\0';
-  strparse (pathformat, "/", &fnlist);
+  sl_strparse (pathformat, "/", &fnlist);
 
   fnptr = fnlist;
 
@@ -70,7 +69,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
       else
 	{
 	  sl_log (1, 0, "ds_streamproc(): empty path format\n");
-	  strparse (NULL, NULL, &fnlist);
+	  sl_strparse (NULL, NULL, &fnlist);
 	  return -1;
 	}
     }
@@ -89,7 +88,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
 	{
 	  sl_log (1, 0, "ds_streamproc(): no file name specified, only %s\n",
 		  filename);
-	  strparse (NULL, NULL, &fnlist);
+	  sl_strparse (NULL, NULL, &fnlist);
 	  return -1;
 	}
 
@@ -112,28 +111,28 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
 	      p = w + 1;
 	      break;
 	    case 'n' :
-	      strncpclean (net, msr->fsdh.network, 2);
+	      sl_strncpclean (net, msr->fsdh.network, 2);
 	      strncat (filename, net, (sizeof(filename) - fnlen));
 	      if ( def ) strncat (definition, net, (sizeof(definition) - fnlen));
 	      fnlen = strlen (filename);
 	      p = w + 1;
 	      break;
 	    case 's' :
-	      strncpclean (sta, msr->fsdh.station, 5);
+	      sl_strncpclean (sta, msr->fsdh.station, 5);
 	      strncat (filename, sta, (sizeof(filename) - fnlen));
 	      if ( def ) strncat (definition, sta, (sizeof(definition) - fnlen));
 	      fnlen = strlen (filename);
 	      p = w + 1;
 	      break;
 	    case 'l' :
-	      strncpclean (loc, msr->fsdh.location, 2);
+	      sl_strncpclean (loc, msr->fsdh.location, 2);
 	      strncat (filename, loc, (sizeof(filename) - fnlen));
 	      if ( def ) strncat (definition, loc, (sizeof(definition) - fnlen));
 	      fnlen = strlen (filename);
 	      p = w + 1;
 	      break;
 	    case 'c' :
-	      strncpclean (chan, msr->fsdh.channel, 3);
+	      sl_strncpclean (chan, msr->fsdh.channel, 3);
 	      strncat (filename, chan, (sizeof(filename) - fnlen));
 	      if ( def ) strncat (definition, chan, (sizeof(definition) - fnlen));
 	      fnlen = strlen (filename);
@@ -226,14 +225,14 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
 		    {
 		      sl_log (0, 1, "ds_streamproc: mkdir(%s) %s\n", filename,
 			      strerror (errno));
-		      strparse (NULL, NULL, &fnlist);
+		      sl_strparse (NULL, NULL, &fnlist);
 		      return -1;
 		    }
 		}
 	      else
 		{
 		  sl_log (1, 0, "%d: access denied, %s\n", filename, strerror(errno));
-		  strparse (NULL, NULL, &fnlist);
+		  sl_strparse (NULL, NULL, &fnlist);
 		  return -1;
 		}
 	    }
@@ -245,7 +244,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
       fnptr = fnptr->next;
     }
 
-  strparse (NULL, NULL, &fnlist);
+  sl_strparse (NULL, NULL, &fnlist);
 
   /* Check for previously used stream entry, otherwise create it */
   foundstream = ds_getstream (streamroot, msr, definition, filename,
@@ -284,7 +283,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const MSrecord *msr,
  * Returns a pointer to DataStream on success or NULL on error.
  ***************************************************************************/
 DataStream *
-ds_getstream (DataStream **streamroot, const MSrecord *msr,
+ds_getstream (DataStream **streamroot, const SLMSrecord *msr,
 	      const char *defkey, const char *filename, int type,
 	      int idletimeout)
 {

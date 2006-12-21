@@ -18,7 +18,7 @@ DataStream;
 
 
 extern int ds_streamproc (DataStream **streamroot, char *pathformat,
-			  const MSrecord *msr, int reclen, int type,
+			  const SLMSrecord *msr, int reclen, int type,
 			  int idletimeout);
 
 #endif

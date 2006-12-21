@@ -5,7 +5,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2003.275
+ * modified: 2006.355
  ***************************************************************************/
 
 #include <string.h>
@@ -25,7 +25,7 @@
  * Returns 0 on success, -1 on error.
  ***************************************************************************/
 int
-arch_streamproc (const char *archformat, const MSrecord *msr, int reclen,
+arch_streamproc (const char *archformat, const SLMSrecord *msr, int reclen,
 		 int type, int idletimeout)
 {
   static DataStream *streamroot = NULL;
@@ -56,7 +56,7 @@ arch_streamproc (const char *archformat, const MSrecord *msr, int reclen,
  * Returns 0 on success, -1 on error.
  ***************************************************************************/
 int
-sds_streamproc (const char *basedir, const MSrecord *msr, int reclen,
+sds_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
 		int type, int idletimeout)
 {
   static DataStream *streamroot = NULL;
@@ -89,7 +89,7 @@ sds_streamproc (const char *basedir, const MSrecord *msr, int reclen,
  * Returns 0 on success, -1 on error.
  ***************************************************************************/
 int
-bud_streamproc (const char *basedir, const MSrecord *msr, int reclen,
+bud_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
 	        int idletimeout)
 {
   static DataStream *streamroot = NULL;
@@ -123,7 +123,7 @@ bud_streamproc (const char *basedir, const MSrecord *msr, int reclen,
  * Returns 0 on success, -1 on error.
  ***************************************************************************/
 int
-dlog_streamproc (const char *basedir, const MSrecord *msr, int reclen,
+dlog_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
 		 int type, int idletimeout)
 {
   static DataStream *streamroot = NULL;

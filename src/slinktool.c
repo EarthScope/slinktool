@@ -61,11 +61,11 @@ static xmlParserCtxtPtr xml_parser_ctxt = NULL;
 
 static void packet_handler (char *msrecord, int packet_type,
 			    int seqnum, int packet_size);
-static int  info_handler (MSrecord * msr, int terminate);
+static int  info_handler (SLMSrecord * msr, int terminate);
 
 static int  parameter_proc (int argcount, char **argvec);
 static char *getoptval (int argcount, char **argvec, int argopt);
-static void print_samples (MSrecord *msr);
+static void print_samples (SLMSrecord *msr);
 static int  ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
 static void report_environ ();
@@ -166,7 +166,7 @@ main (int argc, char **argv)
 static void
 packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 {
-  static MSrecord * msr = NULL;
+  static SLMSrecord * msr = NULL;
 
   double dtime;			/* Epoch time */
   double secfrac;		/* Fractional part of epoch time */
@@ -197,12 +197,12 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 
       /* Parse data record and print requested detail if any */
       if ( psamples )
-	msr_parse (slconn->log, msrecord, &msr, 1, 1);
+	sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
       else
-	msr_parse (slconn->log, msrecord, &msr, 1, 0);
+	sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
 
       if ( ppackets )
-        msr_print (slconn->log, msr, ppackets - 1);
+        sl_msr_print (slconn->log, msr, ppackets - 1);
 
       if ( psamples )
 	print_samples (msr);
@@ -228,7 +228,7 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 
       terminate = ( packet_type == SLINFT );
 
-      msr_parse (slconn->log, msrecord, &msr, 0, 0);
+      sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
       
       if ( info_handler (msr, terminate) == -2 )
 	{
@@ -286,7 +286,7 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
  *  0 = XML is not terminated
  ***************************************************************************/
 static int
-info_handler (MSrecord * msr, int terminate)
+info_handler (SLMSrecord * msr, int terminate)
 {
   int pterm = terminate;
   int preturn;
@@ -375,7 +375,7 @@ parameter_proc (int argcount, char **argvec)
   char *timewin     = 0;
   char *tptr;
 
-  strlist *timelist;		/* split the time window arg */
+  SLstrlist *timelist;		/* split the time window arg */
 
   if ( argcount <= 1 )
     error++;
@@ -563,7 +563,7 @@ parameter_proc (int argcount, char **argvec)
   /* Split the time window argument */
   if ( timewin )
     {
-      strlist *timeptr;
+      SLstrlist *timeptr;
       
       if (strchr (timewin, ':') == NULL)
 	{
@@ -571,7 +571,7 @@ parameter_proc (int argcount, char **argvec)
 	  return -1;
 	}
       
-      if (strparse (timewin, ":", &timelist) > 2)
+      if (sl_strparse (timewin, ":", &timelist) > 2)
 	{
 	  sl_log (2, 0, "time window not in begin:[end] format\n");
 	  return -1;
@@ -602,7 +602,7 @@ parameter_proc (int argcount, char **argvec)
 	}
 
       /* Free the parsed list */
-      strparse (NULL, NULL, &timelist);
+      sl_strparse (NULL, NULL, &timelist);
     }
 
   /* Parse the 'multiselect' string following '-S' */
@@ -680,10 +680,10 @@ getoptval (int argcount, char **argvec, int argopt)
 
 /***************************************************************************
  * print_samples:
- * Print samples in the supplied MSrecord with a simple format.
+ * Print samples in the supplied SLMSrecord with a simple format.
  ***************************************************************************/
 static void
-print_samples (MSrecord *msr)
+print_samples (SLMSrecord *msr)
 {
   int line, lines, col, cnt;
   
