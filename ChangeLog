@@ -1,6 +1,7 @@
 2006.355: version 3.9
 	- Update to libslink 1.7, no changes.
-	- Include Makefile.wat and Makefile.win for WIN32.
+	- Include Makefile.wat and Makefile.win for WIN32, libxml2 is
+	required to compile.
 
 2006.027: version 3.8
 	- Update to libslink 1.6, no changes.
