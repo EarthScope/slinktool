@@ -16,7 +16,7 @@
 #include <string.h>
 #include <time.h>
 
-#if !defined(SLP_WIN32)
+#ifndef WIN32
   #include <signal.h>
 #endif
 
@@ -74,7 +74,7 @@ static void print_stderr (const char *message);
 static void report_environ ();
 static void usage (void);
 
-#if !defined(SLP_WIN32)
+#ifndef WIN32
   static void term_handler (int sig);
 #endif
 
@@ -86,7 +86,7 @@ main (int argc, char **argv)
   int ptype;
   int packetcnt = 0;
 
-#if !defined(SLP_WIN32)
+#ifndef WIN32
   /* Signal handling, use POSIX calls with standardized semantics */
   struct sigaction sa;
 
@@ -857,7 +857,7 @@ report_environ ()
 }  /* End of report_environ() */
 
 
-#if !defined(SLP_WIN32)
+#ifndef WIN32
 /***************************************************************************
  * term_handler:
  * Signal handler routine to set the termination flag.
