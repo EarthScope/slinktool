@@ -10,7 +10,7 @@ NODEBUG=1
 !include <ntwin32.mak>
 
 INCS = /I..\libslink
-LIBS = ..\libslink\libslink.lib
+LIBS = ..\libslink\libslink.lib ws2_32.lib
 
 BIN = ..\slinktool.exe
 

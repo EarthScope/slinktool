@@ -8,7 +8,7 @@
 
 cc     = wcc386
 cflags = -zq
-lflags = OPT quiet OPT map LIBRARY ..\libslink\libslink.lib
+lflags = OPT quiet OPT map LIBRARY ..\libslink\libslink.lib LIBRARY ws2_32.lib
 cvars  = $+$(cvars)$- -DWIN32
 
 BIN = ..\slinktool.exe
