@@ -301,8 +301,8 @@ info_handler (SLMSrecord *msr, int terminate)
   
   ezxml_t xmldoc;  
     
-  /* Buffer size sanity check: 1MB limit */
-  if ( (xml_size + xml_bitsize) > 1048576 )
+  /* Buffer size sanity check: 10MB limit */
+  if ( (xml_size + xml_bitsize) > 10485760 )
     {
       sl_log (2, 0, "info_handler(): XML buffer beyond sanity limit\n");
       

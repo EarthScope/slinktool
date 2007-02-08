@@ -1,5 +1,6 @@
-2007.038: version 3.9
+2007.039: version 3.9
 	- Add ezxml library to sources and use it instead of libxml2.
+	- Incoming INFO XML buffer limited to 10 MB.
 
 2006.355: 
 	- Update to libslink 1.7, only API naming changes.
