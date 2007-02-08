@@ -1,5 +1,5 @@
 # Standard compiler parameters
-CFLAGS = -O
+CFLAGS =
 
 # GCC specific parameters
 GCC = gcc

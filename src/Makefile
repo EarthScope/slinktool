@@ -1,18 +1,16 @@
 
 # Standard compiler parameters
-CFLAGS  = -O -I../libslink \
-	  -I/usr/include/libxml2 -I/usr/local/include/libxml2
+CFLAGS += -I../libslink -I../ezxml
 
 # GCC specific parameters
 GCC = gcc
-GCCFLAGS = -O2 -Wall -I../libslink \
-           -I/usr/include/libxml2 -I/usr/local/include/libxml2
+GCCFLAGS = -O2 -Wall -I../libslink -I../ezxml
 
-LDFLAGS = -L../libslink -L/usr/local/lib
-LDLIBS  = -lslink -lxml2
+LDFLAGS = -L../libslink -L../ezxml
+LDLIBS  = -lslink -lezxml
 
 # For SunOS/Solaris uncomment the following line
-#LDLIBS = -lslink -lxml2 -lsocket -lnsl -lrt
+#LDLIBS = -lslink -lezxml -lsocket -lnsl -lrt
 
 BIN  = ../slinktool
 

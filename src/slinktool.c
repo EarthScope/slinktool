@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2006.355
+ * modified 2007.038
  ***************************************************************************/
 
 #include <stdio.h>
@@ -59,9 +59,7 @@ static enum
 }
 slt_query = SLTNoQuery;
 
-/* XML parser context for processing INFO responses */
-static xmlParserCtxtPtr xml_parser_ctxt = NULL;
-
+/* Functions internal to this source file */
 static void packet_handler (char *msrecord, int packet_type,
 			    int seqnum, int packet_size);
 static int  info_handler (SLMSrecord * msr, int terminate);
@@ -293,75 +291,119 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
  *  0 = XML is not terminated
  ***************************************************************************/
 static int
-info_handler (SLMSrecord * msr, int terminate)
+info_handler (SLMSrecord *msr, int terminate)
 {
-  int pterm = terminate;
-  int preturn;
-
-  char *xml_chunk = (char *) msr->msrecord + msr->fsdh.begin_data;
-  int xml_size = msr->fsdh.num_samples;
-
-  /* Init XML parser context if it has not been done yet */
-  if ( xml_parser_ctxt == NULL )
+  static char *xml_buffer = 0;
+  static int xml_size = 0;
+  
+  char *xml_bit = (char *) msr->msrecord + msr->fsdh.begin_data;
+  int xml_bitsize = msr->fsdh.num_samples;
+  
+  ezxml_t xmldoc;  
+    
+  /* Buffer size sanity check: 1MB limit */
+  if ( (xml_size + xml_bitsize) > 1048576 )
     {
-      if ( (xml_parser_ctxt = xml_begin ()) == NULL )
-	{
-	  sl_log (2, 0, "xml_begin(): memory allocation error\n");
-	  return -2;
-	}
+      sl_log (2, 0, "info_handler(): XML buffer beyond sanity limit\n");
+      
+      if ( xml_buffer )
+	free (xml_buffer);
+      xml_buffer = 0;
+      xml_size = 0;
+      
+      return -2;
     }
-
+  
+  /* Grow XML string buffer, include room (+1) for NULL terminator */
+  if ( (xml_buffer = realloc(xml_buffer, (xml_size + xml_bitsize + 1))) == NULL )
+    {
+      sl_log (2, 0, "info_handler(): XML buffer memory allocation error\n");
+      return -2;
+    }
+  
+  /* First character is terminator for initial buffer allocation */
+  if ( xml_size == 0 )
+    {
+      *xml_buffer = '\0';
+    }
+  
+  /* Append new XML to buffer */
+  strncat (xml_buffer, xml_bit, xml_bitsize);
+  xml_size += xml_bitsize;
+  
   /* Check for an error condition */
   if ( ! strncmp(msr->fsdh.channel, "ERR", 3) )
     {
       sl_log (2, 0, "INFO type requested is not enabled\n");
+      
+      if ( xml_buffer )
+	free (xml_buffer);
+      xml_buffer = 0;
+      xml_size = 0;
+      
       return -2;
     }
-
-  /* Parse the XML */
-  preturn = xml_parse_chunk (xml_parser_ctxt, xml_chunk, xml_size, pterm);
-
-  if ( preturn != XML_ERR_OK )
+  
+  /* Process the XML if terminated */
+  if ( terminate )
     {
-      sl_log (2, 0, "XML parse error %d\n", preturn);
-      return -2;
-    }
-
-  if ( pterm || preturn )
-    {
-      xmlDocPtr doc = xml_end (xml_parser_ctxt);
-      xml_parser_ctxt = NULL;
-
-      switch (slt_query)
+      
+      /* Parse the XML if not dumping the raw XML */
+      if ( slt_query != SLTGenericQuery )
 	{
-	case SLTIDQuery:
-	  prtinfo_identification (doc);
-	  break;
-	case SLTStationQuery:
-	  prtinfo_stations (doc);
-	  break;
-	case SLTStreamQuery:
-	  prtinfo_streams (doc);
-	  break;
-	case SLTGapQuery:
-	  prtinfo_gaps (doc);
-	  break;
-	case SLTConnectionQuery:
-	  prtinfo_connections (doc);
-	  break;
-	case SLTGenericQuery:
-	  xmlDocFormatDump (stdout, doc, 1);
-	  break;
-	default:
-	  break;
+	  if ( (xmldoc = ezxml_parse_str (xml_buffer, xml_size)) == NULL )
+	    {
+	      sl_log (2, 0, "XML parse error\n");
+	      
+	      if ( xml_buffer )
+		free (xml_buffer);
+	      xml_buffer = 0;
+	      xml_size = 0;
+	      
+	      return -2;
+	    }
+	  
+	  switch (slt_query)
+	    {
+	    case SLTIDQuery:
+	      prtinfo_identification (xmldoc);
+	      break;
+	    case SLTStationQuery:
+	      prtinfo_stations (xmldoc);
+	      break;
+	    case SLTStreamQuery:
+	      prtinfo_streams (xmldoc);
+	      break;
+	    case SLTGapQuery:
+	      prtinfo_gaps (xmldoc);
+	      break;
+	    case SLTConnectionQuery:
+	      prtinfo_connections (xmldoc);
+	      break;
+	    default:
+	      sl_log (2, 0, "info_handler: unrecognized INFO query: %d\n", slt_query);
+	      break;
+	    }
+	  
+	  ezxml_free (xmldoc);
+	}
+      else
+	{
+	  fprintf (stdout, "%s\n", xml_buffer);
 	}
       
+      /* Clean up */
       slt_query = SLTNoQuery;
-      xml_free_doc (doc);
+            
+      if ( xml_buffer )
+	free (xml_buffer);
+      xml_buffer = 0;
+      xml_size = 0;
+      
       return -1;
     }
-
-  return preturn;
+  
+  return 0;
 }  /* End of info_handler() */
 
 

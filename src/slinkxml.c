@@ -1,12 +1,12 @@
 /***************************************************************************
  * slinkxml.c
- * INFO message handling routines and interface functions for libxml2
+ * INFO message handling routines
  *
  * Written by:
+ *   Chad Trabant, ORFEUS Data Center/MEREDIAN Project, IRIS/DMC
  *   Andres Heinloo, GFZ Potsdam GEOFON Project
- *   Chad Trabant, ORFEUS Data Center/MEREDIAN Project
  *
- * modified: 2005.108
+ * modified: 2007.038
  ***************************************************************************/
 
 #include <stdio.h>
@@ -22,25 +22,22 @@
  * Format the specified XML document into an identification summary.
  ***************************************************************************/
 void
-prtinfo_identification (xmlDocPtr doc)
+prtinfo_identification (ezxml_t xmldoc)
 {
-  xmlNodePtr root;
-
-  if (doc == NULL || (root = xmlDocGetRootElement (doc)) == NULL)
-    return;
-
-  if (strcmp ((char *) root->name, "seedlink"))
+  char *rootname = ezxml_name(xmldoc);
+  
+  if (strcmp (rootname, "seedlink"))
     {
-      sl_log (1, 0, "XML data has invalid structure\n");
+      sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
       return;
     }
-
+  
   printf ("SeedLink server: %s\n"
 	  "Organization   : %s\n"
 	  "Start time     : %s\n",
-	  xml_get_prop (root, "software"),
-	  xml_get_prop (root, "organization"),
-	  xml_get_prop (root, "started"));
+	  ezxml_attr (xmldoc, "software"),
+	  ezxml_attr (xmldoc, "organization"),
+	  ezxml_attr (xmldoc, "started"));
   
 }  /* End of prtinfo_identification() */
 
@@ -50,29 +47,24 @@ prtinfo_identification (xmlDocPtr doc)
  * Format the specified XML document into a station list.
  ***************************************************************************/
 void
-prtinfo_stations (xmlDocPtr doc)
+prtinfo_stations (ezxml_t xmldoc)
 {
-  xmlNodePtr root, node;
-
-  if (doc == NULL || (root = xmlDocGetRootElement (doc)) == NULL)
-    return;
-
-  if (strcmp ((char *) root->name, "seedlink"))
+  ezxml_t station;
+  char *rootname = ezxml_name(xmldoc);
+  
+  if (strcmp (rootname, "seedlink"))
     {
-      sl_log (1, 0, "XML data has invalid structure\n");
+      sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
       return;
     }
-
-  for (node = root->children; node; node = node->next)
+  
+  for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next(station))
     {
-      if (strcmp ((char *) node->name, "station"))
-	continue;
-      
       printf ("%-2s %-5s %s\n",
-	      xml_get_prop (node, "network"),
-	      xml_get_prop (node, "name"),
-	      xml_get_prop (node, "description"));
-    }
+	      ezxml_attr (station, "network"),
+	      ezxml_attr (station, "name"),
+	      ezxml_attr (station, "description"));
+    }  
 }  /* End of prtinfo_stations() */
 
 
@@ -81,44 +73,35 @@ prtinfo_stations (xmlDocPtr doc)
  * Format the specified XML document into a stream list.
  ***************************************************************************/
 void
-prtinfo_streams (xmlDocPtr doc)
+prtinfo_streams (ezxml_t xmldoc)
 {
-  xmlNodePtr root, node0;
-
-  if (doc == NULL || (root = xmlDocGetRootElement (doc)) == NULL)
-    return;
-
-  if (strcmp ((char *) root->name, "seedlink"))
+  ezxml_t station, stream;
+  char *rootname = ezxml_name(xmldoc);
+  
+  if (strcmp (rootname, "seedlink"))
     {
-      sl_log (1, 0, "XML data has invalid structure\n");
+      sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
       return;
     }
-
-  for (node0 = root->children; node0; node0 = node0->next)
+  
+  for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next(station))
     {
-      xmlNodePtr node1;
       const char *name, *network, *stream_check;
       
-      if (strcmp ((char *) node0->name, "station"))
-	continue;
-      
-      name = xml_get_prop (node0, "name");
-      network = xml_get_prop (node0, "network");
-      stream_check = xml_get_prop (node0, "stream_check");
+      name = ezxml_attr (station, "name");
+      network = ezxml_attr (station, "network");
+      stream_check = ezxml_attr (station, "stream_check");
       
       if ( !strcmp (stream_check, "enabled") )
 	{
-	  for (node1 = node0->children; node1; node1 = node1->next)
-	    {
-	      if (strcmp ((char *) node1->name, "stream"))
-		continue;
-	      
+	  for (stream = ezxml_child (station, "stream"); stream; stream = ezxml_next(stream))
+	    {	      
 	      printf ("%-2s %-5s %-2s %-3s %s %s  -  %s\n", network, name,
-		      xml_get_prop (node1, "location"),
-		      xml_get_prop (node1, "seedname"),
-		      xml_get_prop (node1, "type"),
-		      xml_get_prop (node1, "begin_time"),
-		      xml_get_prop (node1, "end_time"));
+		      ezxml_attr (stream, "location"),
+		      ezxml_attr (stream, "seedname"),
+		      ezxml_attr (stream, "type"),
+		      ezxml_attr (stream, "begin_time"),
+		      ezxml_attr (stream, "end_time"));
 	    }
 	}
       else
@@ -135,54 +118,41 @@ prtinfo_streams (xmlDocPtr doc)
  * Format the specified XML document into a gap list.
  ***************************************************************************/
 void
-prtinfo_gaps (xmlDocPtr doc)
+prtinfo_gaps (ezxml_t xmldoc)
 {
-  xmlNodePtr root, node0;
-
-  if (doc == NULL || (root = xmlDocGetRootElement (doc)) == NULL)
-    return;
-
-  if (strcmp ((char *) root->name, "seedlink"))
+  ezxml_t station, stream, gap;
+  char *rootname = ezxml_name(xmldoc);
+  
+  if (strcmp (rootname, "seedlink"))
     {
-      sl_log (1, 0, "XML data has invalid structure\n");
+      sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
       return;
     }
-
-  for (node0 = root->children; node0; node0 = node0->next)
+  
+  for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next(station))
     {
-      xmlNodePtr node1;
       const char *name, *network, *stream_check;
-
-      if (strcmp ((char *) node0->name, "station"))
-	continue;
-
-      name = xml_get_prop (node0, "name");
-      network = xml_get_prop (node0, "network");
-      stream_check = xml_get_prop (node0, "stream_check");
+      
+      name = ezxml_attr (station, "name");
+      network = ezxml_attr (station, "network");
+      stream_check = ezxml_attr (station, "stream_check");
       
       if ( !strcmp (stream_check, "enabled") )
 	{
-	  for (node1 = node0->children; node1; node1 = node1->next)
+	  for (stream = ezxml_child (station, "stream"); stream; stream = ezxml_next(stream))
 	    {
-	      xmlNodePtr node2;
 	      const char *location, *seedname, *type;
 	      
-	      if (strcmp ((char *) node1->name, "stream"))
-		continue;
+	      location = ezxml_attr (stream, "location");
+	      seedname = ezxml_attr (stream, "seedname");
+	      type = ezxml_attr (stream, "type");
 	      
-	      location = xml_get_prop (node1, "location");
-	      seedname = xml_get_prop (node1, "seedname");
-	      type = xml_get_prop (node1, "type");
-	      
-	      for (node2 = node1->children; node2; node2 = node2->next)
+	      for (gap = ezxml_child (stream, "gap"); gap; gap = ezxml_next(gap))
 		{
-		  if (strcmp ((char *) node2->name, "gap"))
-		    continue;
-		  
 		  printf ("%-2s %-5s %-2s %-3s %s %s  -  %s\n", network, name,
 			  location, seedname, type,
-			  xml_get_prop (node2, "begin_time"),
-			  xml_get_prop (node2, "end_time"));
+			  ezxml_attr (gap, "begin_time"),
+			  ezxml_attr (gap, "end_time"));
 		}
 	    }
 	}
@@ -200,74 +170,54 @@ prtinfo_gaps (xmlDocPtr doc)
  * Format the specified XML document into a connection list.
  ***************************************************************************/
 void
-prtinfo_connections (xmlDocPtr doc)
+prtinfo_connections (ezxml_t xmldoc)
 {
-  xmlNodePtr root, node0;
-
-  if (doc == NULL || (root = xmlDocGetRootElement (doc)) == NULL)
-    return;
-
-  if (strcmp ((char *) root->name, "seedlink"))
+  ezxml_t station, connection;
+  char *rootname = ezxml_name(xmldoc);
+  
+  if (strcmp (rootname, "seedlink"))
     {
-      sl_log (1, 0, "XML data has invalid structure\n");
+      sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
       return;
     }
-
+  
   printf
     ("STATION  REMOTE ADDRESS        CONNECTION ESTABLISHED   TX COUNT GAPS  QLEN FLG\n");
   printf
     ("-------------------------------------------------------------------------------\n");
   /* GE TRTE  255.255.255.255:65536 2002/08/01 11:00:00.0000 12345678 1234 12345 DSE */
 
-  for (node0 = root->children; node0; node0 = node0->next)
+  for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next(station))
     {
-      xmlNodePtr node1;
       const char *network, *name, *end_seq;
-
-      if (strcmp ((char *) node0->name, "station"))
-	continue;
-
-      network = xml_get_prop (node0, "network");
-      name = xml_get_prop (node0, "name");
-      end_seq = xml_get_prop (node0, "end_seq");
-
-      for (node1 = node0->children; node1; node1 = node1->next)
+      
+      network = ezxml_attr (station, "network");
+      name = ezxml_attr (station, "name");
+      end_seq = ezxml_attr (station, "end_seq");
+      
+      for (connection = ezxml_child (station, "connection"); connection; connection = ezxml_next(connection))
 	{
-	  xmlNodePtr node2;
 	  unsigned long qlen = 0;
 	  int active = 0, window = 0, realtime = 0, selectors = 0, eod = 0;
 	  const char *current_seq;
 	  char address[25];
 	  char flags[4] = { ' ', ' ', ' ', 0 };
-
-	  if (strcmp ((char *) node1->name, "connection"))
-	    continue;
-
-	  for (node2 = node1->children; node2; node2 = node2->next)
-	    {
-	      if (!strcmp ((char *) node2->name, "window"))
-		window = 1;
-
-	      if (!strcmp ((char *) node2->name, "selector"))
-		selectors = 1;
-	    }
-
-	  current_seq = xml_get_prop (node1, "current_seq");
-
+	  
+	  window = (ezxml_child (connection, "window")) ? 1 : 0;
+	  selectors = (ezxml_child (connection, "selector")) ? 1 : 0;
+	  
+	  current_seq = ezxml_attr (connection, "current_seq");
+	  
 	  if (strcmp (current_seq, "unset"))
 	    {
-	      qlen = (strtoul (xml_get_prop (node0, "end_seq"), NULL, 16) -
-		      strtoul (xml_get_prop (node1, "current_seq"), NULL,
-			       16)) & 0xffffff;
+	      qlen = (strtoul (ezxml_attr (station, "end_seq"), NULL, 16) -
+		      strtoul (ezxml_attr (connection, "current_seq"), NULL, 16)) & 0xffffff;
 	      active = 1;
 	    }
-
-	  if (strcmp (xml_get_prop (node1, "realtime"), "no"))
-	    realtime = 1;
-
-	  if (strcmp (xml_get_prop (node1, "end_of_data"), "no"))
-	    eod = 1;
-
+	  
+	  realtime =  (strcmp (ezxml_attr (connection, "realtime"), "no")) ? 1 : 0;
+	  eod = (strcmp (ezxml_attr (connection, "end_of_data"), "no")) ? 1 : 0;
+	  
 	  if (!active)
 	    flags[0] = 'O';	/* Connection opened, but not configured */
 	  else if (window)
@@ -276,21 +226,21 @@ prtinfo_connections (xmlDocPtr doc)
 	    flags[0] = 'D';	/* Dial-up mode */
 	  else
 	    flags[0] = 'R';	/* Normal real-time mode */
-
+	  
 	  if (selectors)
 	    flags[1] = 'S';	/* Using selectors */
-
+	  
 	  if (eod)
 	    flags[2] = 'E';	/* Connection is waiting to be closed */
 
 	  sprintf (address, "%.15s:%.5s",
-		   xml_get_prop (node1, "host"),
-		   xml_get_prop (node1, "port"));
+		   ezxml_attr (connection, "host"),
+		   ezxml_attr (connection, "port"));
 
 	  printf ("%-2s %-5s %-21s %s %8s %4s ", network, name, address,
-		  xml_get_prop (node1, "ctime"),
-		  xml_get_prop (node1, "txcount"),
-		  xml_get_prop (node1, "sequence_gaps"));
+		  ezxml_attr (connection, "ctime"),
+		  ezxml_attr (connection, "txcount"),
+		  ezxml_attr (connection, "sequence_gaps"));
 
 	  if (realtime && active)
 	    printf ("%5lu ", qlen);
@@ -301,40 +251,3 @@ prtinfo_connections (xmlDocPtr doc)
 	}
     }
 }  /* End of prtinfo_connections() */
-
-
-xmlParserCtxtPtr
-xml_begin ()
-{
-  return xmlCreatePushParserCtxt (NULL, NULL, NULL, 0, NULL);
-}
-
-int
-xml_parse_chunk (xmlParserCtxtPtr ctxt, const char *chunk, int size,
-		 int terminate)
-{
-  return xmlParseChunk (ctxt, chunk, size, terminate);
-}
-
-xmlDocPtr
-xml_end (xmlParserCtxtPtr ctxt)
-{
-  xmlDocPtr ret = ctxt->myDoc;
-  xmlFreeParserCtxt (ctxt);
-  return ret;
-}
-
-void
-xml_free_doc (xmlDocPtr doc)
-{
-  xmlFreeDoc (doc);
-}
-
-const char *
-xml_get_prop (xmlNodePtr node, const char *name)
-{
-  const char *ret;
-  if ((ret = (char *) xmlGetProp (node, (xmlChar *) name)) == NULL)
-    ret = "";
-  return ret;
-}

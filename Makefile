@@ -1,5 +1,5 @@
 
-DIRS = libslink src
+DIRS = libslink ezxml src
 
 all gcc debug gccdebug clean static install ::
 	@for d in $(DIRS) ; do \

@@ -8,12 +8,12 @@
 
 cc     = wcc386
 cflags = -zq
-lflags = OPT quiet OPT map LIBRARY ..\libslink\libslink.lib LIBRARY ws2_32.lib
+lflags = OPT quiet OPT map LIBRARY ..\libslink\libslink.lib LIBRARY ..\ezxml\ezxml.lib LIBRARY ws2_32.lib
 cvars  = $+$(cvars)$- -DWIN32
 
 BIN = ..\slinktool.exe
 
-INCS = -I..\libslink
+INCS = -I..\libslink -I..\ezxml
 
 all: $(BIN)
 

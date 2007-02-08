@@ -1,4 +1,7 @@
-2006.355: version 3.9
+2007.038:
+	- Add ezxml library to sources and use it instead of libxml2.
+
+2006.355: 
 	- Update to libslink 1.7, only API naming changes.
 	- Include Makefile.wat and Makefile.win for WIN32. libxml2 is
 	required to compile, which might have other dependencies.

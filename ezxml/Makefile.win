@@ -1,0 +1,32 @@
+#
+#
+# Nmake File For MS Visual C/C++
+# Use 'nmake -f Makefile.win'
+#
+# THIS HAS NEVER BEEN TESTED
+# Some modification might be required.
+
+NODEBUG=1
+
+!include <ntwin32.mak>
+
+INCS = /I.
+LIB = libezxml.lib
+DLL = libezxml.dll
+
+OBJS = ezxml.obj
+
+all: lib
+
+lib: $(OBJS)
+	link.exe /lib /nologo /out:$(LIB) $(OBJS)
+
+dll: $(OBJS)
+	link.exe /dll /nologo /out:$(DLL) $(OBJS)
+
+.c.obj:
+   $(cc) /nologo $(cflags) $(cdebug) $(cvarsmt) $(tflags) $(INCS) $<
+
+# Clean-up directives
+clean:
+	-del a.out core *.o *.obj *% *~ $(LIB) $(DLL)
