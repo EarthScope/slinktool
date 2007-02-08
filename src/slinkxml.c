@@ -236,12 +236,12 @@ prtinfo_connections (ezxml_t xmldoc)
 	  sprintf (address, "%.15s:%.5s",
 		   ezxml_attr (connection, "host"),
 		   ezxml_attr (connection, "port"));
-
+	  
 	  printf ("%-2s %-5s %-21s %s %8s %4s ", network, name, address,
 		  ezxml_attr (connection, "ctime"),
 		  ezxml_attr (connection, "txcount"),
 		  ezxml_attr (connection, "sequence_gaps"));
-
+	  
 	  if (realtime && active)
 	    printf ("%5lu ", qlen);
 	  else
