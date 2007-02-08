@@ -1,4 +1,4 @@
-2007.038:
+2007.038: version 3.9
 	- Add ezxml library to sources and use it instead of libxml2.
 
 2006.355: 
