@@ -6,13 +6,6 @@ directory.
 
 -- Building and Installation --
 
-Requirements:
-
-1) ANSI C compiler
-
-2) libxml2 version 2.4.23 or greater (www.xmlsoft.org)
-
-
 In most environments a simple 'make' will compile the program.
  
 Using GCC under Linux or Solaris, running 'make static' will compile a
@@ -28,17 +21,6 @@ See the Makefile for instructions.
  
 For further installation simply copy the resulting binary and man page
 (in the 'doc' directory) to appropriate system directories.
-
-
-LibXML2:
-
-This package requires libxml2 version 2.4.23 or greater
-(www.xmlsoft.org).  If the compile process fails with messages about
-not being able to find <libxml/xmlerror.h> or <libxml/parser.h> and it
-is certain that libxml2 is installed on the system the 'src/Makefile'
-will have to be edited to include the proper directory on the CFLAGS
-line where the libxml2 headers can be found.
-
 
 -- Licensing --
 
