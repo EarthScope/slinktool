@@ -5,6 +5,8 @@
 all: .SYMBOLIC
 	cd libslink
 	wmake -f Makefile.wat
+        cd ..\ezxml
+        wmake -f Makefile.wat
 	cd ..\src
 	wmake -f Makefile.wat
 	cd ..
@@ -12,6 +14,8 @@ all: .SYMBOLIC
 clean: .SYMBOLIC
 	cd libslink
 	wmake -f Makefile.wat clean
+        cd ..\ezxml
+        wmake -f Makefile.wat clean
 	cd ..\src
 	wmake -f Makefile.wat clean
 	cd ..

@@ -103,7 +103,7 @@ main (int argc, char **argv)
 
   /* Allocate and initialize a new connection description */
   slconn = sl_newslcd();
-
+  
   /* Process given parameters (command line and parameter file) */
   if ( parameter_proc (argc, argv) < 0 )
     {
@@ -650,11 +650,11 @@ parameter_proc (int argcount, char **argvec)
 
 	    }
 	}
-
+      
       /* Free the parsed list */
       sl_strparse (NULL, NULL, &timelist);
     }
-
+  
   /* Parse the 'multiselect' string following '-S' */
   if ( multiselect )
     {
