@@ -1,5 +1,7 @@
 2007.198:
 	- Update main Makefile.wat for Watcom's wmake (Win32).
+	- Update ezxml/Makefile.wat to define EZXML_NOMAP to build.
+	- Update src/Makefile.wat with the correct path to libezxml.lib.
 
 2007.039: version 3.9
 	- Add ezxml library to sources and use it instead of libxml2.
