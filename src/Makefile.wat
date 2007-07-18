@@ -1,5 +1,4 @@
-#
-# Wmake file - For Watcom's wmake
+
 # Use 'wmake -f Makefile.wat'
 
 .BEFORE
@@ -8,7 +7,7 @@
 
 cc     = wcc386
 cflags = -zq
-lflags = OPT quiet OPT map LIBRARY ..\libslink\libslink.lib LIBRARY ..\ezxml\ezxml.lib LIBRARY ws2_32.lib
+lflags = OPT quiet OPT map LIBRARY ..\libslink\libslink.lib LIBRARY ..\ezxml\libezxml.lib LIBRARY ws2_32.lib
 cvars  = $+$(cvars)$- -DWIN32
 
 BIN = ..\slinktool.exe
