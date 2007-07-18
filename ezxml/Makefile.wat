@@ -1,5 +1,4 @@
-#
-# Wmake File FFor Watcom's wmake
+
 # Use 'wmake -f Makefile.wat'
 
 .BEFORE
@@ -9,7 +8,7 @@
 cc     = wcc386
 cflags = -zq
 lflags = OPT quiet OPT map
-cvars  = $+$(cvars)$- -DWIN32
+$cvars  = $+$(cvars)$- -DWIN32 -DEZXML_NOMMAP
 
 # To build a DLL uncomment the following two lines
 #cflags = -zq -bd
