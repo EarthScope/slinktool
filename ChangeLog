@@ -1,3 +1,7 @@
+2007.218:
+	- Add 'b' to fopen mode argument so Win32 platforms write
+	output data correctly.
+
 2007.198: version 3.9
 	- Update main Makefile.wat for Watcom's wmake (Win32).
 	- Update ezxml/Makefile.wat to define EZXML_NOMAP to build.

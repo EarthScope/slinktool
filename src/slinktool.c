@@ -581,7 +581,7 @@ parameter_proc (int argcount, char **argvec)
 	  outfile = stdout;
 	  setvbuf (stdout, NULL, _IONBF, 0);
 	}
-      else if ((outfile = fopen (dumpfile, "a+")) != NULL)
+      else if ((outfile = fopen (dumpfile, "a+b")) != NULL)
 	{
 	  setvbuf (outfile, NULL, _IONBF, 0);
 	}

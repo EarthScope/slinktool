@@ -385,7 +385,7 @@ ds_getstream (DataStream **streamroot, const SLMSrecord *msr,
     {
       sl_log (0, 2, "Creating new data stream file\n");
 
-      if ((foundstream->filep = fopen (filename, "a")) == NULL)
+      if ((foundstream->filep = fopen (filename, "ab")) == NULL)
 	{
 	  sl_log (1, 0, "opening new data stream file, %s\n", strerror (errno));
 	  return NULL;
@@ -406,7 +406,7 @@ ds_getstream (DataStream **streamroot, const SLMSrecord *msr,
 	  return NULL;
 	}
 
-      if ((foundstream->filep = fopen (filename, "a")) == NULL)
+      if ((foundstream->filep = fopen (filename, "ab")) == NULL)
 	{
 	  sl_log (1, 0, "opening data stream file, %s\n", strerror (errno));
 	  return NULL;
