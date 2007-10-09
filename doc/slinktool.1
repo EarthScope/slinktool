@@ -1,4 +1,4 @@
-.TH SLINKTOOL 1 2005/05/27
+.TH SLINKTOOL 1 2007/10/09
 .SH NAME
 slinktool \- SeedLink client for data stream inspection, data collection
 and server testing
@@ -170,13 +170,13 @@ assumed, i.e. 'localhost' implies 'localhost:18000'.  If only ':' is
 specified 'localhost:18000' is assumed.
 
 .SH "EXAMPLES"
-Uni-station mode example:
+All-station/Uni-station mode example:
 .IP
 The following would connect to a SeedLink server at slink.host.com
-port 18000 and configure the link in uni-station mode, exactly which
-data are received depends on the data being served by the SeedLink
-server on that particular port.  Additionally, all of the received
-packets are appended to the file 'data.mseed' and each packet
+port 18000 and configure the link in all-station/uni-station mode,
+exactly which data are received depends on the data being served by
+the SeedLink server on that particular port.  Additionally, all of the
+received packets are appended to the file 'data.mseed' and each packet
 received is reported on the standard output.
 
 .B >slinktool -v -o data.mseed slink.host.com:18000
@@ -213,9 +213,24 @@ Of course, a variety of different data selections can be made
 
 .nf
 .B -s 'BHE.D BHN.D' -S 'GE_STU,GE_MALT,GE_WLF'
-  (horizontal channels, data only)
+  (horizontal BH channels, data only)
 .B -s BHZ -S GE_STU,GE_WLF,GE_RUE,GE_EIL
   (vertical channels only)
+.fi
+
+.PP
+Wildcarding network and station codes
+.IP
+Some SeedLink implementation support wildcarding of the network and
+station codes, when this is the case the only two wildcard characters
+recognized are '*' for one or more characters and '?' for any single
+character.
+
+As an example, all US network data can be requested using the
+following syntax:
+
+.nf
+-B -S 'US_*
 .fi
 
 .SH "SeedLink SELECTORS"

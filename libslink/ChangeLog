@@ -1,3 +1,28 @@
+2007.282: version 2.0
+	- Add parsing of capability flags included with the server
+	version string which is now expected to be in the format:
+	"SeedLink v#.# <optional text> <:: capability flags>".
+	Currently recognized capability flags:
+	  SLPROTO:#.# == SeedLink protocol version
+	  CAP == Supports CAPABILITY command
+          EXTREPLY == Extended reply messages supported
+          NSWILDCARD == Network & station code wildcarding
+	- Add sending of CAPABILITY command after HELLO in say_hello()
+	if the server supports the CAPABILITY command.
+	- Add ability to recognize extended replies from the server,
+	these are in the form of "Reply\rExtended Message\r\n", for
+	example: "ERROR\rSTATION command requires 1 or 2 arguments\r\n".
+
+2007.179:
+	- Add globmatch.[ch], includes a function to do glob matching.
+	- Use glob matching in update_stream() when updating sequence
+	numbers of packet streams received.  This is needed to facilitate
+	the '*' and '?' wildcards in network and station codes.
+	- Change update_stream() to update all the entries in the stream
+	chain that match the given network and station code.  This allows
+	the situation where data from a given network-station pair is
+	selected in two or more selectors to work properly with state files.
+
 2006.354: version 1.7
 	- No functionality changes since 1.6; only function, macro and 
 	struct name changes to avoid collisions with other libraries.

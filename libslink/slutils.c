@@ -5,7 +5,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2006.344
+ * modified: 2007.169
  ***************************************************************************/
 
 #include <stdlib.h>
@@ -14,6 +14,8 @@
 #include <string.h>
 
 #include "libslink.h"
+
+#include "globmatch.h"
 
 /* Function(s) only used in this source file */
 int update_stream (SLCD * slconn, SLpacket * slpack);
@@ -279,7 +281,7 @@ sl_collect (SLCD * slconn, SLpacket ** slpack)
       if ((slconn->stat->recptr - slconn->stat->sendptr) == 7 &&
 	  !strncmp (&slconn->stat->databuf[slconn->stat->sendptr], "ERROR\r\n", 7))
 	{
-	  sl_log_r (slconn, 2, 0, "SeedLink reported an error with the last command\n");
+	  sl_log_r (slconn, 2, 0, "SeedLink server reported an error with the last command\n");
 	  slconn->link = sl_disconnect (slconn);
 	  return SLTERMINATE;
 	}
@@ -651,7 +653,7 @@ sl_collect_nb (SLCD * slconn, SLpacket ** slpack)
   if ((slconn->stat->recptr - slconn->stat->sendptr) == 7 &&
       !strncmp (&slconn->stat->databuf[slconn->stat->sendptr], "ERROR\r\n", 7))
     {
-      sl_log_r (slconn, 2, 0, "SeedLink reported an error with the last command\n");
+      sl_log_r (slconn, 2, 0, "SeedLink server reported an error with the last command\n");
       slconn->link = sl_disconnect (slconn);
       return SLTERMINATE;
     }
@@ -745,7 +747,8 @@ sl_collect_nb (SLCD * slconn, SLpacket ** slpack)
 /***************************************************************************
  * update_stream:
  *
- * Update the appropriate stream chain entry given a Mini-SEED record.
+ * Update the appropriate stream chain entries given a Mini-SEED
+ * record.
  *
  * Returns 0 if successfully updated and -1 if not found or error.
  ***************************************************************************/
@@ -756,18 +759,19 @@ update_stream (SLCD * slconn, SLpacket * slpack)
   struct sl_fsdh_s fsdh;
   int seqnum;
   int swapflag = 0;
+  int updates = 0;
   char net[3];
   char sta[6];
-
+  
   if ( (seqnum = sl_sequence (slpack)) == -1 )
     {
       sl_log_r (slconn, 2, 0, "update_stream(): could not determine sequence number\b");
       return -1;
     }
-
+  
   /* Copy fixed header */
   memcpy (&fsdh, &slpack->msrecord, sizeof(struct sl_fsdh_s));
-
+  
   /* Check to see if byte swapping is needed (bogus year makes good test) */
   if ((fsdh.start_time.year < 1900) || (fsdh.start_time.year > 2050))
     swapflag = 1;
@@ -778,58 +782,31 @@ update_stream (SLCD * slconn, SLpacket * slpack)
       sl_gswap2 (&fsdh.start_time.year);
       sl_gswap2 (&fsdh.start_time.day);
     }
-
+  
   curstream = slconn->streams;
-
+  
   /* Generate some "clean" net and sta strings */
   if ( curstream != NULL )
     {
       sl_strncpclean (net, fsdh.network, 2);
       sl_strncpclean (sta, fsdh.station, 5);
     }
-
-  /* For uni-station mode */
-  if (curstream != NULL &&
-      strcmp (curstream->net, UNINETWORK) == 0 &&
-      strcmp (curstream->sta, UNISTATION) == 0)
-    {
-      int month = 0;
-      int mday = 0;
-
-      sl_doy2md (fsdh.start_time.year,
-		 fsdh.start_time.day,
-		 &month, &mday);
-
-      curstream->seqnum = seqnum;
-
-      snprintf (curstream->timestamp, 20,
-		"%04d,%02d,%02d,%02d,%02d,%02d",
-		fsdh.start_time.year,
-		month,
-		mday,
-		fsdh.start_time.hour,
-		fsdh.start_time.min,
-		fsdh.start_time.sec);
-
-      return 0;
-    }
   
-  /* For multi-station mode, search the stream chain */
-  while (curstream != NULL)
+  /* For uni-station mode */
+  if ( curstream != NULL )
     {
-
-      if (strcmp (curstream->net, net) == 0 &&
-	  strcmp (curstream->sta, sta) == 0)
-        {
+      if ( strcmp (curstream->net, UNINETWORK) == 0 &&
+	   strcmp (curstream->sta, UNISTATION) == 0 )
+	{
 	  int month = 0;
 	  int mday = 0;
-
+	  
 	  sl_doy2md (fsdh.start_time.year,
 		     fsdh.start_time.day,
 		     &month, &mday);
-
+	  
 	  curstream->seqnum = seqnum;
-
+	  
 	  snprintf (curstream->timestamp, 20,
 		    "%04d,%02d,%02d,%02d,%02d,%02d",
 		    fsdh.start_time.year,
@@ -839,16 +816,46 @@ update_stream (SLCD * slconn, SLpacket * slpack)
 		    fsdh.start_time.min,
 		    fsdh.start_time.sec);
 	  
-          return 0;
+	  return 0;
+	}
+    }
+  
+  /* For multi-station mode, search the stream chain and update all matching entries */
+  while ( curstream != NULL )
+    {
+      /* Use glob matching to match wildcarded network and station codes */
+      if ( sl_globmatch (net, curstream->net) &&
+	   sl_globmatch (sta, curstream->sta) )
+        {
+	  int month = 0;
+	  int mday = 0;
+	  
+	  sl_doy2md (fsdh.start_time.year,
+		     fsdh.start_time.day,
+		     &month, &mday);
+	  
+	  curstream->seqnum = seqnum;
+	  
+	  snprintf (curstream->timestamp, 20,
+		    "%04d,%02d,%02d,%02d,%02d,%02d",
+		    fsdh.start_time.year,
+		    month,
+		    mday,
+		    fsdh.start_time.hour,
+		    fsdh.start_time.min,
+		    fsdh.start_time.sec);
+	  
+	  updates++;
         }
-
+      
       curstream = curstream->next;
     }
-
-  /* If we got here no match was found */
-  sl_log_r (slconn, 2, 0, "unexpected data received: %.2s %.6s\n", net, sta);
-
-  return -1;
+  
+  /* If no updates then no match was found */
+  if ( updates == 0 )
+    sl_log_r (slconn, 2, 0, "unexpected data received: %.2s %.6s\n", net, sta);
+  
+  return (updates == 0) ? -1 : 0;
 }  /* End of update_stream() */
 
 
@@ -989,20 +996,22 @@ sl_addstream (SLCD * slconn, const char * net, const char * sta,
   SLstream *curstream;
   SLstream *newstream;
   SLstream *laststream = NULL;
-
+  
   curstream = slconn->streams;
-
+  
   /* Sanity, check for a uni-station mode entry */
-  if (curstream != NULL &&
-      strcmp (curstream->net, UNINETWORK) == 0 &&
-      strcmp (curstream->sta, UNISTATION) == 0)
+  if ( curstream )
     {
-      sl_log_r (slconn, 2, 0, "sl_addstream(): uni-station mode already configured!\n");
-      return -1;
+      if ( strcmp (curstream->net, UNINETWORK) == 0 &&
+	   strcmp (curstream->sta, UNISTATION) == 0 )
+	{
+	  sl_log_r (slconn, 2, 0, "sl_addstream(): uni-station mode already configured!\n");
+	  return -1;
+	}
     }
-
+  
   /* Search the stream chain */
-  while (curstream != NULL)
+  while ( curstream != NULL )
     {
       laststream = curstream;
       curstream = curstream->next;
@@ -1015,7 +1024,7 @@ sl_addstream (SLCD * slconn, const char * net, const char * sta,
       sl_log_r (slconn, 2, 0, "sl_addstream(): error allocating memory\n");
       return -1;
     }
-
+  
   newstream->net = strdup(net);
   newstream->sta = strdup(sta);
 
@@ -1260,6 +1269,3 @@ sl_terminate (SLCD * slconn)
 
   slconn->terminate = 1;
 }  /* End of sl_terminate() */
-
-
-

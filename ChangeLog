@@ -1,3 +1,8 @@
+2007.281: version 4.0
+	- Update libslink to 2.0 which includes support for wildcarded
+	network & station codes (when supported by the server) and 
+	extended reply/status messages.
+
 2007.218:
 	- Add 'b' to fopen mode argument so Win32 platforms write
 	output data correctly.
