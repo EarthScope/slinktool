@@ -11,7 +11,7 @@
  * Originally based on the SeedLink interface of the modified Comserv in
  * SeisComP written by Andres Heinloo
  *
- * Version: 2007.282
+ * Version: 2007.284
  ***************************************************************************/
 
 #include <stdio.h>
@@ -130,9 +130,9 @@ sl_negotiate_uni (SLCD * slconn)
 	      
 	      /* Search for 2nd "\r" indicating extended reply message present */
 	      extreply = 0;
-	      if ( (term1 = strnstr (readbuf, "\r", bytesread)) )
+	      if ( (term1 = memchr (readbuf, '\r', bytesread)) )
 		{
-		  if ( (term2 = strnstr (term1+1, "\r", bytesread-(readbuf-term1)-1)) )
+		  if ( (term2 = memchr (term1+1, '\r', bytesread-(readbuf-term1)-1)) )
 		    {
 		      *term2 = '\0';
 		      extreply = term1+1;
@@ -317,9 +317,9 @@ sl_negotiate_multi (SLCD * slconn)
       
       /* Search for 2nd "\r" indicating extended reply message present */
       extreply = 0;
-      if ( (term1 = strnstr (readbuf, "\r", bytesread)) )
+      if ( (term1 = memchr (readbuf, '\r', bytesread)) )
 	{
-	  if ( (term2 = strnstr (term1+1, "\r", bytesread-(readbuf-term1)-1)) )
+	  if ( (term2 = memchr (term1+1, '\r', bytesread-(readbuf-term1)-1)) )
 	    {
 	      *term2 = '\0';
 	      extreply = term1+1;
@@ -386,9 +386,9 @@ sl_negotiate_multi (SLCD * slconn)
 		  
 		  /* Search for 2nd "\r" indicating extended reply message present */
 		  extreply = 0;
-		  if ( (term1 = strnstr (readbuf, "\r", bytesread)) )
+		  if ( (term1 = memchr (readbuf, '\r', bytesread)) )
 		    {
-		      if ( (term2 = strnstr (term1+1, "\r", bytesread-(readbuf-term1)-1)) )
+		      if ( (term2 = memchr (term1+1, '\r', bytesread-(readbuf-term1)-1)) )
 			{
 			  *term2 = '\0';
 			  extreply = term1+1;
@@ -522,9 +522,9 @@ sl_negotiate_multi (SLCD * slconn)
       
       /* Search for 2nd "\r" indicating extended reply message present */
       extreply = 0;
-      if ( (term1 = strnstr (readbuf, "\r", bytesread)) )
+      if ( (term1 = memchr (readbuf, '\r', bytesread)) )
 	{
-	  if ( (term2 = strnstr (term1+1, "\r", bytesread-(readbuf-term1)-1)) )
+	  if ( (term2 = memchr (term1+1, '\r', bytesread-(readbuf-term1)-1)) )
 	    {
 	      fprintf (stderr, "term2: '%s'\n", term2);
 
@@ -943,9 +943,9 @@ sl_sayhello (SLCD * slconn)
       
       /* Search for 2nd "\r" indicating extended reply message present */
       extreply = 0;
-      if ( (term1 = strnstr (readbuf, "\r", bytesread)) )
+      if ( (term1 = memchr (readbuf, '\r', bytesread)) )
 	{
-	  if ( (term2 = strnstr (term1+1, "\r", bytesread-(readbuf-term1)-1)) )
+	  if ( (term2 = memchr (term1+1, '\r', bytesread-(readbuf-term1)-1)) )
 	    {
 	      *term2 = '\0';
 	      extreply = term1+1;

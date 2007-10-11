@@ -1,4 +1,4 @@
-2007.281: version 4.0
+2007.284: version 4.0
 	- Update libslink to 2.0 which includes support for wildcarded
 	network & station codes (when supported by the server) and 
 	extended reply/status messages.
