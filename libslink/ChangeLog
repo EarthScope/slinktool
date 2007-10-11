@@ -1,5 +1,6 @@
 2007.284: version 2.0 (no version change)
 	- Use memchr() instead of strnstr() in network.c for portability.
+	- Add globmatch.obj to Makefile.wat and Makefile.win.
 
 2007.282: version 2.0
 	- Add parsing of capability flags included with the server
