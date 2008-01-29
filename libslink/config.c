@@ -6,12 +6,13 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2006.344
+ * modified: 2008.028
  ***************************************************************************/
 
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "libslink.h"
 
@@ -41,22 +42,22 @@ int
 sl_read_streamlist (SLCD * slconn, const char * streamfile,
 		    const char * defselect)
 {
-  FILE *streamfp;
   char net[3];
   char sta[6];
   char selectors[100];
   char line[100];
+  int streamfd;
   int fields;
   int count;
   int stacount;
   int addret;
-
+  
   net[0] = '\0';
   sta[0] = '\0';
   selectors[0] = '\0';
-
+  
   /* Open the stream list file */
-  if ((streamfp = fopen (streamfile, "rb")) == NULL)
+  if ( (streamfd = slp_openfile (streamfile, 'r')) < 0 )
     {
       if (errno == ENOENT)
 	{
@@ -69,17 +70,17 @@ sl_read_streamlist (SLCD * slconn, const char * streamfile,
 	  return -1;
 	}
     }
-
+  
   sl_log_r (slconn, 1, 1, "Reading stream list from %s\n", streamfile);
-
+  
   count = 1;
   stacount = 0;
-
-  while ( (fgets (line, sizeof(line), streamfp)) !=  NULL)
+  
+  while ( (sl_readline (streamfd, line, sizeof(line))) >= 0 )
     {
       fields = sscanf (line, "%2s %5s %99[a-zA-Z0-9?. ]\n",
 		       net, sta, selectors);
-
+      
       /* Ignore blank or comment lines */
       if ( fields < 0 || net[0] == '#' || net[0] == '*' )
 	continue;
@@ -103,7 +104,7 @@ sl_read_streamlist (SLCD * slconn, const char * streamfile,
       
 	count++;
     }
-
+  
   if ( stacount == 0 )
     {
       sl_log_r (slconn, 2, 0, "no streams defined in %s\n", streamfile);
@@ -113,12 +114,12 @@ sl_read_streamlist (SLCD * slconn, const char * streamfile,
       sl_log_r (slconn, 1, 2, "Read %d streams from %s\n", stacount, streamfile);
     }
 
-  if ( fclose (streamfp) )
+  if ( close (streamfd) )
     {
       sl_log_r (slconn, 2, 0, "closing stream list file, %s\n", strerror (errno));
       return -1;
     }
-
+  
   return count;
 }  /* End of sl_read_streamlist() */
 

@@ -1,3 +1,10 @@
+2008.028: version 2.1
+	- Convert all buffered IO file operations to unbuffered IO routines.
+	- Add sl_readline() to genutils.c to read and return a line, defined
+	by newline characters, from unbuffered IO, i.e. a file descriptor.
+	- Add slp_openfile() to slplatform.[ch] to portably open files.
+	- Change Makefile and src/Makefile to use user defined CC and CFLAGS.
+	
 2007.284: version 2.0 (no version change)
 	- Use memchr() instead of strnstr() in network.c for portability.
 	- Add globmatch.obj to Makefile.wat and Makefile.win.

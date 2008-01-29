@@ -1,3 +1,7 @@
+2008.029: version 4.1
+	- Update libslink to 2.1 which includes support for building
+	with user defined CC and CFLAGS and other minor updates.
+
 2007.284: version 4.0
 	- Update libslink to 2.0 which includes support for wildcarded
 	network & station codes (when supported by the server) and 

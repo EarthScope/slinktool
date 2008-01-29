@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2006.336
+ * modified 2008.028
  ***************************************************************************/
 
 #include <stdio.h>
@@ -237,9 +237,11 @@ parameter_proc (int argcount, char **argvec)
 	}
     }
 
+
   /* Make sure a server was specified */
   if ( ! slconn->sladdr )
     {
+      fprintf(stderr, "%s version: %s\n\n", PACKAGE, VERSION);
       fprintf(stderr, "No SeedLink server specified\n\n");
       fprintf(stderr, "Usage: %s [options] [host][:port]\n", PACKAGE);
       fprintf(stderr, "Try '-h' for detailed help\n");

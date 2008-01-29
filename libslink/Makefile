@@ -1,5 +1,8 @@
-# Standard compiler parameters
-CFLAGS = -O
+
+# Build environment can be configured the following
+# environment variables:
+#   CC : Specify the C compiler to use
+#   CFLAGS : Specify compiler options to use
 
 # GCC specific parameters
 GCC = gcc

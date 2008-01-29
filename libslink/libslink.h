@@ -19,7 +19,7 @@
  *   ORFEUS/EC-Project MEREDIAN
  *   IRIS Data Management Center
  *
- * modified: 2005.344
+ * modified: 2008.028
  ***************************************************************************/
 
 
@@ -32,8 +32,8 @@ extern "C" {
 
 #include "slplatform.h"
 
-#define LIBSLINK_VERSION "2.0"
-#define LIBSLINK_RELEASE "2007.284"
+#define LIBSLINK_VERSION "2.1"
+#define LIBSLINK_RELEASE "2008.028"
   
 #define SLRECSIZE           512      /* Mini-SEED record size */
 #define MAX_HEADER_SIZE     128      /* Max record header size */
@@ -270,6 +270,7 @@ extern double sl_dtime (void);
 extern int    sl_doy2md (int year, int jday, int *month, int *mday);
 extern int    sl_checkversion (const SLCD * slconn, float version);
 extern int    sl_checkslcd (const SLCD * slconn);
+extern int    sl_readline (int fd, char *buffer, int buflen);
 
 /* logging.c */
 extern int    sl_log (int level, int verb, ...);

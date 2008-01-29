@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2007.038
+ * modified 2008.029
  ***************************************************************************/
 
 #include <stdio.h>
@@ -26,7 +26,7 @@
 #include "archive.h"
 
 #define PACKAGE   "slinktool"
-#define VERSION   "4.0"
+#define VERSION   "4.1"
 
 /* Idle archive stream timeout */ 
 #define  IDLE_ARCH_STREAM_TIMEOUT  120
