@@ -1,3 +1,6 @@
+2009.050: version 4.1b
+	- Update libslink to 2.2b which fixes for Solaris and Win32.
+
 2008.029: version 4.1
 	- Update libslink to 2.1 which includes support for building
 	with user defined CC and CFLAGS and other minor updates.
