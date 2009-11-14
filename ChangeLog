@@ -1,3 +1,6 @@
+2009.318: version 4.1c
+	- Update libslink to 2.2c, including minor record printing fix.
+
 2009.050: version 4.1b
 	- Update libslink to 2.2b which fixes for Solaris and Win32.
 

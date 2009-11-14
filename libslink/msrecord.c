@@ -14,7 +14,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified: 2006.344
+ * modified: 2009.318
  ***************************************************************************/
 
 #include <stdio.h>
@@ -378,7 +378,7 @@ sl_msr_print (SLlog * log, SLMSrecord * msr, int details)
     }
 
   /* Build a start time string */
-  snprintf (stime, 27, "%04d,%03d,%02d:%02d:%02d.%06d",
+  snprintf (stime, sizeof(stime), "%04d,%03d,%02d:%02d:%02d.%06d",
 	    msr->fsdh.start_time.year, msr->fsdh.start_time.day,
 	    msr->fsdh.start_time.hour, msr->fsdh.start_time.min,
 	    msr->fsdh.start_time.sec, usec);

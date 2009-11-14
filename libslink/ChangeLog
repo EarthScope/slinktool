@@ -1,4 +1,7 @@
-2009.050: version 2.2b.
+2009.318: version 2.2c
+	- Add proper string limit for snprintf() call in sl_msr_print().
+
+2009.050: version 2.2b
 	- Add an include for sys/stat.h for Solaris in slplatform.h.
 
 2008.078: version 2.2
