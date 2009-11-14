@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2008.029
+ * modified 2009.318
  ***************************************************************************/
 
 #include <stdio.h>
@@ -799,7 +799,7 @@ ping_server (SLCD *slconn)
 static void
 print_stderr (const char *message)
 {
-  fprintf (stderr, message);
+  fprintf (stderr, "%s", message);
   return;
 }
 
