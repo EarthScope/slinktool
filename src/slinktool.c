@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2009.318
+ * modified 2010.069
  ***************************************************************************/
 
 #include <stdio.h>
@@ -26,7 +26,7 @@
 #include "archive.h"
 
 #define PACKAGE   "slinktool"
-#define VERSION   "4.1c"
+#define VERSION   "4.2"
 
 /* Idle archive stream timeout */ 
 #define  IDLE_ARCH_STREAM_TIMEOUT  120
@@ -462,6 +462,10 @@ parameter_proc (int argcount, char **argvec)
       else if (strcmp (argvec[optind], "-d") == 0)
 	{
 	  slconn->dialup = 1;
+	}
+      else if (strcmp (argvec[optind], "-b") == 0)
+	{
+	  slconn->batchmode = 1;
 	}
       else if (strcmp (argvec[optind], "-nt") == 0)
 	{
@@ -938,6 +942,7 @@ usage (void)
 	   " -k interval     send keepalive (heartbeat) packets this often (seconds)\n"
 	   " -x sfile[:int]  save/restore stream state information to this file\n"
 	   " -d              configure the connection in dial-up mode\n"
+	   " -b              configure the connection in batch mode\n"
 	   "\n"
 	   " ## Data stream selection ##\n"
 	   " -s selectors    selectors for uni-station or default for multi-station mode\n"

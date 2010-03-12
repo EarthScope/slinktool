@@ -1,3 +1,7 @@
+2010.069: version 4.2
+	- Update libslink to 2.3 with batch mode support.
+	- Add support for batch mode, patch by Andres Heinloo/GFZ.
+
 2009.318: version 4.1c
 	- Update libslink to 2.2c, including minor record printing fix.
 
@@ -10,7 +14,7 @@
 
 2007.284: version 4.0
 	- Update libslink to 2.0 which includes support for wildcarded
-	network & station codes (when supported by the server) and 
+	network & station codes (when supported by the server) and
 	extended reply/status messages.
 
 2007.218:
@@ -26,7 +30,7 @@
 	- Add ezxml library to sources and use it instead of libxml2.
 	- Incoming INFO XML buffer limited to 10 MB.
 
-2006.355: 
+2006.355:
 	- Update to libslink 1.7, only API naming changes.
 	- Include Makefile.wat and Makefile.win for WIN32. libxml2 is
 	required to compile, which might have other dependencies.

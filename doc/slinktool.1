@@ -1,4 +1,4 @@
-.TH SLINKTOOL 1 2007/10/09
+.TH SLINKTOOL 1 2010/03/10
 .SH NAME
 slinktool \- SeedLink client for data stream inspection, data collection
 and server testing
@@ -79,6 +79,10 @@ Configure the connection in "dial-up" mode.  The remote server will
 close the connection when it has sent all of the data in it's buffers
 for the selected data streams.  This is opposed to the normal behavior
 of waiting indefinately for data.
+
+.IP "-b"
+Configure the connection in "batch" mode.  Negotiation with the remote
+server is made faster by minimizing acknowledgement checks.
 
 .IP "-o \fIdumpfile\fR"
 If specified, all packets (Mini-SEED records) received will be
