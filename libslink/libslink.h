@@ -19,7 +19,7 @@
  *   ORFEUS/EC-Project MEREDIAN
  *   IRIS Data Management Center
  *
- * modified: 2008.028
+ * modified: 2010.069
  ***************************************************************************/
 
 
@@ -32,11 +32,11 @@ extern "C" {
 
 #include "slplatform.h"
 
-#define LIBSLINK_VERSION "2.2c"
-#define LIBSLINK_RELEASE "2008.078"
+#define LIBSLINK_VERSION "2.3"
+#define LIBSLINK_RELEASE "2010.069"
   
 #define SLRECSIZE           512      /* Mini-SEED record size */
-#define MAX_HEADER_SIZE     128      /* Max record header size */
+#define MAX_HEADER_SIZE     512      /* Max record header size */
 #define SLHEADSIZE          8        /* SeedLink header size */
 #define SELSIZE             8        /* Maximum selector size */
 #define BUFSIZE             8192     /* Size of receiving buffer */
@@ -214,6 +214,7 @@ typedef struct slcd_s
   int8_t      resume;           /* Boolean flag to control resuming with seq. numbers */
   int8_t      multistation;     /* Boolean flag to indicate multistation mode */
   int8_t      dialup;           /* Boolean flag to indicate dial-up mode */
+  int8_t      batchmode;        /* Batch mode (1 - requested, 2 - activated) */
   int8_t      lastpkttime;      /* Boolean flag to control last packet time usage */
   int8_t      terminate;        /* Boolean flag to control connection termination */
 

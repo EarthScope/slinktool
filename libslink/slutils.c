@@ -888,6 +888,7 @@ sl_newslcd (void)
   slconn->resume         = 1;
   slconn->multistation   = 0;
   slconn->dialup         = 0;
+  slconn->batchmode      = 0;
   slconn->lastpkttime    = 0;
   slconn->terminate      = 0;
   

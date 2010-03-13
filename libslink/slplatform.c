@@ -198,10 +198,10 @@ slp_getaddrinfo (char * nodename, char * nodeport,
   *addrlen = sizeof(inet_addr);
 
 #elif defined(SLP_GLIBC2) || defined(SLP_SOLARIS)
-  /* 512 bytes should be enough for the vast majority of cases.  If
+  /* 1024 bytes should be enough for the vast majority of cases.  If
      not (e.g. the node has a lot of aliases) this call will fail. */
 
-  char buffer[512];
+  char buffer[1024];
   struct hostent *result;
   struct hostent result_buffer;
   struct sockaddr_in inet_addr;

@@ -1,3 +1,7 @@
+2010.069: version 2.3
+	- Add BATCH mode support, patch from Andres Heinloo/GFZ.
+	- Increase header search length and hostname resolution buffer (GFZ).
+
 2009.318: version 2.2c
 	- Add proper string limit for snprintf() call in sl_msr_print().
 
@@ -13,7 +17,7 @@
 	by newline characters, from unbuffered IO, i.e. a file descriptor.
 	- Add slp_openfile() to slplatform.[ch] to portably open files.
 	- Change Makefile and src/Makefile to use user defined CC and CFLAGS.
-	
+
 2007.284: version 2.0 (no version change)
 	- Use memchr() instead of strnstr() in network.c for portability.
 	- Add globmatch.obj to Makefile.wat and Makefile.win.
