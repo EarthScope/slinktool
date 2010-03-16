@@ -12,8 +12,8 @@ LIB_OBJS = gswap.o unpack.o msrecord.o genutils.o strutils.o \
            logging.o network.o statefile.o config.o \
            globmatch.o slplatform.o slutils.o
 
-CURRENT_VER = 1.1
-COMPAT_VER = 1.0
+CURRENT_VER = 2.3
+COMPAT_VER = 2.0
 
 LIB_A = libslink.a
 LIB_SO = libslink.so.$(CURRENT_VER)

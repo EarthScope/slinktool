@@ -11,7 +11,7 @@
  * Originally based on the SeedLink interface of the modified Comserv in
  * SeisComP written by Andres Heinloo
  *
- * Version: 2010.069
+ * Version: 2010.075
  ***************************************************************************/
 
 #include <stdio.h>
@@ -938,13 +938,13 @@ sl_sayhello (SLCD * slconn)
       char *extreply = 0;
       
       /* Current capabilities:
-       *   SLPROTO:3.0 = SeedLink protocol version 3.0
+       *   SLPROTO:3.1 = SeedLink protocol version
        *   CAP         = CAPABILITIES command support
        *   EXTREPLY    = Extended reply message handling
        *   NSWILDCARD  = Network and station code wildcard support
        *   BATCH       = BATCH command mode support
        */
-      sprintf (sendstr, "CAPABILITIES SLPROTO:3.0 CAP EXTREPLY NSWILDCARD BATCH\r");
+      sprintf (sendstr, "CAPABILITIES SLPROTO:3.1 CAP EXTREPLY NSWILDCARD BATCH\r");
       
       /* Send CAPABILITIES and recv response */
       sl_log_r (slconn, 1, 2, "[%s] sending: %s\n", slconn->sladdr, sendstr);
@@ -995,7 +995,9 @@ sl_sayhello (SLCD * slconn)
 /***************************************************************************
  * sl_batchmode:
  *
- * Send the BATCH command
+ * Send the BATCH command to switch the connection to batch command
+ * mode, in this mode the server will not send acknowledgments (OK or
+ * ERROR) after recognized commands are submitted.
  *
  * Returns -1 on errors, 0 on success (regardless if the command was accepted).
  * Sets slconn->batchmode accordingly.
@@ -1003,14 +1005,23 @@ sl_sayhello (SLCD * slconn)
 int
 sl_batchmode (SLCD * slconn)
 {
-  /* Enter batchmode if supported by server */
-  char sendstr[100];		/* A buffer for command strings */
-  char readbuf[100];
+  char sendstr[100];    /* A buffer for command strings */
+  char readbuf[100];    /* A buffer for server reply */
   int bytesread = 0;
   
-  sprintf (sendstr, "BATCH\r");
+  if ( ! slconn )
+    return -1;
+  
+  if (sl_checkversion (slconn, 3.1) < 0)
+    {
+      sl_log_r (slconn, 2, 0,
+		"[%s] detected SeedLink version (%.3f) does not support the BATCH command\n",
+		slconn->sladdr, slconn->protocol_ver);
+      return -1;
+    }
   
   /* Send BATCH and recv response */
+  sprintf (sendstr, "BATCH\r");
   sl_log_r (slconn, 1, 2, "[%s] sending: %s\n", slconn->sladdr, sendstr);
   bytesread = sl_senddata (slconn, (void *) sendstr, strlen (sendstr), slconn->sladdr,
 			   readbuf, sizeof (readbuf));
