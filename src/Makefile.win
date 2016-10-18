@@ -1,30 +1,25 @@
 #
 # Nmake file - Windows version
 # Use 'nmake -f Makefile.win'
-#
-# THIS HAS NEVER BEEN TESTED
-# Some modification might be required.
 
 NODEBUG=1
 
-!include <ntwin32.mak>
-
 INCS = /I..\libslink /I..\ezxml
+OPTS = -D_CRT_SECURE_NO_WARNINGS
 LIBS = ..\libslink\libslink.lib ..\ezxml\ezxml.lib ws2_32.lib
 
 BIN = ..\slinktool.exe
 
-cflags = $(cflags) -DWIN32
+OBJS = archive.obj dsarchive.obj slinkxml.obj slinktool.obj
 
 all: $(BIN)
 
-$(BIN):	archive.obj dsarchive.obj slinkxml.obj slinktool.obj
-	link.exe /nologo /out:$(BIN) $(LIBS) archive.obj dsarchive.obj slinkxml.obj slinktool.obj
+$(BIN):	$(OBJS)
+	link.exe /nologo /out:$(BIN) $(LIBS) $(OBJS)
 
 .c.obj:
-   $(cc) /nologo $(cflags) $(cdebug) $(cvarsmt) $(tflags) $(INCS) $<
+	$(CC) /nologo $(CFLAGS) $(INCS) $(OPTS) /c $<
 
 # Clean-up directives
 clean:
 	-del a.out core *.o *.obj *% *~ $(BIN)
-

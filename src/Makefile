@@ -1,40 +1,35 @@
 
-# Standard compiler parameters
-CFLAGS += -I../libslink -I../ezxml
+# Build environment can be configured the following
+# environment variables:
+#   CC : Specify the C compiler to use
+#   CFLAGS : Specify compiler options to use
 
-# GCC specific parameters
-GCC = gcc
-GCCFLAGS = -O2 -Wall -I../libslink -I../ezxml
+# Required compiler parameters
+CFLAGS += -I../libslink -I../ezxml
 
 LDFLAGS = -L../libslink -L../ezxml
 LDLIBS  = -lslink -lezxml
+
+# For Windows w/ Unix-like build environments uncomment the following line
+# This is needed for MinGW but not for Cygwin
+#LDLIBS = -lslink -lws2_32
 
 # For SunOS/Solaris uncomment the following line
 #LDLIBS = -lslink -lezxml -lsocket -lnsl -lrt
 
 BIN  = ../slinktool
 
-OBJS = dsarchive.o archive.o slinkxml.o slinktool.o
+SRCS = dsarchive.c archive.c slinkxml.c slinktool.c
+OBJS = $(SRCS:.c=.o)
 
 all: $(BIN)
 
 $(BIN): $(OBJS)
-	$(CC) $(CFLAGS) -o $(BIN) $(OBJS) $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $(BIN) $(OBJS) $(LDFLAGS) $(LDLIBS)
 
-static: $(OBJS)
-	$(CC) $(CFLAGS) -static -o $(BIN) $(OBJS) $(LDFLAGS) $(LDLIBS)
-
-cc:
-	@$(MAKE) "CC=$(CC)" "CFLAGS=$(CFLAGS)"
-
-gcc:
-	@$(MAKE) "CC=$(GCC)" "CFLAGS=$(GCCFLAGS)"
-
-debug:
-	$(MAKE) "CC=$(CC)" "CFLAGS=-g $(CFLAGS)"
-
-gccdebug:
-	$(MAKE) "CC=$(GCC)" "CFLAGS=-g $(GCCFLAGS)"
+# Standard object building
+.c.o:
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
 	rm -f $(OBJS) $(BIN)
@@ -43,4 +38,3 @@ install:
 	@echo
 	@echo "No install method, copy the binary and man page yourself"
 	@echo
-
