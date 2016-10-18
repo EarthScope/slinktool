@@ -1,3 +1,6 @@
+ezXML next
+- Incorporate changes by rgriege (as of 2016-10-18):
+  https://github.com/rgriege/ezxml
 ezXML 0.8.6
 - fixed a bug in ezxml_add_child() that can occur when adding tags out of order
 - for consistency, ezxml_set_attr() now returns the tag given
