@@ -63,7 +63,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
     {
       if ( fnptr->next != 0 )
 	{
-	  strncat (filename, "/", sizeof(filename));
+	  strncat (filename, "/", sizeof(filename) - 1);
 	  fnptr = fnptr->next;
 	}
       else

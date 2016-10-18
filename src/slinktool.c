@@ -896,7 +896,7 @@ report_environ ()
 
       sl_log (1, 0, "Sta - seqnum: %d\n", curstream->seqnum);
 
-      if (curstream->timestamp)
+      if (curstream->timestamp[0] != '\0')
 	sl_log (1, 0, "Sta - timestamp: %s\n", curstream->timestamp);
       else
 	sl_log (1, 0, "'timestamp' not defined\n");
