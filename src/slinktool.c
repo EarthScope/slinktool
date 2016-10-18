@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2010.069
+ * modified 2016.292
  ***************************************************************************/
 
 #include <stdio.h>
@@ -17,37 +17,36 @@
 #include <time.h>
 
 #ifndef WIN32
-  #include <signal.h>
+#include <signal.h>
 #endif
 
 #include <libslink.h>
 
-#include "slinkxml.h"
 #include "archive.h"
+#include "slinkxml.h"
 
-#define PACKAGE   "slinktool"
-#define VERSION   "4.3"
+#define PACKAGE "slinktool"
+#define VERSION "4.3dev"
 
-/* Idle archive stream timeout */ 
-#define  IDLE_ARCH_STREAM_TIMEOUT  120
+/* Idle archive stream timeout */
+#define IDLE_ARCH_STREAM_TIMEOUT 120
 
-static short int verbose  = 0;      /* flag to control general verbosity */
-static short int pingonly = 0;      /* flag to control ping function */
-static short int ppackets = 0;      /* flag to control printing of data packets */
-static short int psamples = 0;      /* flag to control printing of data samples */
-static int stateint       = 0;      /* packet interval to save statefile */
-static char *archformat   = 0;	    /* format string for a custom structure */
-static char *sdsdir       = 0;	    /* base directory for a SDS structure */
-static char *buddir       = 0;	    /* base directory for a BUD structure */
-static char *statefile    = 0;	    /* state file for saving/restoring the seq. no. */
-static char *dumpfile     = 0;	    /* output file for data dump */
-static FILE *outfile      = 0;      /* the descriptor for the dumpfile */
+static short int verbose  = 0; /* flag to control general verbosity */
+static short int pingonly = 0; /* flag to control ping function */
+static short int ppackets = 0; /* flag to control printing of data packets */
+static short int psamples = 0; /* flag to control printing of data samples */
+static int stateint       = 0; /* packet interval to save statefile */
+static char *archformat   = 0; /* format string for a custom structure */
+static char *sdsdir       = 0; /* base directory for a SDS structure */
+static char *buddir       = 0; /* base directory for a BUD structure */
+static char *statefile    = 0; /* state file for saving/restoring the seq. no. */
+static char *dumpfile     = 0; /* output file for data dump */
+static FILE *outfile      = 0; /* the descriptor for the dumpfile */
 
-static SLCD * slconn;	            /* connection parameters */
+static SLCD *slconn; /* connection parameters */
 
 /* Possible query types */
-static enum
-{
+static enum {
   SLTNoQuery,
   SLTIDQuery,
   SLTStationQuery,
@@ -56,30 +55,29 @@ static enum
   SLTConnectionQuery,
   SLTGenericQuery,
   SLTKeepAliveQuery
-}
-slt_query = SLTNoQuery;
+} slt_query = SLTNoQuery;
 
 /* Functions internal to this source file */
 static void packet_handler (char *msrecord, int packet_type,
-			    int seqnum, int packet_size);
-static int  info_handler (SLMSrecord * msr, int terminate);
+                            int seqnum, int packet_size);
+static int info_handler (SLMSrecord *msr, int terminate);
 
-static int  parameter_proc (int argcount, char **argvec);
+static int parameter_proc (int argcount, char **argvec);
 static char *getoptval (int argcount, char **argvec, int argopt);
 static void print_samples (SLMSrecord *msr);
-static int  ping_server (SLCD *slconn);
+static int ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
 static void report_environ ();
 static void usage (void);
 
 #ifndef WIN32
-  static void term_handler (int sig);
+static void term_handler (int sig);
 #endif
 
 int
 main (int argc, char **argv)
 {
-  SLpacket * slpack;
+  SLpacket *slpack;
   int seqnum;
   int ptype;
   int packetcnt = 0;
@@ -88,7 +86,7 @@ main (int argc, char **argv)
   /* Signal handling, use POSIX calls with standardized semantics */
   struct sigaction sa;
 
-  sa.sa_flags   = SA_RESTART;
+  sa.sa_flags = SA_RESTART;
   sigemptyset (&sa.sa_mask);
 
   sa.sa_handler = term_handler;
@@ -102,67 +100,66 @@ main (int argc, char **argv)
 #endif
 
   /* Allocate and initialize a new connection description */
-  slconn = sl_newslcd();
-  
+  slconn = sl_newslcd ();
+
   /* Process given parameters (command line and parameter file) */
-  if ( parameter_proc (argc, argv) < 0 )
-    {
-      sl_log (2, 0, "parameter processing failed.\n");
-      return -1;
-    }
-  
+  if (parameter_proc (argc, argv) < 0)
+  {
+    sl_log (2, 0, "parameter processing failed.\n");
+    return -1;
+  }
+
   /* Print important parameters if verbose enough */
-  if ( verbose >= 3 )
+  if (verbose >= 3)
     report_environ ();
-  
+
   /* Only do a ping if requested */
-  if ( pingonly )
+  if (pingonly)
     exit (ping_server (slconn));
-  
+
   /* Loop with the connection manager */
-  while ( sl_collect (slconn, &slpack) )
+  while (sl_collect (slconn, &slpack))
+  {
+    ptype  = sl_packettype (slpack);
+    seqnum = sl_sequence (slpack);
+
+    packet_handler ((char *)&slpack->msrecord, ptype, seqnum, SLRECSIZE);
+
+    if (statefile && stateint)
     {
-      ptype  = sl_packettype (slpack);
-      seqnum = sl_sequence (slpack);
-
-      packet_handler ((char *) &slpack->msrecord, ptype, seqnum, SLRECSIZE);
-
-      if ( statefile && stateint )
-        {
-          if ( ++packetcnt >= stateint )
-            {
-              sl_savestate (slconn, statefile);
-              packetcnt = 0;
-            }
-        }
-
-      /* Quit if no streams and terminated INFO is received */
-      if ( slconn->streams == NULL && ptype == SLINFT )
-	break;
+      if (++packetcnt >= stateint)
+      {
+        sl_savestate (slconn, statefile);
+        packetcnt = 0;
+      }
     }
+
+    /* Quit if no streams and terminated INFO is received */
+    if (slconn->streams == NULL && ptype == SLINFT)
+      break;
+  }
 
   /* Shutdown */
-  if ( slconn->link != -1 )
+  if (slconn->link != -1)
     sl_disconnect (slconn);
 
-  if ( dumpfile )
+  if (dumpfile)
     fclose (outfile);
 
-  if ( buddir )
+  if (buddir)
     bud_streamproc (NULL, NULL, 0, 0);
 
-  if ( archformat )
+  if (archformat)
     arch_streamproc (NULL, NULL, 0, 0, 0);
 
-  if ( sdsdir )
+  if (sdsdir)
     sds_streamproc (NULL, NULL, 0, 0, 0);
 
-  if ( statefile )
+  if (statefile)
     sl_savestate (slconn, statefile);
 
   return 0;
-}  /* End of main() */
-
+} /* End of main() */
 
 /***************************************************************************
  * packet_handler:
@@ -171,115 +168,112 @@ main (int argc, char **argv)
 static void
 packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 {
-  static SLMSrecord * msr = NULL;
+  static SLMSrecord *msr = NULL;
 
-  double dtime;			/* Epoch time */
-  double secfrac;		/* Fractional part of epoch time */
-  time_t ttime;			/* Integer part of epoch time */
-  char   timestamp[20];
+  double dtime;   /* Epoch time */
+  double secfrac; /* Fractional part of epoch time */
+  time_t ttime;   /* Integer part of epoch time */
+  char timestamp[20];
   struct tm *timep;
-  int    archflag = 1;
+  int archflag = 1;
 
   /* The following is dependent on the packet type values in libslink.h */
-  char *type[]  = { "Data", "Detection", "Calibration", "Timing",
-		    "Message", "General", "Request", "Info",
-                    "Info (terminated)", "KeepAlive" };
+  char *type[] = {"Data", "Detection", "Calibration", "Timing",
+                  "Message", "General", "Request", "Info",
+                  "Info (terminated)", "KeepAlive"};
 
   /* Build a current local time string */
   dtime   = sl_dtime ();
-  secfrac = (double) ((double)dtime - (int)dtime);
-  ttime   = (time_t) dtime;
+  secfrac = (double)((double)dtime - (int)dtime);
+  ttime   = (time_t)dtime;
   timep   = localtime (&ttime);
   snprintf (timestamp, 20, "%04d.%03d.%02d:%02d:%02d.%01.0f",
-	    timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
-	    timep->tm_min, timep->tm_sec, secfrac);
+            timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
+            timep->tm_min, timep->tm_sec, secfrac);
 
   /* Process waveform data and send it on */
-  if ( packet_type == SLDATA )
-    {
-      sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-	      timestamp, seqnum, type[packet_type]);
+  if (packet_type == SLDATA)
+  {
+    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
+            timestamp, seqnum, type[packet_type]);
 
-      /* Parse data record and print requested detail if any */
-      if ( psamples )
-	sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
-      else
-	sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+    /* Parse data record and print requested detail if any */
+    if (psamples)
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
+    else
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
 
-      if ( ppackets )
-        sl_msr_print (slconn->log, msr, ppackets - 1);
+    if (ppackets)
+      sl_msr_print (slconn->log, msr, ppackets - 1);
 
-      if ( psamples )
-	print_samples (msr);
+    if (psamples)
+      print_samples (msr);
 
-      /* Test for a so-called end-of-detection record */
-      if ( msr->fsdh.samprate_fact == 0 && msr->fsdh.num_samples == 0 )
-	archflag = 0;
-
-      /* Write packet to BUD structure if requested */
-      if ( buddir && archflag )
-	{
-	  if (bud_streamproc (buddir, msr, packet_size,
-			      IDLE_ARCH_STREAM_TIMEOUT))
-	    sl_log (2, 0, "cannot write data to BUD at %s\n", buddir);
-	}
-    }
-  else if ( packet_type == SLINF ||  packet_type == SLINFT )
-    {
-      int terminate;
-
-      sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-	      timestamp, seqnum, type[packet_type]);
-
-      terminate = ( packet_type == SLINFT );
-
-      sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
-      
-      if ( info_handler (msr, terminate) == -2 )
-	{
-	  sl_log (2, 1, "processing of INFO packet failed\n");
-	}
-
+    /* Test for a so-called end-of-detection record */
+    if (msr->fsdh.samprate_fact == 0 && msr->fsdh.num_samples == 0)
       archflag = 0;
-    }
-  else if ( packet_type == SLKEEP )
-    {
-      sl_log (2, 0, "keepalive packet received by packet_handler?!?\n");
 
-      archflag = 0;
+    /* Write packet to BUD structure if requested */
+    if (buddir && archflag)
+    {
+      if (bud_streamproc (buddir, msr, packet_size,
+                          IDLE_ARCH_STREAM_TIMEOUT))
+        sl_log (2, 0, "cannot write data to BUD at %s\n", buddir);
     }
+  }
+  else if (packet_type == SLINF || packet_type == SLINFT)
+  {
+    int terminate;
+
+    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
+            timestamp, seqnum, type[packet_type]);
+
+    terminate = (packet_type == SLINFT);
+
+    sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
+
+    if (info_handler (msr, terminate) == -2)
+    {
+      sl_log (2, 1, "processing of INFO packet failed\n");
+    }
+
+    archflag = 0;
+  }
+  else if (packet_type == SLKEEP)
+  {
+    sl_log (2, 0, "keepalive packet received by packet_handler?!?\n");
+
+    archflag = 0;
+  }
   else
-    {
-      sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-	      timestamp, seqnum, type[packet_type]);
-    }
+  {
+    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
+            timestamp, seqnum, type[packet_type]);
+  }
 
   /* Write packet to dumpfile if defined */
-  if ( dumpfile )
-    {
-      if (fwrite (msrecord, packet_size, 1, outfile) == 0)
-	sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
-    }
+  if (dumpfile)
+  {
+    if (fwrite (msrecord, packet_size, 1, outfile) == 0)
+      sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
+  }
 
   /* Write packet to an archive if requested */
-  if ( archformat && archflag )
-    {
-      if (arch_streamproc (archformat, msr, packet_size, packet_type,
-			   IDLE_ARCH_STREAM_TIMEOUT))
-	sl_log (2, 0, "cannot write data to archive\n");
-
-    }
+  if (archformat && archflag)
+  {
+    if (arch_streamproc (archformat, msr, packet_size, packet_type,
+                         IDLE_ARCH_STREAM_TIMEOUT))
+      sl_log (2, 0, "cannot write data to archive\n");
+  }
 
   /* Write packet to an SDS archive if requested */
-  if ( sdsdir && archflag )
-    {
-      if (sds_streamproc (sdsdir, msr, packet_size, packet_type,
-			  IDLE_ARCH_STREAM_TIMEOUT))
-	sl_log (2, 0, "cannot write data to SDS at %s\n", sdsdir);
-
-    }  
-}  /* End of packet_handler() */
-
+  if (sdsdir && archflag)
+  {
+    if (sds_streamproc (sdsdir, msr, packet_size, packet_type,
+                        IDLE_ARCH_STREAM_TIMEOUT))
+      sl_log (2, 0, "cannot write data to SDS at %s\n", sdsdir);
+  }
+} /* End of packet_handler() */
 
 /***************************************************************************
  * info_handler:
@@ -294,118 +288,117 @@ static int
 info_handler (SLMSrecord *msr, int terminate)
 {
   static char *xml_buffer = 0;
-  static int xml_size = 0;
-  
-  char *xml_bit = (char *) msr->msrecord + msr->fsdh.begin_data;
+  static int xml_size     = 0;
+
+  char *xml_bit   = (char *)msr->msrecord + msr->fsdh.begin_data;
   int xml_bitsize = msr->fsdh.num_samples;
-  
-  ezxml_t xmldoc;  
-    
+
+  ezxml_t xmldoc;
+
   /* Buffer size sanity check: 10MB limit */
-  if ( (xml_size + xml_bitsize) > 10485760 )
-    {
-      sl_log (2, 0, "info_handler(): XML buffer beyond sanity limit\n");
-      
-      if ( xml_buffer )
-	free (xml_buffer);
-      xml_buffer = 0;
-      xml_size = 0;
-      
-      return -2;
-    }
-  
+  if ((xml_size + xml_bitsize) > 10485760)
+  {
+    sl_log (2, 0, "info_handler(): XML buffer beyond sanity limit\n");
+
+    if (xml_buffer)
+      free (xml_buffer);
+    xml_buffer = 0;
+    xml_size   = 0;
+
+    return -2;
+  }
+
   /* Grow XML string buffer, include room (+1) for NULL terminator */
-  if ( (xml_buffer = realloc(xml_buffer, (xml_size + xml_bitsize + 1))) == NULL )
-    {
-      sl_log (2, 0, "info_handler(): XML buffer memory allocation error\n");
-      return -2;
-    }
-  
+  if ((xml_buffer = realloc (xml_buffer, (xml_size + xml_bitsize + 1))) == NULL)
+  {
+    sl_log (2, 0, "info_handler(): XML buffer memory allocation error\n");
+    return -2;
+  }
+
   /* First character is terminator for initial buffer allocation */
-  if ( xml_size == 0 )
-    {
-      *xml_buffer = '\0';
-    }
-  
+  if (xml_size == 0)
+  {
+    *xml_buffer = '\0';
+  }
+
   /* Append new XML to buffer */
   strncat (xml_buffer, xml_bit, xml_bitsize);
   xml_size += xml_bitsize;
-  
-  /* Check for an error condition */
-  if ( ! strncmp(msr->fsdh.channel, "ERR", 3) )
-    {
-      sl_log (2, 0, "INFO type requested is not enabled\n");
-      
-      if ( xml_buffer )
-	free (xml_buffer);
-      xml_buffer = 0;
-      xml_size = 0;
-      
-      return -2;
-    }
-  
-  /* Process the XML if terminated */
-  if ( terminate )
-    {
-      
-      /* Parse the XML if not dumping the raw XML */
-      if ( slt_query != SLTGenericQuery )
-	{
-	  if ( (xmldoc = ezxml_parse_str (xml_buffer, xml_size)) == NULL )
-	    {
-	      sl_log (2, 0, "XML parse error\n");
-	      
-	      if ( xml_buffer )
-		free (xml_buffer);
-	      xml_buffer = 0;
-	      xml_size = 0;
-	      
-	      return -2;
-	    }
-	  
-	  switch (slt_query)
-	    {
-	    case SLTIDQuery:
-	      prtinfo_identification (xmldoc);
-	      break;
-	    case SLTStationQuery:
-	      prtinfo_stations (xmldoc);
-	      break;
-	    case SLTStreamQuery:
-	      prtinfo_streams (xmldoc);
-	      break;
-	    case SLTGapQuery:
-	      prtinfo_gaps (xmldoc);
-	      break;
-	    case SLTConnectionQuery:
-	      prtinfo_connections (xmldoc);
-	      break;
-	    default:
-	      sl_log (2, 0, "info_handler: unrecognized INFO query: %d\n", slt_query);
-	      break;
-	    }
-	  
-	  ezxml_free (xmldoc);
-	}
-      else
-	{
-	  fprintf (stdout, "%s\n", xml_buffer);
-	}
-      
-      /* Clean up */
-      slt_query = SLTNoQuery;
-            
-      if ( xml_buffer )
-	free (xml_buffer);
-      xml_buffer = 0;
-      xml_size = 0;
-      
-      return -1;
-    }
-  
-  return 0;
-}  /* End of info_handler() */
 
+  /* Check for an error condition */
+  if (!strncmp (msr->fsdh.channel, "ERR", 3))
+  {
+    sl_log (2, 0, "INFO type requested is not enabled\n");
+
+    if (xml_buffer)
+      free (xml_buffer);
+    xml_buffer = 0;
+    xml_size   = 0;
+
+    return -2;
+  }
+
+  /* Process the XML if terminated */
+  if (terminate)
+  {
+
+    /* Parse the XML if not dumping the raw XML */
+    if (slt_query != SLTGenericQuery)
+    {
+      if ((xmldoc = ezxml_parse_str (xml_buffer, xml_size)) == NULL)
+      {
+        sl_log (2, 0, "XML parse error\n");
+
+        if (xml_buffer)
+          free (xml_buffer);
+        xml_buffer = 0;
+        xml_size   = 0;
+
+        return -2;
+      }
+
+      switch (slt_query)
+      {
+      case SLTIDQuery:
+        prtinfo_identification (xmldoc);
+        break;
+      case SLTStationQuery:
+        prtinfo_stations (xmldoc);
+        break;
+      case SLTStreamQuery:
+        prtinfo_streams (xmldoc);
+        break;
+      case SLTGapQuery:
+        prtinfo_gaps (xmldoc);
+        break;
+      case SLTConnectionQuery:
+        prtinfo_connections (xmldoc);
+        break;
+      default:
+        sl_log (2, 0, "info_handler: unrecognized INFO query: %d\n", slt_query);
+        break;
+      }
+
+      ezxml_free (xmldoc);
+    }
+    else
+    {
+      fprintf (stdout, "%s\n", xml_buffer);
+    }
+
+    /* Clean up */
+    slt_query = SLTNoQuery;
+
+    if (xml_buffer)
+      free (xml_buffer);
+    xml_buffer = 0;
+    xml_size   = 0;
+
+    return -1;
+  }
+
+  return 0;
+} /* End of info_handler() */
 
 /***************************************************************************
  * parameter_proc:
@@ -419,289 +412,287 @@ parameter_proc (int argcount, char **argvec)
   int error = 0;
   int optind;
 
-  char *streamfile  = 0;	/* stream list file for configuring streams */
+  char *streamfile  = 0; /* stream list file for configuring streams */
   char *multiselect = 0;
   char *selectors   = 0;
   char *timewin     = 0;
   char *tptr;
 
-  SLstrlist *timelist;		/* split the time window arg */
+  SLstrlist *timelist; /* split the time window arg */
 
-  if ( argcount <= 1 )
+  if (argcount <= 1)
     error++;
 
   /* Process all command line arguments */
   for (optind = 1; optind < argcount; optind++)
+  {
+    if (strcmp (argvec[optind], "-V") == 0)
     {
-      if (strcmp (argvec[optind], "-V") == 0)
-        {
-          fprintf(stderr, "%s version: %s\n", PACKAGE, VERSION);
-          exit (0);
-        }
-      else if (strcmp (argvec[optind], "-h") == 0)
-        {
-          usage();
-          exit (0);
-        }
-      else if (strncmp (argvec[optind], "-v", 2) == 0)
-	{
-	  verbose += strspn (&argvec[optind][1], "v");
-	}
-      else if (strcmp (argvec[optind], "-P") == 0)
-        {
-          pingonly = 1;
-        }
-      else if (strncmp (argvec[optind], "-p", 2) == 0)
-        {
-          ppackets += strspn (&argvec[optind][1], "p");
-        }
-      else if (strcmp (argvec[optind], "-u") == 0)
-        {
-          psamples = 1;
-        }
-      else if (strcmp (argvec[optind], "-d") == 0)
-	{
-	  slconn->dialup = 1;
-	}
-      else if (strcmp (argvec[optind], "-b") == 0)
-	{
-	  slconn->batchmode = 1;
-	}
-      else if (strcmp (argvec[optind], "-nt") == 0)
-	{
-	  slconn->netto = atoi (getoptval(argcount, argvec, optind++));
-	}
-      else if (strcmp (argvec[optind], "-nd") == 0)
-	{
-	  slconn->netdly = atoi (getoptval(argcount, argvec, optind++));
-	}
-      else if (strcmp (argvec[optind], "-k") == 0)
-	{
-	  slconn->keepalive = atoi (getoptval(argcount, argvec, optind++));
-	}
-      else if (strcmp (argvec[optind], "-o") == 0)
-	{
-	  dumpfile = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-A") == 0)
-	{
-	  archformat = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-SDS") == 0)
-	{
-	  sdsdir = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-BUD") == 0)
-	{
-	  buddir = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-l") == 0)
-	{
-	  streamfile = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-s") == 0)
-	{
-	  selectors = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-S") == 0)
-	{
-	  multiselect = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-x") == 0)
-	{
-	  statefile = getoptval(argcount, argvec, optind++);
-	}
-      else if (strcmp (argvec[optind], "-i") == 0)
-	{
-	  if ( sl_request_info (slconn, getoptval(argcount, argvec, optind++)) == 0 )
-	    slt_query = SLTGenericQuery;
-	}
-      else if (strcmp (argvec[optind], "-I") == 0)
-	{
-	  if (sl_request_info (slconn, "ID") == 0)
-	    slt_query = SLTIDQuery;
-	}
-      else if (strcmp (argvec[optind], "-L") == 0)
-	{
-	  if (sl_request_info (slconn, "STATIONS") == 0)
-	    slt_query = SLTStationQuery;
-	}
-      else if (strcmp (argvec[optind], "-Q") == 0)
-	{
-	  if (sl_request_info (slconn, "STREAMS") == 0)
-	    slt_query = SLTStreamQuery;
-	}
-      else if (strcmp (argvec[optind], "-G") == 0)
-	{
-	  if (sl_request_info (slconn, "GAPS") == 0)
-	    slt_query = SLTGapQuery;
-	}
-      else if (strcmp (argvec[optind], "-C") == 0)
-	{
-	  if (sl_request_info (slconn, "CONNECTIONS") == 0)
-	    slt_query = SLTConnectionQuery;
-	}
-      else if (strcmp (argvec[optind], "-tw") == 0)
-	{
-	  timewin = getoptval(argcount, argvec, optind++);
-	}
-      else if (strncmp (argvec[optind], "-", 1) == 0)
-        {
-          fprintf (stderr, "Unknown option: %s\n", argvec[optind]);
-          exit (1);
-        }
-      else if (!slconn->sladdr)
-        {
-          slconn->sladdr = argvec[optind];
-        }
-      else
-        {
-          fprintf (stderr, "Unknown option: %s\n", argvec[optind]);
-          exit (1);
-        }
+      fprintf (stderr, "%s version: %s\n", PACKAGE, VERSION);
+      exit (0);
     }
-
-  /* Make sure a server was specified */
-  if ( ! slconn->sladdr )
+    else if (strcmp (argvec[optind], "-h") == 0)
     {
-      fprintf(stderr, "No SeedLink server specified\n\n");
-      fprintf(stderr, "%s version %s\n\n", PACKAGE, VERSION);
-      fprintf(stderr, "Usage: %s [options] [host][:][port]\n\n", PACKAGE);
-      fprintf(stderr, "Try '-h' for detailed help\n");
+      usage ();
+      exit (0);
+    }
+    else if (strncmp (argvec[optind], "-v", 2) == 0)
+    {
+      verbose += strspn (&argvec[optind][1], "v");
+    }
+    else if (strcmp (argvec[optind], "-P") == 0)
+    {
+      pingonly = 1;
+    }
+    else if (strncmp (argvec[optind], "-p", 2) == 0)
+    {
+      ppackets += strspn (&argvec[optind][1], "p");
+    }
+    else if (strcmp (argvec[optind], "-u") == 0)
+    {
+      psamples = 1;
+    }
+    else if (strcmp (argvec[optind], "-d") == 0)
+    {
+      slconn->dialup = 1;
+    }
+    else if (strcmp (argvec[optind], "-b") == 0)
+    {
+      slconn->batchmode = 1;
+    }
+    else if (strcmp (argvec[optind], "-nt") == 0)
+    {
+      slconn->netto = atoi (getoptval (argcount, argvec, optind++));
+    }
+    else if (strcmp (argvec[optind], "-nd") == 0)
+    {
+      slconn->netdly = atoi (getoptval (argcount, argvec, optind++));
+    }
+    else if (strcmp (argvec[optind], "-k") == 0)
+    {
+      slconn->keepalive = atoi (getoptval (argcount, argvec, optind++));
+    }
+    else if (strcmp (argvec[optind], "-o") == 0)
+    {
+      dumpfile = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-A") == 0)
+    {
+      archformat = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-SDS") == 0)
+    {
+      sdsdir = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-BUD") == 0)
+    {
+      buddir = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-l") == 0)
+    {
+      streamfile = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-s") == 0)
+    {
+      selectors = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-S") == 0)
+    {
+      multiselect = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-x") == 0)
+    {
+      statefile = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-i") == 0)
+    {
+      if (sl_request_info (slconn, getoptval (argcount, argvec, optind++)) == 0)
+        slt_query = SLTGenericQuery;
+    }
+    else if (strcmp (argvec[optind], "-I") == 0)
+    {
+      if (sl_request_info (slconn, "ID") == 0)
+        slt_query = SLTIDQuery;
+    }
+    else if (strcmp (argvec[optind], "-L") == 0)
+    {
+      if (sl_request_info (slconn, "STATIONS") == 0)
+        slt_query = SLTStationQuery;
+    }
+    else if (strcmp (argvec[optind], "-Q") == 0)
+    {
+      if (sl_request_info (slconn, "STREAMS") == 0)
+        slt_query = SLTStreamQuery;
+    }
+    else if (strcmp (argvec[optind], "-G") == 0)
+    {
+      if (sl_request_info (slconn, "GAPS") == 0)
+        slt_query = SLTGapQuery;
+    }
+    else if (strcmp (argvec[optind], "-C") == 0)
+    {
+      if (sl_request_info (slconn, "CONNECTIONS") == 0)
+        slt_query = SLTConnectionQuery;
+    }
+    else if (strcmp (argvec[optind], "-tw") == 0)
+    {
+      timewin = getoptval (argcount, argvec, optind++);
+    }
+    else if (strncmp (argvec[optind], "-", 1) == 0)
+    {
+      fprintf (stderr, "Unknown option: %s\n", argvec[optind]);
       exit (1);
     }
+    else if (!slconn->sladdr)
+    {
+      slconn->sladdr = argvec[optind];
+    }
+    else
+    {
+      fprintf (stderr, "Unknown option: %s\n", argvec[optind]);
+      exit (1);
+    }
+  }
+
+  /* Make sure a server was specified */
+  if (!slconn->sladdr)
+  {
+    fprintf (stderr, "No SeedLink server specified\n\n");
+    fprintf (stderr, "%s version %s\n\n", PACKAGE, VERSION);
+    fprintf (stderr, "Usage: %s [options] [host][:][port]\n\n", PACKAGE);
+    fprintf (stderr, "Try '-h' for detailed help\n");
+    exit (1);
+  }
 
   /* Initialize the verbosity for the sl_log function */
   sl_loginit (verbose, NULL, NULL, NULL, NULL);
 
   /* Open dumpfile if requested */
   if (dumpfile)
+  {
+    if (!strcmp (dumpfile, "-"))
     {
-      if (!strcmp (dumpfile, "-"))
-	{
-	  /* Re-direct all messages to standard error */
-	  sl_loginit (verbose, &print_stderr, NULL, &print_stderr, NULL);
+      /* Re-direct all messages to standard error */
+      sl_loginit (verbose, &print_stderr, NULL, &print_stderr, NULL);
 
-	  outfile = stdout;
-	  setvbuf (stdout, NULL, _IONBF, 0);
-	}
-      else if ((outfile = fopen (dumpfile, "a+b")) != NULL)
-	{
-	  setvbuf (outfile, NULL, _IONBF, 0);
-	}
-      else
-	{
-	  sl_log (2, 0, "cannot open dumpfile: %s\n", dumpfile);
-	  exit (1);
-	}
+      outfile = stdout;
+      setvbuf (stdout, NULL, _IONBF, 0);
     }
+    else if ((outfile = fopen (dumpfile, "a+b")) != NULL)
+    {
+      setvbuf (outfile, NULL, _IONBF, 0);
+    }
+    else
+    {
+      sl_log (2, 0, "cannot open dumpfile: %s\n", dumpfile);
+      exit (1);
+    }
+  }
 
   /* Report the program version */
   sl_log (1, 1, "%s version: %s\n", PACKAGE, VERSION);
 
   /* If errors then report the usage message and quit */
   if (error)
-    {
-      usage ();
-      exit (1);
-    }
-  
+  {
+    usage ();
+    exit (1);
+  }
+
   /* Make sure we print basic packet details if printing samples */
-  if ( psamples && ppackets == 0 )
+  if (psamples && ppackets == 0)
     ppackets = 1;
-  
+
   /* Load the stream list from a file if specified */
-  if ( streamfile )
+  if (streamfile)
     sl_read_streamlist (slconn, streamfile, selectors);
-  
+
   /* Split the time window argument */
-  if ( timewin )
+  if (timewin)
+  {
+    SLstrlist *timeptr;
+
+    if (strchr (timewin, ':') == NULL)
     {
-      SLstrlist *timeptr;
-      
-      if (strchr (timewin, ':') == NULL)
-	{
-	  sl_log (2, 0, "time window not in begin:[end] format\n");
-	  return -1;
-	}
-      
-      if (sl_strparse (timewin, ":", &timelist) > 2)
-	{
-	  sl_log (2, 0, "time window not in begin:[end] format\n");
-	  return -1;
-	}
-      
-      timeptr = timelist;
-      
-      if (strlen (timeptr->element) == 0)
-	{
-	  sl_log (2, 0, "time window must specify a begin time\n");
-	  return -1;
-	}
-
-      slconn->begin_time = strdup (timeptr->element);
-      
-      timeptr = timeptr->next;
-
-      if (timeptr != 0)
-	{
-	  slconn->end_time = strdup (timeptr->element);
-
-	  if (timeptr->next != 0)
-	    {
-	      sl_log (2, 0, "malformed time window specification\n");
-	      return -1;
-
-	    }
-	}
-      
-      /* Free the parsed list */
-      sl_strparse (NULL, NULL, &timelist);
+      sl_log (2, 0, "time window not in begin:[end] format\n");
+      return -1;
     }
-  
+
+    if (sl_strparse (timewin, ":", &timelist) > 2)
+    {
+      sl_log (2, 0, "time window not in begin:[end] format\n");
+      return -1;
+    }
+
+    timeptr = timelist;
+
+    if (strlen (timeptr->element) == 0)
+    {
+      sl_log (2, 0, "time window must specify a begin time\n");
+      return -1;
+    }
+
+    slconn->begin_time = strdup (timeptr->element);
+
+    timeptr = timeptr->next;
+
+    if (timeptr != 0)
+    {
+      slconn->end_time = strdup (timeptr->element);
+
+      if (timeptr->next != 0)
+      {
+        sl_log (2, 0, "malformed time window specification\n");
+        return -1;
+      }
+    }
+
+    /* Free the parsed list */
+    sl_strparse (NULL, NULL, &timelist);
+  }
+
   /* Parse the 'multiselect' string following '-S' */
-  if ( multiselect )
-    {
-      if ( sl_parse_streamlist (slconn, multiselect, selectors) == -1 )
-	return -1;
-    }
-  else if ( slconn->streams == NULL && slconn->info == NULL )
-    {		         /* No 'streams' array, assuming uni-station mode */
-      sl_setuniparams (slconn, selectors, -1, 0);
-    }
+  if (multiselect)
+  {
+    if (sl_parse_streamlist (slconn, multiselect, selectors) == -1)
+      return -1;
+  }
+  else if (slconn->streams == NULL && slconn->info == NULL)
+  { /* No 'streams' array, assuming uni-station mode */
+    sl_setuniparams (slconn, selectors, -1, 0);
+  }
 
   /* Attempt to recover sequence numbers from state file */
   if (statefile)
+  {
+    /* Check if interval was specified for state saving */
+    if ((tptr = strchr (statefile, ':')) != NULL)
     {
-      /* Check if interval was specified for state saving */
-      if ((tptr = strchr (statefile, ':')) != NULL)
-        {
-          char *tail;
-           
-          *tptr++ = '\0';
-           
-          stateint = (unsigned int) strtoul (tptr, &tail, 0);
-           
-          if ( *tail || (stateint < 0 || stateint > 1e9) )
-            {
-              sl_log (2, 0, "state saving interval specified incorrectly\n");
-              return -1;
-            }
-        }
+      char *tail;
 
-      if (sl_recoverstate (slconn, statefile) < 0)
-	{
-	  sl_log (2, 0, "state recovery failed\n");
-	}
+      *tptr++ = '\0';
+
+      stateint = (unsigned int)strtoul (tptr, &tail, 0);
+
+      if (*tail || (stateint < 0 || stateint > 1e9))
+      {
+        sl_log (2, 0, "state saving interval specified incorrectly\n");
+        return -1;
+      }
     }
 
-  return 0;
-}  /* End of parameter_proc() */
+    if (sl_recoverstate (slconn, statefile) < 0)
+    {
+      sl_log (2, 0, "state recovery failed\n");
+    }
+  }
 
+  return 0;
+} /* End of parameter_proc() */
 
 /***************************************************************************
  * getoptval:
- * Return the value to a command line option; checking that the value is 
+ * Return the value to a command line option; checking that the value is
  * itself not an option (starting with '-') and is not past the end of
  * the argument list.
  *
@@ -714,25 +705,25 @@ parameter_proc (int argcount, char **argvec)
 static char *
 getoptval (int argcount, char **argvec, int argopt)
 {
-  if ( argvec == NULL || argvec[argopt] == NULL ) {
+  if (argvec == NULL || argvec[argopt] == NULL)
+  {
     fprintf (stderr, "getoptval(): NULL option requested\n");
     exit (1);
   }
-  
+
   /* Special case of '-o -' usage */
-  if ( (argopt+1) < argcount && strcmp (argvec[argopt], "-o") == 0 )
-    if ( strcmp (argvec[argopt+1], "-") == 0 )
-      return argvec[argopt+1];
-  
-  if ( (argopt+1) < argcount && *argvec[argopt+1] != '-' )
-    return argvec[argopt+1];
+  if ((argopt + 1) < argcount && strcmp (argvec[argopt], "-o") == 0)
+    if (strcmp (argvec[argopt + 1], "-") == 0)
+      return argvec[argopt + 1];
+
+  if ((argopt + 1) < argcount && *argvec[argopt + 1] != '-')
+    return argvec[argopt + 1];
 
   fprintf (stderr, "Option %s requires a value\n", argvec[argopt]);
   exit (1);
 
   return NULL; /* To stop compiler warnings about no return */
-}  /* End of getoptval() */
-
+} /* End of getoptval() */
 
 /***************************************************************************
  * print_samples:
@@ -742,24 +733,24 @@ static void
 print_samples (SLMSrecord *msr)
 {
   int line, lines, col, cnt;
-  
-  if ( msr->datasamples != NULL ) {
-    lines = (msr->numsamples / 6) + 1;
-    
-    for ( cnt = 0, line = 0; line < lines; line++ )
-      {
-	for ( col = 0; col < 6 ; col ++ )
-	  {
-	    if ( cnt < msr->numsamples )
-	      sl_log (0, 0, "%10d  ", *(msr->datasamples + cnt++));
-	  }
-	sl_log (0, 0, "\n");
-      }
-  }
-  
-  return;
-}  /* End of print_samples() */
 
+  if (msr->datasamples != NULL)
+  {
+    lines = (msr->numsamples / 6) + 1;
+
+    for (cnt = 0, line = 0; line < lines; line++)
+    {
+      for (col = 0; col < 6; col++)
+      {
+        if (cnt < msr->numsamples)
+          sl_log (0, 0, "%10d  ", *(msr->datasamples + cnt++));
+      }
+      sl_log (0, 0, "\n");
+    }
+  }
+
+  return;
+} /* End of print_samples() */
 
 /***************************************************************************
  * ping_server:
@@ -774,27 +765,26 @@ ping_server (SLCD *slconn)
   char serverid[100];
   char site[100];
   int retval;
-  
+
   retval = sl_ping (slconn, serverid, site);
-  
-  if ( retval == 0 )
-    {
-      sl_log (0, 0, "%s\n%s\n", serverid, site);
-    }
-  else if ( retval == -1 )
-    {
-      sl_log (1, 0, "Bad response from server, not SeedLink?\n");
-      retval = 1;
-    }
-  else if ( retval == -2 )
-    {
-      sl_log (1, 0, "Could not open network connection\n");
-      retval = 1;
-    }
+
+  if (retval == 0)
+  {
+    sl_log (0, 0, "%s\n%s\n", serverid, site);
+  }
+  else if (retval == -1)
+  {
+    sl_log (1, 0, "Bad response from server, not SeedLink?\n");
+    retval = 1;
+  }
+  else if (retval == -2)
+  {
+    sl_log (1, 0, "Could not open network connection\n");
+    retval = 1;
+  }
 
   return retval;
-}  /* End of ping_server() */
-
+} /* End of ping_server() */
 
 /***************************************************************************
  * print_stderr:
@@ -806,7 +796,6 @@ print_stderr (const char *message)
   fprintf (stderr, "%s", message);
   return;
 }
-
 
 /***************************************************************************
  * report_environ:
@@ -878,33 +867,32 @@ report_environ ()
 
   sl_log (1, 0, "'streams' array:\n");
   while (curstream != NULL)
-    {
-      if (curstream->net)
-	sl_log (1, 0, "Sta - net: %s\n", curstream->net);
-      else
-	sl_log (1, 0, "'net' not defined\n");
+  {
+    if (curstream->net)
+      sl_log (1, 0, "Sta - net: %s\n", curstream->net);
+    else
+      sl_log (1, 0, "'net' not defined\n");
 
-      if (curstream->sta)
-	sl_log (1, 0, "Sta - sta: %s\n", curstream->sta);
-      else
-	sl_log (1, 0, "'sta' not defined\n");
+    if (curstream->sta)
+      sl_log (1, 0, "Sta - sta: %s\n", curstream->sta);
+    else
+      sl_log (1, 0, "'sta' not defined\n");
 
-      if (curstream->selectors)
-	sl_log (1, 0, "Sta - selectors: %s\n", curstream->selectors);
-      else
-	sl_log (1, 0, "'selectors' not defined\n");
+    if (curstream->selectors)
+      sl_log (1, 0, "Sta - selectors: %s\n", curstream->selectors);
+    else
+      sl_log (1, 0, "'selectors' not defined\n");
 
-      sl_log (1, 0, "Sta - seqnum: %d\n", curstream->seqnum);
+    sl_log (1, 0, "Sta - seqnum: %d\n", curstream->seqnum);
 
-      if (curstream->timestamp[0] != '\0')
-	sl_log (1, 0, "Sta - timestamp: %s\n", curstream->timestamp);
-      else
-	sl_log (1, 0, "'timestamp' not defined\n");
+    if (curstream->timestamp[0] != '\0')
+      sl_log (1, 0, "Sta - timestamp: %s\n", curstream->timestamp);
+    else
+      sl_log (1, 0, "'timestamp' not defined\n");
 
-      curstream = curstream->next;
-    }
-}  /* End of report_environ() */
-
+    curstream = curstream->next;
+  }
+} /* End of report_environ() */
 
 #ifndef WIN32
 /***************************************************************************
@@ -914,10 +902,9 @@ report_environ ()
 static void
 term_handler (int sig)
 {
-  sl_terminate(slconn);
+  sl_terminate (slconn);
 }
 #endif
-
 
 /***************************************************************************
  * usage:
@@ -929,50 +916,50 @@ usage (void)
   fprintf (stderr, "%s version %s\n\n", PACKAGE, VERSION);
   fprintf (stderr, "Usage: %s [options] [host][:][port]\n\n", PACKAGE);
   fprintf (stderr,
-	   " ## General program options ##\n"
-	   " -V              report program version\n"
-	   " -h              show this usage message\n"
-	   " -v              be more verbose, multiple flags can be used\n"
-	   " -P              ping the server, report the server ID and exit\n"
-	   " -p              print details of data packets, multiple flags can be used\n"
-	   " -u              print unpacked samples of data packets\n\n"
-	   " -nd delay       network re-connect delay (seconds), default 30\n"
-	   " -nt timeout     network timeout (seconds), re-establish connection if no\n"
-	   "                   data/keepalives are received in this time, default 600\n"
-	   " -k interval     send keepalive (heartbeat) packets this often (seconds)\n"
-	   " -x sfile[:int]  save/restore stream state information to this file\n"
-	   " -d              configure the connection in dial-up mode\n"
-	   " -b              configure the connection in batch mode\n"
-	   "\n"
-	   " ## Data stream selection ##\n"
-	   " -s selectors    selectors for uni-station or default for multi-station mode\n"
-	   " -l listfile     read a stream list from this file for multi-station mode\n"
+           " ## General program options ##\n"
+           " -V              report program version\n"
+           " -h              show this usage message\n"
+           " -v              be more verbose, multiple flags can be used\n"
+           " -P              ping the server, report the server ID and exit\n"
+           " -p              print details of data packets, multiple flags can be used\n"
+           " -u              print unpacked samples of data packets\n\n"
+           " -nd delay       network re-connect delay (seconds), default 30\n"
+           " -nt timeout     network timeout (seconds), re-establish connection if no\n"
+           "                   data/keepalives are received in this time, default 600\n"
+           " -k interval     send keepalive (heartbeat) packets this often (seconds)\n"
+           " -x sfile[:int]  save/restore stream state information to this file\n"
+           " -d              configure the connection in dial-up mode\n"
+           " -b              configure the connection in batch mode\n"
+           "\n"
+           " ## Data stream selection ##\n"
+           " -s selectors    selectors for uni-station or default for multi-station mode\n"
+           " -l listfile     read a stream list from this file for multi-station mode\n"
            " -S streams      define a stream list for multi-station mode\n"
-	   "   'streams' = 'stream1[:selectors1],stream2[:selectors2],...'\n"
-	   "        'stream' is in NET_STA format, for example:\n"
-	   "        -S \"IU_KONO:BHE BHN,GE_WLF,MN_AQU:HH?.D\"\n\n"
-	   " -tw begin:[end]  (requires SeedLink >= 3)\n"
-	   "        specify a time window in year,month,day,hour,min,sec format\n"
-	   "        example: -tw 2002,08,05,14,00,00:2002,08,05,14,15,00\n"
-	   "        the end time is optional, but the colon must be present\n"
-	   "\n"
-	   " ## Data saving options ##\n"
-	   " -o dumpfile     write all received records to this file\n"
-	   " -A format       save all received records is a custom file structure\n"
-	   " -SDS SDSdir     save all received records in a SDS file structure\n"
-	   " -BUD BUDdir     save all received data records in a BUD file structure\n"
-	   "\n"
-	   " ## Data server  information ## (requires SeedLink >= 3)\n"
-	   " -i type         send info request, type is one of the following:\n"
-	   "                   ID, CAPABILITIES, STATIONS, STREAMS, GAPS, CONNECTIONS, ALL\n"
-	   "                   the returned raw XML is displayed when using this option\n"
-	   " -I              print formatted server id and version\n"
-	   " -L              print formatted station list (if supported by server)\n"
-	   " -Q              print formatted stream list (if supported by server)\n"
-	   " -G              print formatted gap list (if supported by server)\n"
-	   " -C              print formatted connection list (if supported by server)\n"
-	   "\n"
-	   " [host][:][port] Address of the SeedLink server in host:port format\n"
-	   "                   Default host is 'localhost' and default port is '18000'\n");
+           "   'streams' = 'stream1[:selectors1],stream2[:selectors2],...'\n"
+           "        'stream' is in NET_STA format, for example:\n"
+           "        -S \"IU_KONO:BHE BHN,GE_WLF,MN_AQU:HH?.D\"\n\n"
+           " -tw begin:[end]  (requires SeedLink >= 3)\n"
+           "        specify a time window in year,month,day,hour,min,sec format\n"
+           "        example: -tw 2002,08,05,14,00,00:2002,08,05,14,15,00\n"
+           "        the end time is optional, but the colon must be present\n"
+           "\n"
+           " ## Data saving options ##\n"
+           " -o dumpfile     write all received records to this file\n"
+           " -A format       save all received records is a custom file structure\n"
+           " -SDS SDSdir     save all received records in a SDS file structure\n"
+           " -BUD BUDdir     save all received data records in a BUD file structure\n"
+           "\n"
+           " ## Data server  information ## (requires SeedLink >= 3)\n"
+           " -i type         send info request, type is one of the following:\n"
+           "                   ID, CAPABILITIES, STATIONS, STREAMS, GAPS, CONNECTIONS, ALL\n"
+           "                   the returned raw XML is displayed when using this option\n"
+           " -I              print formatted server id and version\n"
+           " -L              print formatted station list (if supported by server)\n"
+           " -Q              print formatted stream list (if supported by server)\n"
+           " -G              print formatted gap list (if supported by server)\n"
+           " -C              print formatted connection list (if supported by server)\n"
+           "\n"
+           " [host][:][port] Address of the SeedLink server in host:port format\n"
+           "                   Default host is 'localhost' and default port is '18000'\n");
 
-}  /* End of usage() */
+} /* End of usage() */

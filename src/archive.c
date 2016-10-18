@@ -8,14 +8,13 @@
  * modified: 2006.355
  ***************************************************************************/
 
-#include <string.h>
 #include <libslink.h>
+#include <string.h>
 
 #include "dsarchive.h"
 
-
 /***************************************************************************
- * arch_streamproc(): 
+ * arch_streamproc():
  * Save MiniSEED records in a custom directory/file structure.  The
  * appropriate directories and files are created if nesecessary.  If
  * files already exist they are appended to.  If both 'archformat' and
@@ -26,27 +25,26 @@
  ***************************************************************************/
 int
 arch_streamproc (const char *archformat, const SLMSrecord *msr, int reclen,
-		 int type, int idletimeout)
+                 int type, int idletimeout)
 {
   static DataStream *streamroot = NULL;
   char format[400];
 
   /* Check if this is a call to shut everything down */
   if (archformat == NULL && msr == NULL)
-    {
-      sl_log (0, 1, "Shutting down stream archiving\n");
-      ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
-      return 0;
-    }
+  {
+    sl_log (0, 1, "Shutting down stream archiving\n");
+    ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
+    return 0;
+  }
 
-  strncpy (format, archformat, sizeof(format) - 1);
+  strncpy (format, archformat, sizeof (format) - 1);
 
   return ds_streamproc (&streamroot, format, msr, reclen, type, idletimeout);
-}				/* End of arch_streamproc() */
-
+} /* End of arch_streamproc() */
 
 /***************************************************************************
- * sds_streamproc(): 
+ * sds_streamproc():
  * Save MiniSEED records in an SDS directory/file structure.  The
  * appropriate directories and files are created if nesecessary.  If
  * files already exist they are appended to.  If both 'basedir' and
@@ -57,29 +55,28 @@ arch_streamproc (const char *archformat, const SLMSrecord *msr, int reclen,
  ***************************************************************************/
 int
 sds_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
-		int type, int idletimeout)
+                int type, int idletimeout)
 {
   static DataStream *streamroot = NULL;
   char format[400];
 
   /* Check if this is a call to shut everything down */
   if (basedir == NULL && msr == NULL)
-    {
-      sl_log (0, 1, "Shutting down SDS archiving\n");
-      ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
-      return 0;
-    }
+  {
+    sl_log (0, 1, "Shutting down SDS archiving\n");
+    ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
+    return 0;
+  }
 
-  snprintf (format, sizeof(format),
-	    "%s/%%Y/%%n/%%s/%%c.%%t/%%n.%%s.%%l.%%c.%%t.%%Y.%%j",
-	    basedir);
+  snprintf (format, sizeof (format),
+            "%s/%%Y/%%n/%%s/%%c.%%t/%%n.%%s.%%l.%%c.%%t.%%Y.%%j",
+            basedir);
 
   return ds_streamproc (&streamroot, format, msr, reclen, type, idletimeout);
-}				/* End of sds_streamproc() */
-
+} /* End of sds_streamproc() */
 
 /***************************************************************************
- * bud_streamproc(): 
+ * bud_streamproc():
  * Save MiniSEED records in a BUD directory/file structure.  The
  * appropriate directories and files are created if nesecessary.  If
  * files already exist they are appended to.  If both 'basedir' and 'msr'
@@ -90,26 +87,25 @@ sds_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
  ***************************************************************************/
 int
 bud_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
-	        int idletimeout)
+                int idletimeout)
 {
   static DataStream *streamroot = NULL;
   char format[400];
 
   /* Check if this is a call to shut everything down */
   if (basedir == NULL && msr == NULL)
-    {
-      sl_log (0, 1, "Shutting down BUD archiving\n");
-      ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
-      return 0;
-    }
+  {
+    sl_log (0, 1, "Shutting down BUD archiving\n");
+    ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
+    return 0;
+  }
 
-  snprintf (format, sizeof(format),
-	    "%s/%%n/%%s/%%s.%%n.%%l.%%c.%%Y.%%j",
-	    basedir);
+  snprintf (format, sizeof (format),
+            "%s/%%n/%%s/%%s.%%n.%%l.%%c.%%Y.%%j",
+            basedir);
 
   return ds_streamproc (&streamroot, format, msr, reclen, SLDATA, idletimeout);
-}				/* End of bud_streamproc() */
-
+} /* End of bud_streamproc() */
 
 /***************************************************************************
  * dlog_streamproc():
@@ -124,32 +120,31 @@ bud_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
  ***************************************************************************/
 int
 dlog_streamproc (const char *basedir, const SLMSrecord *msr, int reclen,
-		 int type, int idletimeout)
+                 int type, int idletimeout)
 {
   static DataStream *streamroot = NULL;
   char format[400];
 
   /* Check if this is a call to shut everything down */
   if (basedir == NULL && msr == NULL)
-    {
-      sl_log (0, 1, "Shutting down SC/datalog archiving\n");
-      ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
-      return 0;
-    }
+  {
+    sl_log (0, 1, "Shutting down SC/datalog archiving\n");
+    ds_streamproc (&streamroot, NULL, NULL, 0, 0, 0);
+    return 0;
+  }
 
-  if ( ! strncmp(msr->fsdh.location, "  ", 2) )
-    { /* No location code */
-      snprintf (format, sizeof(format),
-		"%s/%%s/%%c.%%t/%%s.%%n.%%c.%%t.%%Y.%%j.#H#M",
-		basedir);
-    }
+  if (!strncmp (msr->fsdh.location, "  ", 2))
+  { /* No location code */
+    snprintf (format, sizeof (format),
+              "%s/%%s/%%c.%%t/%%s.%%n.%%c.%%t.%%Y.%%j.#H#M",
+              basedir);
+  }
   else
-    { /* Location code present */
-      snprintf (format, sizeof(format),
-		"%s/%%s/%%l.%%c.%%t/%%s.%%n.%%c.%%t.%%Y.%%j.#H#M",
-		basedir);
-    }
+  { /* Location code present */
+    snprintf (format, sizeof (format),
+              "%s/%%s/%%l.%%c.%%t/%%s.%%n.%%c.%%t.%%Y.%%j.#H#M",
+              basedir);
+  }
 
   return ds_streamproc (&streamroot, format, msr, reclen, type, idletimeout);
-}				/* End of dlog_streamproc() */
-
+} /* End of dlog_streamproc() */

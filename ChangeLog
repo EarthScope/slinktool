@@ -1,6 +1,10 @@
-2016.292: version 4.3
+2016.292:
 	- Update libslink to 2.6.
+	- Reformat source code using included clang-format profile.
+	- Fix some compiler warnings.
+	- Clarify/update licenensing to LGPLv3 and add LICENSE.txt.
 	- Cleanup make files, remove unused targets, etc.
+	- Update ezxml source files to fix compiler warnings.
 
 2010.075: version 4.2
 	- Update libslink to 2.3 with batch mode support.
