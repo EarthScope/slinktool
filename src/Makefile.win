@@ -6,7 +6,7 @@ NODEBUG=1
 
 INCS = /I..\libslink /I..\ezxml
 OPTS = -D_CRT_SECURE_NO_WARNINGS
-LIBS = ..\libslink\libslink.lib ..\ezxml\ezxml.lib ws2_32.lib
+LIBS = ..\libslink\libslink.lib ..\ezxml\libezxml.lib ws2_32.lib
 
 BIN = ..\slinktool.exe
 

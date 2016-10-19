@@ -6,11 +6,15 @@
 #include <time.h>
 #include <libslink.h>
 
-#if defined (SLP_WIN32)
+#if defined (SLP_WIN)
   #include <io.h>
   #include <direct.h>
   #define mkdir _mkdir
   #define access _access
+
+ #ifndef F_OK
+    #define F_OK 0 /* Test for existence. */
+  #endif
 #endif
 
 /* For the data stream chains */
