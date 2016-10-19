@@ -182,11 +182,10 @@ prtinfo_connections (ezxml_t xmldoc)
 
   for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next (station))
   {
-    const char *network, *name, *end_seq;
+    const char *network, *name;
 
     network = ezxml_attr (station, "network");
     name    = ezxml_attr (station, "name");
-    end_seq = ezxml_attr (station, "end_seq");
 
     for (connection = ezxml_child (station, "connection"); connection; connection = ezxml_next (connection))
     {
