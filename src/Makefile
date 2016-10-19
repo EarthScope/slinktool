@@ -12,7 +12,7 @@ LDLIBS  = -lslink -lezxml
 
 # For Windows w/ Unix-like build environments uncomment the following line
 # This is needed for MinGW but not for Cygwin
-#LDLIBS = -lslink -lws2_32
+#LDLIBS = -lslink -lezxml -lws2_32
 
 # For SunOS/Solaris uncomment the following line
 #LDLIBS = -lslink -lezxml -lsocket -lnsl -lrt
