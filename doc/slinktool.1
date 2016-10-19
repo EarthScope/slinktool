@@ -1,4 +1,4 @@
-.TH SLINKTOOL 1 2010/03/10
+.TH SLINKTOOL 1 2016/10/19
 .SH NAME
 slinktool \- SeedLink client for data stream inspection, data collection
 and server testing
@@ -53,8 +53,8 @@ The default value is 30 seconds.
 
 .IP "-nt \fItimeout\fR"
 The network timeout (in seconds) for the connection to the SeedLink
-server.  If no data [or keep alive packets?] are received in this 
-time the connection is closed and re-established (after the 
+server.  If no data [or keep alive packets?] are received in this
+time the connection is closed and re-established (after the
 reconnect delay has expired).  The default value is 600 seconds.
 A value of 0 disables the timeout.
 
@@ -105,7 +105,7 @@ subdirectories will be created if necessary.  This option is
 esentially a preset version of '-A' option.  The SDS dir/file
 structure is:
 .nf
-<SDSdir>/<YEAR>/<NET>/<STA>/<CHAN.TYPE>/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
+SDSdir/YEAR/NET/STA/CHAN.TYPE/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
 .fi
 
 .IP "-BUD \fIBUDdir\fR"
@@ -116,7 +116,7 @@ subdirectories will be created if necessary.  This option is
 esentially a preset version of '-A' option.  The BUD dir/file
 structure is:
 .nf
-<BUDdir>/<NET>/<STA>/STA.NET.LOC.CHAN.YEAR.DAY
+BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
 .fi
 
 .IP "-s \fIselectors\fR"
@@ -152,7 +152,7 @@ Warning: time windowing might be disabled on the remote server.
 Send an information request (INFO); the returned raw XML response
 is displayed.  Possible levels are: ID, CAPABILITIES, STATIONS,
 STREAMS, GAPS, CONNECTIONS, ALL.
-.PP
+
 Formatted INFO shortcuts (formats the XML for readability):
 
 .nf
@@ -165,7 +165,7 @@ Formatted INFO shortcuts (formats the XML for readability):
 
 Warning: informational (INFO) messages might be disabled on the server.
 
-.IP "\fI[host][:][port]\fR"
+.IP "[host][:][port]"
 A required argument, specifies the address of the SeedLink server in
 host:port format.  Either the host, port or both can be omitted.  If
 host is omitted then localhost is assumed, i.e. ':18000'
@@ -174,8 +174,7 @@ assumed, i.e. 'localhost' implies 'localhost:18000'.  If only ':' is
 specified 'localhost:18000' is assumed.
 
 .SH "EXAMPLES"
-All-station/Uni-station mode example:
-.IP
+.IP All-station/Uni-station mode example:
 The following would connect to a SeedLink server at slink.host.com
 port 18000 and configure the link in all-station/uni-station mode,
 exactly which data are received depends on the data being served by
@@ -183,7 +182,7 @@ the SeedLink server on that particular port.  Additionally, all of the
 received packets are appended to the file 'data.mseed' and each packet
 received is reported on the standard output.
 
-.B >slinktool -v -o data.mseed slink.host.com:18000
+.B > slinktool -v -o data.mseed slink.host.com:18000
 
 The '-s' argument could be used to indicate selectors to limit the
 type of packets sent by the SeedLink server (without selectors all
@@ -193,38 +192,30 @@ explanation of SeedLink selectors below).  Additionally another
 verbose flag is given, causing slinktool to report detailed
 header information from data records.
 
-.B >slinktool -vv -s 10BHZ.D -o data.mseed slink.host.com:18000
+.B > slinktool -vv -s 10BHZ.D -o data.mseed slink.host.com:18000
 
-.PP
-Multi-station mode example:
-.IP
+.IP Multi-station mode example:
 The following example would connect to a SeedLink server on
 localhost port 18010 and configure the link in multi-station
 mode.  Each station specified with the '-S' argument will be
 requested, optionally specifying selectors for each station.
 
-.nf
-.B >slinktool -v -S GE_WLF,MN_AQU:00???,IU_KONO:BHZ.D :18010
-.fi
+.B > slinktool -v -S GE_WLF,MN_AQU:00???,IU_KONO:BHZ.D :18010
 
 This would request GEOFON station WLF (all data as no selectors
 were indicated), MedNet station AQU with location code 00 (all
 channels) and IU network station KONO (only waveform data) from
 channel BHZ.
 
-Of course, a variety of different data selections can be made
-(only one '-S' option):
+Of course, a variety of different data selections can be made:
 
-.nf
 .B -s 'BHE.D BHN.D' -S 'GE_STU,GE_MALT,GE_WLF'
   (horizontal BH channels, data only)
+
 .B -s BHZ -S GE_STU,GE_WLF,GE_RUE,GE_EIL
   (vertical channels only)
-.fi
 
-.PP
-Wildcarding network and station codes
-.IP
+.IP Wildcarding network and station codes
 Some SeedLink implementation support wildcarding of the network and
 station codes, when this is the case the only two wildcard characters
 recognized are '*' for one or more characters and '?' for any single
@@ -233,9 +224,7 @@ character.
 As an example, all US network data can be requested using the
 following syntax:
 
-.nf
--B -S 'US_*
-.fi
+.B -S 'US_*'
 
 .SH "SeedLink SELECTORS"
 
@@ -283,12 +272,12 @@ flags:
   \fB#\fP : the number (#) character
   \fBt\fP : single character type code:
          D - waveform data packet
-         E - detection packet 
-         C - calibration packet 
-         T - timing packet 
-         L - log packet 
-         O - opaque data packet 
-         U - unknown/general packet 
+         E - detection packet
+         C - calibration packet
+         T - timing packet
+         L - log packet
+         O - opaque data packet
+         U - unknown/general packet
          I - INFO packet
          ? - unidentifiable packet
 .fi
@@ -327,7 +316,7 @@ The stream list file used with the '-l' option is expected to
 define a data stream on each line.  The format of each line is:
 
 .nf
-<net> <station> [selectors]
+Network Station [selectors]
 .fi
 
 The selectors are optional.  If default selectors are also specified
@@ -350,10 +339,6 @@ All diagnostic output from slinktool is printed to standard error
 (stderr), exceptions are when printing Mini-SEED packet details (the
 -p flag), when printing unpacked samples (the -u flag) and when
 printing the raw or formatted responses to INFO requests.
-
-SeedLink is currently distributed as part of the SeisComP
-(Seismological Communication Processor) package.  For more
-information see, http://www.gfz-potsdam.de/geofon/
 
 .SH AUTHOR
 .nf

@@ -1,10 +1,10 @@
 
-slinktool, the all-in-one SeedLink client.
+# slinktool, the all-in-one SeedLink client.
 
-For usage information see the slinktool(1) man page in the 'doc'
-directory.
+For usage information see the [slinktool manual](doc/slinktool.md)
+in the 'doc' directory.
 
--- Building and Installation --
+## Building and Installation
 
 In most environments a simple 'make' will compile the program.
  
@@ -19,7 +19,7 @@ A Makefile.win is included for building for using with Nmake, i.e.
 For further installation simply copy the resulting binary and man page
 (in the 'doc' directory) to appropriate system directories.
 
--- Licensing --
+## Licensing
 
 Copyright (C) 2016 Chad Trabant, IRIS Data Management Center
 
@@ -36,5 +36,3 @@ Lesser General Public License (GNU-LGPL) for more details.
 You should have received a copy of the GNU Lesser General Public
 License along with this software.
 If not, see <https://www.gnu.org/licenses/>.
-
-
