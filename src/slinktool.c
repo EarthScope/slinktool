@@ -8,7 +8,7 @@
  *
  * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
  *
- * modified 2016.292
+ * modified 2016.293
  ***************************************************************************/
 
 #include <stdio.h>
@@ -16,7 +16,7 @@
 #include <string.h>
 #include <time.h>
 
-#ifndef WIN32
+#ifndef SLP_WIN
 #include <signal.h>
 #endif
 
@@ -26,7 +26,7 @@
 #include "slinkxml.h"
 
 #define PACKAGE "slinktool"
-#define VERSION "4.3dev"
+#define VERSION "4.3"
 
 /* Idle archive stream timeout */
 #define IDLE_ARCH_STREAM_TIMEOUT 120
@@ -70,7 +70,7 @@ static void print_stderr (const char *message);
 static void report_environ ();
 static void usage (void);
 
-#ifndef WIN32
+#ifndef SLP_WIN
 static void term_handler (int sig);
 #endif
 
@@ -82,7 +82,7 @@ main (int argc, char **argv)
   int ptype;
   int packetcnt = 0;
 
-#ifndef WIN32
+#ifndef SLP_WIN
   /* Signal handling, use POSIX calls with standardized semantics */
   struct sigaction sa;
 
@@ -894,7 +894,7 @@ report_environ ()
   }
 } /* End of report_environ() */
 
-#ifndef WIN32
+#ifndef SLP_WIN
 /***************************************************************************
  * term_handler:
  * Signal handler routine to set the termination flag.

@@ -1,4 +1,4 @@
-2016.292:
+2016.293: version 4.3
 	- Update libslink to 2.6.
 	- Reformat source code using included clang-format profile.
 	- Fix some compiler warnings.
