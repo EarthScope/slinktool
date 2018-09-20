@@ -418,7 +418,7 @@ sl_msr_print (SLlog *log, SLMSrecord *msr, int details)
   {
     dsamprate = sl_msr_dnomsamprate (msr);
     sl_log_rl (log, 0, 0, "                 source: %s\n", sourcename);
-    sl_log_rl (log, 0, 0, "             start time: %s  (latency ~%1.1f sec)\n",
+    sl_log_rl (log, 0, 0, "             start time: %s  (latency ~%1.4f sec)\n",
                stime, latency);
     sl_log_rl (log, 0, 0, "      number of samples: %d\n", msr->fsdh.num_samples);
     sl_log_rl (log, 0, 0, "     sample rate factor: %d\n", msr->fsdh.samprate_fact);
@@ -435,7 +435,7 @@ sl_msr_print (SLlog *log, SLMSrecord *msr, int details)
   else
   {
     sl_msr_dsamprate (msr, &dsamprate);
-    sl_log_rl (log, 0, 0, "%s, %d samples, %.10g Hz, %s (latency ~%1.1f sec)\n",
+    sl_log_rl (log, 0, 0, "%s, %d samples, %.10g Hz, %s (latency ~%1.4f sec)\n",
                sourcename, msr->fsdh.num_samples, dsamprate, stime, latency);
   }
 
