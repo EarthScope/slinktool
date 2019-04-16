@@ -232,7 +232,8 @@ sl_msr_parse_size (SLlog *log, const char *msrecord, SLMSrecord **ppmsr,
   /* Sanity check for msr/quality indicator */
   if (msr->fsdh.dhq_indicator != 'D' &&
       msr->fsdh.dhq_indicator != 'R' &&
-      msr->fsdh.dhq_indicator != 'Q')
+      msr->fsdh.dhq_indicator != 'Q' &&
+      msr->fsdh.dhq_indicator != 'M' )
   {
     sl_log_rl (log, 2, 0, "record header/quality indicator unrecognized: %c\n",
                msr->fsdh.dhq_indicator);
