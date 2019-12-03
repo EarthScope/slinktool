@@ -123,7 +123,7 @@ main (int argc, char **argv)
     ptype  = sl_packettype (slpack);
     seqnum = sl_sequence (slpack);
 
-    packet_handler ((char *)&slpack->msrecord, ptype, seqnum, SLRECSIZE);
+    packet_handler ((char *)&slpack->msrecord, ptype, seqnum, sl_recsize (slpack, SLRECSIZE));
 
     if (statefile && stateint)
     {
@@ -194,14 +194,14 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   /* Process waveform data and send it on */
   if (packet_type == SLDATA)
   {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
+    sl_log (1, 1, "%s, seq %d, Received a %d-byte %s record\n",
+            timestamp, seqnum, packet_size, type[packet_type]);
 
     /* Parse data record and print requested detail if any */
     if (psamples)
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
+      sl_msr_parse_size (slconn->log, msrecord, &msr, 1, 1, packet_size);
     else
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+      sl_msr_parse_size (slconn->log, msrecord, &msr, 1, 0, packet_size);
 
     if (ppackets)
       sl_msr_print (slconn->log, msr, ppackets - 1);
@@ -225,12 +225,12 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   {
     int terminate;
 
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
+    sl_log (1, 1, "%s, seq %d, Received a %d-byte %s record\n",
+            timestamp, seqnum, packet_size, type[packet_type]);
 
     terminate = (packet_type == SLINFT);
 
-    sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
+    sl_msr_parse_size (slconn->log, msrecord, &msr, 0, 0, packet_size);
 
     if (info_handler (msr, terminate) == -2)
     {
@@ -247,8 +247,8 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   }
   else
   {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
+    sl_log (1, 1, "%s, seq %d, Received a %d-byte %s record\n",
+            timestamp, seqnum, packet_size, type[packet_type]);
   }
 
   /* Write packet to dumpfile if defined */
