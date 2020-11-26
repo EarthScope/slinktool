@@ -16,11 +16,11 @@
 #include <string.h>
 #include <time.h>
 
+#include <libslink.h>
+
 #ifndef SLP_WIN
 #include <signal.h>
 #endif
-
-#include <libslink.h>
 
 #include "archive.h"
 #include "slinkxml.h"
@@ -894,11 +894,11 @@ report_environ ()
   }
 } /* End of report_environ() */
 
-#ifndef SLP_WIN
 /***************************************************************************
  * term_handler:
  * Signal handler routine to set the termination flag.
  ***************************************************************************/
+#ifndef SLP_WIN
 static void
 term_handler (int sig)
 {
