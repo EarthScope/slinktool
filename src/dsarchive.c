@@ -231,8 +231,8 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
         if (errno == ENOENT)
         {
           sl_log (0, 1, "Creating directory: %s\n", filename);
-#if defined(SLP_WIN)
-          if (mkdir (filename))
+#ifdef SLP_WIN
+          if (_mkdir (filename))
           {
             sl_log (0, 1, "ds_streamproc: mkdir(%s) %s\n", filename,
                     strerror (errno));
@@ -251,7 +251,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
         }
         else
         {
-          sl_log (1, 0, "%d: access denied, %s\n", filename, strerror (errno));
+          sl_log (1, 0, "%s: access denied, %s\n", filename, strerror (errno));
           sl_strparse (NULL, NULL, &fnlist);
           return -1;
         }
