@@ -399,6 +399,8 @@ ds_getstream (DataStream **streamroot, const SLMSrecord *msr,
       sl_log (1, 0, "opening new data stream file, %s\n", strerror (errno));
       return NULL;
     }
+    sl_log (0, 0, "New data stream file created: %s\n", filename);
+    fflush(stdout);
 
     setvbuf (foundstream->filep, NULL, _IONBF, 0);
   }
