@@ -392,6 +392,13 @@ ds_getstream (DataStream **streamroot, const SLMSrecord *msr,
   /* If no file is open, well, open it */
   if (foundstream->filep == NULL)
   {
+    int newfile = 0;   /* a marker to log new file creation */
+    if (access(filename, F_OK) != 0)
+    {
+      /* file doesn't exist, remind it */
+      newfile = 1;
+    }
+
     sl_log (0, 2, "Creating new data stream file\n");
 
     if ((foundstream->filep = fopen (filename, "ab")) == NULL)
@@ -399,8 +406,12 @@ ds_getstream (DataStream **streamroot, const SLMSrecord *msr,
       sl_log (1, 0, "opening new data stream file, %s\n", strerror (errno));
       return NULL;
     }
-    sl_log (0, 0, "New data stream file created: %s\n", filename);
-    fflush(stdout);
+    if (newfile == 1)
+    {
+      /* It's a new file, log it*/
+      sl_log (0, 0, "New data stream file created: %s\n", filename);
+      fflush(stdout);
+    }
 
     setvbuf (foundstream->filep, NULL, _IONBF, 0);
   }
