@@ -118,7 +118,7 @@ main (int argc, char **argv)
     exit (ping_server (slconn));
 
   /* Loop with the connection manager */
-  while (sl_collect (slconn, &slpack))
+  while (sl_collect (slconn, &slpack) == SLPACKET)
   {
     ptype  = sl_packettype (slpack);
     seqnum = sl_sequence (slpack);
