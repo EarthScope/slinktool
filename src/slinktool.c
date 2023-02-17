@@ -6,9 +6,8 @@
  * uni or multi-station mode and collects data.  Detailed information about
  * the data received can be printed and the data can be saved to files.
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
- *
- * modified 2016.293
+ * EarthScope Data Services
+ * Initially written with support from ORFEUS/EC-Project MEREDIAN
  ***************************************************************************/
 
 #include <stdio.h>
@@ -26,7 +25,7 @@
 #include "slinkxml.h"
 
 #define PACKAGE "slinktool"
-#define VERSION "4.3"
+#define VERSION "4.4"
 
 /* Idle archive stream timeout */
 #define IDLE_ARCH_STREAM_TIMEOUT 120
@@ -191,37 +190,8 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
             timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
             timep->tm_min, timep->tm_sec, secfrac);
 
-  /* Process waveform data and send it on */
-  if (packet_type == SLDATA)
-  {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
-
-    /* Parse data record and print requested detail if any */
-    if (psamples)
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
-    else
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
-
-    if (ppackets)
-      sl_msr_print (slconn->log, msr, ppackets - 1);
-
-    if (psamples)
-      print_samples (msr);
-
-    /* Test for a so-called end-of-detection record */
-    if (msr->fsdh.samprate_fact == 0 && msr->fsdh.num_samples == 0)
-      archflag = 0;
-
-    /* Write packet to BUD structure if requested */
-    if (buddir && archflag)
-    {
-      if (bud_streamproc (buddir, msr, packet_size,
-                          IDLE_ARCH_STREAM_TIMEOUT))
-        sl_log (2, 0, "cannot write data to BUD at %s\n", buddir);
-    }
-  }
-  else if (packet_type == SLINF || packet_type == SLINFT)
+  /* Handle INFO packets */
+  if (packet_type == SLINF || packet_type == SLINFT)
   {
     int terminate;
 
@@ -239,16 +209,38 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 
     archflag = 0;
   }
+  /* Trap unexpected keep alive packets */
   else if (packet_type == SLKEEP)
   {
     sl_log (2, 0, "keepalive packet received by packet_handler?!?\n");
 
     archflag = 0;
   }
+  /* Handle data stream packets */
   else
   {
     sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
             timestamp, seqnum, type[packet_type]);
+
+    /* Parse data record and print requested detail if any */
+    if (psamples)
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
+    else
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+
+    if (ppackets)
+      sl_msr_print (slconn->log, msr, ppackets - 1);
+
+    if (psamples)
+      print_samples (msr);
+
+    /* Write packet to BUD structure if requested */
+    if (buddir && archflag)
+    {
+      if (bud_streamproc (buddir, msr, packet_size,
+                          IDLE_ARCH_STREAM_TIMEOUT))
+        sl_log (2, 0, "cannot write data to BUD at %s\n", buddir);
+    }
   }
 
   /* Write packet to dumpfile if defined */

@@ -1,3 +1,6 @@
+2023.047: version 4.4
+	- Properly write all data stream packets to archive destinations.
+
 2016.293: version 4.3
 	- Update libslink to 2.6.
 	- Reformat source code using included clang-format profile.

@@ -3,9 +3,8 @@
  * Routines to control the archiving data streams.  These are front ends
  * to the data stream archiving routines in dsarchive.c
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
- *
- * modified: 2006.355
+ * EarthScope Data Services
+ * Initially written with support from ORFEUS/EC-Project MEREDIAN
  ***************************************************************************/
 
 #include <libslink.h>
@@ -15,7 +14,7 @@
 
 /***************************************************************************
  * arch_streamproc():
- * Save MiniSEED records in a custom directory/file structure.  The
+ * Save miniSEED records in a custom directory/file structure.  The
  * appropriate directories and files are created if nesecessary.  If
  * files already exist they are appended to.  If both 'archformat' and
  * 'msr' are NULL then ds_shutdown() will be called to close all open files
