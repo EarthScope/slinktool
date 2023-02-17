@@ -172,7 +172,7 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   double dtime;   /* Epoch time */
   double secfrac; /* Fractional part of epoch time */
   time_t ttime;   /* Integer part of epoch time */
-  char timestamp[20];
+  char timestamp[36] = {0};
   struct tm *timep;
   int archflag = 1;
 
@@ -186,7 +186,7 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   secfrac = (double)((double)dtime - (int)dtime);
   ttime   = (time_t)dtime;
   timep   = localtime (&ttime);
-  snprintf (timestamp, 20, "%04d.%03d.%02d:%02d:%02d.%01.0f",
+  snprintf (timestamp, sizeof(timestamp), "%04d.%03d.%02d:%02d:%02d.%01.0f",
             timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
             timep->tm_min, timep->tm_sec, secfrac);
 

@@ -251,7 +251,7 @@ ds_streamproc (DataStream **streamroot, char *pathformat, const SLMSrecord *msr,
         }
         else
         {
-          sl_log (1, 0, "%d: access denied, %s\n", filename, strerror (errno));
+          sl_log (1, 0, "%s: access denied, %s\n", filename, strerror (errno));
           sl_strparse (NULL, NULL, &fnlist);
           return -1;
         }
