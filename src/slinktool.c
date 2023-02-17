@@ -25,7 +25,7 @@
 #include "slinkxml.h"
 
 #define PACKAGE "slinktool"
-#define VERSION "4.4"
+#define VERSION "4.4.1"
 
 /* Idle archive stream timeout */
 #define IDLE_ARCH_STREAM_TIMEOUT 120
