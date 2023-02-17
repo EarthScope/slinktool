@@ -42,7 +42,7 @@ slinktool [options] [host][:][port]
 
 <b>-p</b>
 
-<p style="padding-left: 30px;">Print details of received Mini-SEED data records. This flag can be used multiple times ("-p -p" or "-pp") for more detail.  One flag: a single summary line for each data packet received.  Two flags: details of the Mini-SEED data records received, including information from fixed header and 100/1000/1001 blockettes.</p>
+<p style="padding-left: 30px;">Print details of received miniSEED data records. This flag can be used multiple times ("-p -p" or "-pp") for more detail.  One flag: a single summary line for each data packet received.  Two flags: details of the miniSEED data records received, including information from fixed header and 100/1000/1001 blockettes.</p>
 
 <b>-u</b>
 
@@ -74,22 +74,22 @@ slinktool [options] [host][:][port]
 
 <b>-o </b><u>dumpfile</u>
 
-<p style="padding-left: 30px;">If specified, all packets (Mini-SEED records) received will be appended to this file.  The file is created if it does not exist.  A special mode for this option is to send all received packets to standard output when the dumpfile is specified as '-'.  In this case all output besides these records will be redirected to standard error.</p>
+<p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be appended to this file.  The file is created if it does not exist.  A special mode for this option is to send all received packets to standard output when the dumpfile is specified as '-'.  In this case all output besides these records will be redirected to standard error.</p>
 
 <b>-A </b><u>format</u>
 
-<p style="padding-left: 30px;">If specified, all packets (Mini-SEED records) received will be appended to a directory/file structure defined by <b>format</b>. All directories implied in the <b>format</b> string will be created if necessary.  See the section <u>Archiving data</u>.</p>
+<p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be appended to a directory/file structure defined by <b>format</b>. All directories implied in the <b>format</b> string will be created if necessary.  See the section <u>Archiving data</u>.</p>
 
 <b>-SDS </b><u>SDSdir</u>
 
-<p style="padding-left: 30px;">If specified, all packets (Mini-SEED records) received will be saved into a Simple Data Structure (SDS) dir/file structure starting at the specified directory.  This directory and all subdirectories will be created if necessary.  This option is esentially a preset version of '-A' option.  The SDS dir/file structure is:</p>
+<p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be saved into a Simple Data Structure (SDS) dir/file structure starting at the specified directory.  This directory and all subdirectories will be created if necessary.  This option is esentially a preset version of '-A' option.  The SDS dir/file structure is:</p>
 <pre style="padding-left: 30px;">
 SDSdir/YEAR/NET/STA/CHAN.TYPE/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
 </pre>
 
 <b>-BUD </b><u>BUDdir</u>
 
-<p style="padding-left: 30px;">If specified, all waveform data packets (Mini-SEED data records) received will be saved into a Buffer of Uniform Data (BUD) dir/file structure starting at the specified directory.  This directory and all subdirectories will be created if necessary.  This option is esentially a preset version of '-A' option.  The BUD dir/file structure is:</p>
+<p style="padding-left: 30px;">If specified, all waveform data packets (miniSEED data records) received will be saved into a Buffer of Uniform Data (BUD) dir/file structure starting at the specified directory.  This directory and all subdirectories will be created if necessary.  This option is esentially a preset version of '-A' option.  The BUD dir/file structure is:</p>
 <pre style="padding-left: 30px;">
 BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
 </pre>
@@ -104,7 +104,7 @@ BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
 
 <b>-S </b><u>stream[:selectors],...</u>  (requires SeedLink >= 2.5)
 
-<p style="padding-left: 30px;">A list of streams is given as an argument.  This option implies multi-station mode.  The stream list is composed of multiple streams (stations) and optional selectors.  <u>stream</u> should be provided in NET\_STA format and <u>selectors</u> are normal SeedLink selectors, see examples and notes below.  If no selectors are provided for a given stream, the default selectors, if defined, will be used.</p>
+<p style="padding-left: 30px;">A list of streams is given as an argument.  This option implies multi-station mode.  The stream list is composed of multiple streams (stations) and optional selectors.  <u>stream</u> should be provided in NET_STA format and <u>selectors</u> are normal SeedLink selectors, see examples and notes below.  If no selectors are provided for a given stream, the default selectors, if defined, will be used.</p>
 
 <b>-tw </b><u>start:[end]</u>  (requires SeedLink >= 3)
 
@@ -148,23 +148,23 @@ BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
 
 <p style="padding-left: 30px;">The following example would connect to a SeedLink server on localhost port 18010 and configure the link in multi-station mode.  Each station specified with the '-S' argument will be requested, optionally specifying selectors for each station.</p>
 
-<p style="padding-left: 30px;"><b>> slinktool -v -S GE\_WLF,MN\_AQU:00???,IU\_KONO:BHZ.D :18010</b></p>
+<p style="padding-left: 30px;"><b>> slinktool -v -S GE_WLF,MN_AQU:00???,IU_KONO:BHZ.D :18010</b></p>
 
 <p style="padding-left: 30px;">This would request GEOFON station WLF (all data as no selectors were indicated), MedNet station AQU with location code 00 (all channels) and IU network station KONO (only waveform data) from channel BHZ.</p>
 
 <p style="padding-left: 30px;">Of course, a variety of different data selections can be made:</p>
 
-<p style="padding-left: 30px;"><b>-s 'BHE.D BHN.D' -S 'GE\_STU,GE\_MALT,GE\_WLF'</b>   (horizontal BH channels, data only)</p>
+<p style="padding-left: 30px;"><b>-s 'BHE.D BHN.D' -S 'GE_STU,GE_MALT,GE_WLF'</b>   (horizontal BH channels, data only)</p>
 
-<p style="padding-left: 30px;"><b>-s BHZ -S GE\_STU,GE\_WLF,GE\_RUE,GE\_EIL</b>   (vertical channels only)</p>
+<p style="padding-left: 30px;"><b>-s BHZ -S GE_STU,GE_WLF,GE_RUE,GE_EIL</b>   (vertical channels only)</p>
 
 <b>Wildcarding network and station codes</b>
 
-<p style="padding-left: 30px;">Some SeedLink implementation support wildcarding of the network and station codes, when this is the case the only two wildcard characters recognized are '\*' for one or more characters and '?' for any single character.</p>
+<p style="padding-left: 30px;">Some SeedLink implementation support wildcarding of the network and station codes, when this is the case the only two wildcard characters recognized are '*' for one or more characters and '?' for any single character.</p>
 
 <p style="padding-left: 30px;">As an example, all US network data can be requested using the following syntax:</p>
 
-<p style="padding-left: 30px;"><b>-S 'US\_\*'</b></p>
+<p style="padding-left: 30px;"><b>-S 'US_*'</b></p>
 
 ## <a id='seedlink-selectors'>Seedlink Selectors</a>
 
@@ -244,9 +244,9 @@ Network Station [selectors]
 
 <pre >
 ----  Begin example file -----
-# Comment lines begin with a '#' or '\*'
+# Comment lines begin with a '#' or '*'
 # Example stream list file for use with the -l argument of slclient or
-# with the sl\_read\_streamlist() libslink function.
+# with the sl_read_streamlist() libslink function.
 GE ISP  BH?.D
 NL HGN
 MN AQU  BH? HH?
@@ -255,7 +255,7 @@ MN AQU  BH? HH?
 
 ## <a id='notes'>Notes</a>
 
-<p >All diagnostic output from slinktool is printed to standard error (stderr), exceptions are when printing Mini-SEED packet details (the -p flag), when printing unpacked samples (the -u flag) and when printing the raw or formatted responses to INFO requests.</p>
+<p >All diagnostic output from slinktool is printed to standard error (stderr), exceptions are when printing miniSEED packet details (the -p flag), when printing unpacked samples (the -u flag) and when printing the raw or formatted responses to INFO requests.</p>
 
 ## <a id='author'>Author</a>
 
@@ -263,6 +263,7 @@ MN AQU  BH? HH?
 Chad Trabant
 ORFEUS Data Center/EC-Project MEREDIAN
 IRIS Data Management Center
+EarthScope Data Services
 </pre>
 
 

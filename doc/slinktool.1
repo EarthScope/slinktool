@@ -36,10 +36,10 @@ server was successfully contacted the return code will be 0, if errors
 were encountered the return code will be 1.
 
 .IP "-p         "
-Print details of received Mini-SEED data records. This flag can be
+Print details of received miniSEED data records. This flag can be
 used multiple times ("-p -p" or "-pp") for more detail.  One flag: a
 single summary line for each data packet received.  Two flags: details
-of the Mini-SEED data records received, including information from
+of the miniSEED data records received, including information from
 fixed header and 100/1000/1001 blockettes.
 
 .IP "-u         "
@@ -85,20 +85,20 @@ Configure the connection in "batch" mode.  Negotiation with the remote
 server is made faster by minimizing acknowledgement checks.
 
 .IP "-o \fIdumpfile\fR"
-If specified, all packets (Mini-SEED records) received will be
+If specified, all packets (miniSEED records) received will be
 appended to this file.  The file is created if it does not exist.  A
 special mode for this option is to send all received packets to
 standard output when the dumpfile is specified as '-'.  In this case
 all output besides these records will be redirected to standard error.
 
 .IP "-A \fIformat\fR"
-If specified, all packets (Mini-SEED records) received will be
+If specified, all packets (miniSEED records) received will be
 appended to a directory/file structure defined by \fBformat\fP.
 All directories implied in the \fBformat\fP string will be created if
 necessary.  See the section \fIArchiving data\fR.
 
 .IP "-SDS \fISDSdir\fR"
-If specified, all packets (Mini-SEED records) received will be
+If specified, all packets (miniSEED records) received will be
 saved into a Simple Data Structure (SDS) dir/file structure
 starting at the specified directory.  This directory and all
 subdirectories will be created if necessary.  This option is
@@ -109,7 +109,7 @@ SDSdir/YEAR/NET/STA/CHAN.TYPE/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
 .fi
 
 .IP "-BUD \fIBUDdir\fR"
-If specified, all waveform data packets (Mini-SEED data records)
+If specified, all waveform data packets (miniSEED data records)
 received will be saved into a Buffer of Uniform Data (BUD) dir/file
 structure starting at the specified directory.  This directory and all
 subdirectories will be created if necessary.  This option is
@@ -336,7 +336,7 @@ MN AQU  BH? HH?
 
 .SH "NOTES"
 All diagnostic output from slinktool is printed to standard error
-(stderr), exceptions are when printing Mini-SEED packet details (the
+(stderr), exceptions are when printing miniSEED packet details (the
 -p flag), when printing unpacked samples (the -u flag) and when
 printing the raw or formatted responses to INFO requests.
 
@@ -345,4 +345,5 @@ printing the raw or formatted responses to INFO requests.
 Chad Trabant
 ORFEUS Data Center/EC-Project MEREDIAN
 IRIS Data Management Center
+EarthScope Data Services
 .fi
