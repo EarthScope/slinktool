@@ -4,7 +4,22 @@
  * These are routines extracted from libmseed 2.18 and adapted for use
  * in this code base.
  *
- * modified: 2016.288
+ * This file is part of the SeedLink Library.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2022:
+ * @author Chad Trabant, EarthScope Data Services
  ************************************************************************/
 
 #include <memory.h>
@@ -73,7 +88,7 @@ sl_msr_unpack (SLlog *log, SLMSrecord *msr, int swapflag)
   }
   else
   {
-    sl_log_rl (log, 2, 0, "msr_unpack(): No Blockette 1000 found!\n");
+    sl_log_rl (log, 2, 0, "%s(): No Blockette 1000 found!\n", __func__);
     return (-1);
   }
 

@@ -3,7 +3,22 @@
  *
  * Platform portability routines.
  *
- * modified: 2016.290
+ * This file is part of the SeedLink Library.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2022:
+ * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
 #include <errno.h>
@@ -137,81 +152,61 @@ slp_noblockcheck (void)
   return 0;
 } /* End of slp_noblockcheck() */
 
-/***************************************************************************
- * slp_getaddrinfo:
+/***********************************************************************/ /**
+ * @brief Set socket I/O timeout
  *
- * Resolve IP addresses and provide parameters needed for connect().
+ * Set socket I/O timeout if such an option exists.  On WIN and
+ * other platforms where SO_RCVTIMEO and SO_SNDTIMEO are defined this
+ * sets the SO_RCVTIMEO and SO_SNDTIMEO socket options using
+ * setsockopt() to the @a timeout value (specified in seconds).
  *
- * On WIN this will use the older gethostbyname() for consistent
- * compatibility with older OS versions.  In the future we should be
- * able to use getaddrinfo() even on Windows.
+ * Solaris does not implelement socket-level timeout options.
  *
- * On all other platforms use POSIX 1003.1g getaddrinfo() because it
- * is standardized, thread-safe and protocol independent (i.e. IPv4,
- * IPv6, etc.) and has broad support.
+ * @param socket Network socket descriptor
+ * @param timeout Alarm timeout in seconds
  *
- * Currently, this routine is limited to IPv4 addresses.
- *
- * Return 0 on success and non-zero on error.  On everything but WIN
- * an error value is the return value of getaddrinfo().
+ * @return -1 on error, 0 when not possible and 1 on success.
  ***************************************************************************/
 int
-slp_getaddrinfo (char *nodename, char *nodeport,
-                 struct sockaddr *addr, size_t *addrlen)
+slp_setsocktimeo (SOCKET socket, int timeout)
 {
 #if defined(SLP_WIN)
-  struct hostent *result;
-  struct sockaddr_in inet_addr;
-  long int nport;
-  char *tail;
+  int tval = timeout * 1000;
 
-  if ((result = gethostbyname (nodename)) == NULL)
+  if (setsockopt (socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&tval, sizeof (tval)))
+  {
+    return -1;
+  }
+  tval = timeout * 1000;
+  if (setsockopt (socket, SOL_SOCKET, SO_SNDTIMEO, (char *)&tval, sizeof (tval)))
   {
     return -1;
   }
 
-  nport = strtoul (nodeport, &tail, 0);
-
-  memset (&inet_addr, 0, sizeof (inet_addr));
-  inet_addr.sin_family = AF_INET;
-  inet_addr.sin_port   = htons ((unsigned short int)nport);
-  inet_addr.sin_addr   = *(struct in_addr *)result->h_addr_list[0];
-
-  memcpy (addr, &inet_addr, sizeof (struct sockaddr));
-  *addrlen = sizeof (inet_addr);
-
 #else
-  /* getaddrinfo() will be used by all others */
-  struct addrinfo *ptr    = NULL;
-  struct addrinfo *result = NULL;
-  struct addrinfo hints;
-  int rv;
+/* Set socket I/O timeouts if socket options are defined */
+#if defined(SO_RCVTIMEO) && defined(SO_SNDTIMEO)
+  struct timeval tval;
 
-  memset (&hints, 0, sizeof (hints));
-  hints.ai_family   = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
+  tval.tv_sec  = timeout;
+  tval.tv_usec = 0;
 
-  if ((rv = getaddrinfo (nodename, nodeport, &hints, &result)))
+  if (setsockopt (socket, SOL_SOCKET, SO_RCVTIMEO, &tval, sizeof (tval)))
   {
-    return rv;
+    return -1;
   }
-
-  for (ptr = result; ptr != NULL; ptr = ptr->ai_next)
+  if (setsockopt (socket, SOL_SOCKET, SO_SNDTIMEO, &tval, sizeof (tval)))
   {
-    if (ptr->ai_family == AF_INET)
-    {
-      memcpy (addr, ptr->ai_addr, sizeof (struct sockaddr));
-      *addrlen = (size_t)ptr->ai_addrlen;
-      break;
-    }
+    return -1;
   }
-
-  freeaddrinfo (result);
+#else
+  return 0;
+#endif
 
 #endif
 
-  return 0;
-} /* End of slp_getaddrinfo() */
+  return 1;
+} /* End of slp_setsocktimeo() */
 
 /***************************************************************************
  * slp_openfile:
@@ -297,7 +292,7 @@ slp_dtime (void)
 
   if ((double)UnixTime != UnixTime)
   {
-    sl_log_r (NULL, 2, 0, "slp_dtime(): resulting value is too big for a double value\n");
+    sl_log_r (NULL, 2, 0, "%s(): resulting value is too big for a double value\n", __func__);
   }
 
   depoch = (double)UnixTime + ((double)SystemTime.wMilliseconds / 1000.0);

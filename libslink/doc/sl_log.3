@@ -115,11 +115,11 @@ A simple example of setting the default verbosity:
 
 .nf
 #include <libslink.h>
- 
+
 main () {
   int verbosity;
 
-  ... get desired verbosity from command line, etc. 
+  ... get desired verbosity from command line, etc.
 
   sl_loginit (verbose, NULL, NULL, NULL, NULL);
 
@@ -145,7 +145,7 @@ void diag_print (const char *message);
 main () {
   int verbosity;
 
-  ... get desired verbosity from command line, etc. 
+  ... get desired verbosity from command line, etc.
 
   sl_loginit (verbose, &log_print, "LOG: ", &diag_print, "ERR: ");
 
@@ -174,5 +174,6 @@ void diag_print (const char *message) {
 .nf
 Chad Trabant
 Developed while at ORFEUS Data Center/EC-Project MEREDIAN
-Currently at IRIS Data Management Center
+Then at IRIS Data Managment Center
+Currently at EarthScope Data Services
 .fi

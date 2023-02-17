@@ -17,11 +17,11 @@ sl_collect, sl_terminate \- SeedLink connection management
 Using the parameters in a SeedLink Connection Description (SLCD)
 \fBsl_collect\fP will persistantly maintain a connection to SeedLink
 server.  Designed to run in a tight loop at the heart of a client
-program, this function blocks until a packet is received.  When a 
+program, this function blocks until a packet is received.  When a
 packet is received \fIslpack\fP is set to the packet address and a
 positive integer is returned.  Based on the \fIkeepalive\fP,
 \fInetto\fP and \fInetdly\fP parameters in the SLCD, the function will
-send keep alive packets and reconnect when necessary.  When the 
+send keep alive packets and reconnect when necessary.  When the
 \fIterminate\fP flag is set in the SLCD \fBsl_collect\fP will close
 the network connection, finish passing received packets to the calling
 program and finally return NULL when the buffer is empty.
@@ -132,5 +132,6 @@ shutdown the client using \fBsl_terminate\fP.
 .nf
 Chad Trabant
 Developed while at ORFEUS Data Center/EC-Project MEREDIAN
-Currently at IRIS Data Management Center
+Then at IRIS Data Managment Center
+Currently at EarthScope Data Services
 .fi

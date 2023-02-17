@@ -3,9 +3,22 @@
  *
  * Log handling routines for libslink
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
+ * This file is part of the SeedLink Library.
  *
- * modified: 2005.332
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2022:
+ * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
 #include <stdarg.h>
@@ -19,7 +32,7 @@ void sl_loginit_main (SLlog *logp, int verbosity,
                       void (*log_print) (const char *), const char *logprefix,
                       void (*diag_print) (const char *), const char *errprefix);
 
-int sl_log_main (SLlog *logp, int level, int verb, va_list *varlist);
+int sl_log_main (SLlog *logp, int level, int verb, const char *format, va_list *varlist);
 
 /* Initialize the global logging parameters */
 SLlog gSLlog = {NULL, NULL, NULL, NULL, 0};
@@ -181,14 +194,14 @@ sl_loginit_main (SLlog *logp, int verbosity,
  * See sl_log_main() description for return values.
  ***************************************************************************/
 int
-sl_log (int level, int verb, ...)
+sl_log (int level, int verb, const char *format, ...)
 {
   int retval;
   va_list varlist;
 
-  va_start (varlist, verb);
+  va_start (varlist, format);
 
-  retval = sl_log_main (&gSLlog, level, verb, &varlist);
+  retval = sl_log_main (&gSLlog, level, verb, format, &varlist);
 
   va_end (varlist);
 
@@ -205,7 +218,7 @@ sl_log (int level, int verb, ...)
  * See sl_log_main() description for return values.
  ***************************************************************************/
 int
-sl_log_r (const SLCD *slconn, int level, int verb, ...)
+sl_log_r (const SLCD *slconn, int level, int verb, const char *format, ...)
 {
   int retval;
   va_list varlist;
@@ -218,9 +231,9 @@ sl_log_r (const SLCD *slconn, int level, int verb, ...)
   else
     logp = slconn->log;
 
-  va_start (varlist, verb);
+  va_start (varlist, format);
 
-  retval = sl_log_main (logp, level, verb, &varlist);
+  retval = sl_log_main (logp, level, verb, format, &varlist);
 
   va_end (varlist);
 
@@ -237,7 +250,7 @@ sl_log_r (const SLCD *slconn, int level, int verb, ...)
  * See sl_log_main() description for return values.
  ***************************************************************************/
 int
-sl_log_rl (SLlog *log, int level, int verb, ...)
+sl_log_rl (SLlog *log, int level, int verb, const char *format, ...)
 {
   int retval;
   va_list varlist;
@@ -248,9 +261,9 @@ sl_log_rl (SLlog *log, int level, int verb, ...)
   else
     logp = log;
 
-  va_start (varlist, verb);
+  va_start (varlist, format);
 
-  retval = sl_log_main (logp, level, verb, &varlist);
+  retval = sl_log_main (logp, level, verb, format, &varlist);
 
   va_end (varlist);
 
@@ -295,29 +308,33 @@ sl_log_rl (SLlog *log, int level, int verb, ...)
  * a negative value on error.
  ***************************************************************************/
 int
-sl_log_main (SLlog *logp, int level, int verb, va_list *varlist)
+sl_log_main (SLlog *logp, int level, int verb, const char *format, va_list *varlist)
 {
   static char message[MAX_LOG_MSG_LENGTH];
   int retvalue = 0;
+  int presize;
+
+  if (!logp)
+  {
+    fprintf (stderr, "%s() called without specifying log parameters", __func__);
+    return -1;
+  }
 
   message[0] = '\0';
 
   if (verb <= logp->verbosity)
   {
-    int presize;
-    const char *format;
-
-    format = va_arg (*varlist, const char *);
-
     if (level >= 2) /* Error message */
     {
       if (logp->errprefix != NULL)
       {
-        strncpy (message, logp->errprefix, MAX_LOG_MSG_LENGTH);
+        strncpy (message, logp->errprefix, MAX_LOG_MSG_LENGTH - 1);
+        message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
       else
       {
-        strncpy (message, "error: ", MAX_LOG_MSG_LENGTH);
+        strncpy (message, "error: ", MAX_LOG_MSG_LENGTH - 1);
+        message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
 
       presize  = strlen (message);
@@ -329,7 +346,7 @@ sl_log_main (SLlog *logp, int level, int verb, va_list *varlist)
 
       if (logp->diag_print != NULL)
       {
-        logp->diag_print ((const char *)message);
+        logp->diag_print (message);
       }
       else
       {
@@ -340,7 +357,8 @@ sl_log_main (SLlog *logp, int level, int verb, va_list *varlist)
     {
       if (logp->logprefix != NULL)
       {
-        strncpy (message, logp->logprefix, MAX_LOG_MSG_LENGTH);
+        strncpy (message, logp->logprefix, MAX_LOG_MSG_LENGTH - 1);
+        message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
 
       presize  = strlen (message);
@@ -352,7 +370,7 @@ sl_log_main (SLlog *logp, int level, int verb, va_list *varlist)
 
       if (logp->diag_print != NULL)
       {
-        logp->diag_print ((const char *)message);
+        logp->diag_print (message);
       }
       else
       {
@@ -363,7 +381,8 @@ sl_log_main (SLlog *logp, int level, int verb, va_list *varlist)
     {
       if (logp->logprefix != NULL)
       {
-        strncpy (message, logp->logprefix, MAX_LOG_MSG_LENGTH);
+        strncpy (message, logp->logprefix, MAX_LOG_MSG_LENGTH - 1);
+        message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
 
       presize  = strlen (message);
@@ -375,7 +394,7 @@ sl_log_main (SLlog *logp, int level, int verb, va_list *varlist)
 
       if (logp->log_print != NULL)
       {
-        logp->log_print ((const char *)message);
+        logp->log_print (message);
       }
       else
       {

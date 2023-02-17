@@ -2,12 +2,22 @@
  *
  * General utility functions.
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
+ * This file is part of the SeedLink Library.
  *
- * Originally based on the SeedLink interface of the modified Comserv in
- * SeisComP written by Andres Heinloo
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Version: 2008.028
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2022:
+ * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
 #include <stdio.h>
@@ -15,6 +25,7 @@
 #include <string.h>
 
 #include "libslink.h"
+#include "slplatform.h"
 
 /***************************************************************************
  * sl_dtime:
@@ -46,7 +57,7 @@ sl_doy2md (int year, int jday, int *month, int *mday)
   /* Sanity check for the supplied year */
   if (year < 1900 || year > 2100)
   {
-    sl_log_r (NULL, 2, 0, "sl_doy2md(): year (%d) is out of range\n", year);
+    sl_log_r (NULL, 2, 0, "%s(): year (%d) is out of range\n", __func__, year);
     return -1;
   }
 
@@ -59,7 +70,7 @@ sl_doy2md (int year, int jday, int *month, int *mday)
 
   if (jday > 365 + leap || jday <= 0)
   {
-    sl_log_r (NULL, 2, 0, "sl_doy2md(): day-of-year (%d) is out of range\n", jday);
+    sl_log_r (NULL, 2, 0, "%s(): day-of-year (%d) is out of range\n", __func__, jday);
     return -1;
   }
 
@@ -119,7 +130,7 @@ sl_checkslcd (const SLCD *slconn)
 
   if (slconn->streams == NULL && slconn->info == NULL)
   {
-    sl_log_r (slconn, 2, 0, "sl_checkslconn(): stream chain AND info type are empty\n");
+    sl_log_r (slconn, 2, 0, "%s(): stream chain AND info type are empty\n", __func__);
     retval = -1;
   }
 

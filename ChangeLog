@@ -1,4 +1,5 @@
 2023.047: version 4.4
+	- Update libslink to 2.7.1.
 	- Properly write all data stream packets to archive destinations.
 
 2016.293: version 4.3

@@ -3,9 +3,22 @@
  *
  * Routines for managing a connection with a SeedLink server
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
+ * This file is part of the SeedLink Library.
  *
- * modified: 2016.287
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2022:
+ * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
 #include <errno.h>
@@ -13,12 +26,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "libslink.h"
-
 #include "globmatch.h"
+#include "libslink.h"
+#include "slplatform.h"
+#include "mseedformat.h"
 
 /* Function(s) only used in this source file */
-int update_stream (SLCD *slconn, SLpacket *slpack);
+static int update_stream (SLCD *slconn, const SLpacket *slpack);
+static int detect (const char *record, uint64_t recbuflen, uint8_t *formatversion);
 
 /***************************************************************************
  * sl_collect:
@@ -40,6 +55,8 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
   int bytesread;
   double current_time;
   char retpacket;
+  int bufferlen;
+  uint8_t formatversion = 0;
 
   /* For select()ing during the read loop */
   struct timeval select_tv;
@@ -142,8 +159,7 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
         int slconfret = 0;
 
         /* Only send query if a query is set and no streams are defined,
-	       * if streams are defined we'll send the query after configuration.
-	       */
+         * if streams are defined we'll send the query after configuration. */
         if (slconn->info && slconn->streams == NULL)
         {
           if (sl_send_info (slconn, slconn->info, 1) != -1)
@@ -189,23 +205,36 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
       slconn->stat->sl_state = SL_DOWN;
     }
 
-    /* DEBUG
-      sl_log_r (slconn, 1, 0, "link: %d, sendptr: %d, recptr: %d, diff: %d\n",
-                slconn->link, slconn->stat->sendptr, slconn->stat->recptr,
-		(slconn->stat->recptr - slconn->stat->sendptr) );
-      */
-
     /* Process data in buffer */
-    while (slconn->stat->recptr - slconn->stat->sendptr >= SLHEADSIZE + SLRECSIZE)
+    while (slconn->stat->recptr - slconn->stat->sendptr >= SLHEADSIZE + SLRECSIZEMIN)
     {
+      bufferlen = slconn->stat->recptr - slconn->stat->sendptr;
       retpacket = 1;
 
-      /* Check for an INFO packet */
-      if (!strncmp (&slconn->stat->databuf[slconn->stat->sendptr], INFOSIGNATURE, 6))
+      slconn->stat->slpack.slhead = &slconn->stat->databuf[slconn->stat->sendptr];
+      slconn->stat->slpack.msrecord = &slconn->stat->databuf[slconn->stat->sendptr + SLHEADSIZE];
+      slconn->stat->slpack.reclen = detect (slconn->stat->slpack.msrecord, bufferlen, &formatversion);
+
+      /* Return error if no miniSEED could be detected */
+      if (slconn->stat->slpack.reclen < 0)
+      {
+        sl_log_r (slconn, 2, 0, "%s(): non-miniSEED packet received!?! Terminating.\n", __func__);
+        return SLTERMINATE;
+      }
+
+      /* Stop processing if the buffer contains miniSEED but not enough data */
+      if (slconn->stat->slpack.reclen == 0 ||
+          (slconn->stat->slpack.reclen > 0 && slconn->stat->slpack.reclen + SLHEADSIZE > bufferlen))
+      {
+        break;
+      }
+
+      /* Process an INFO packet */
+      if (!memcmp (slconn->stat->slpack.slhead, INFOSIGNATURE, 6))
       {
         char terminator;
 
-        terminator = (slconn->stat->databuf[slconn->stat->sendptr + SLHEADSIZE - 1] != '*');
+        terminator = (slconn->stat->slpack.slhead[SLHEADSIZE - 1] != '*');
 
         if (!slconn->stat->expect_info)
         {
@@ -241,7 +270,7 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
       }
       else /* Update the stream chain entry if not an INFO packet */
       {
-        if ((update_stream (slconn, (SLpacket *)&slconn->stat->databuf[slconn->stat->sendptr])) == -1)
+        if ((update_stream (slconn, &slconn->stat->slpack)) == -1)
         {
           /* If updating didn't work the packet is broken */
           retpacket = 0;
@@ -249,18 +278,18 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
       }
 
       /* Increment the send pointer */
-      slconn->stat->sendptr += (SLHEADSIZE + SLRECSIZE);
+      slconn->stat->sendptr += (SLHEADSIZE + slconn->stat->slpack.reclen);
 
       /* Return packet */
       if (retpacket)
       {
-        *slpack = (SLpacket *)&slconn->stat->databuf[slconn->stat->sendptr - (SLHEADSIZE + SLRECSIZE)];
+        *slpack = &slconn->stat->slpack;
         return SLPACKET;
       }
-    }
+    } /* Done processing data in recv buffer */
 
     /* A trap door for terminating, all complete data packets from the buffer
-	 have been sent to the caller */
+       have been sent to the caller */
     if (slconn->terminate)
     {
       return SLTERMINATE;
@@ -309,8 +338,8 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
       select_ret = select ((slconn->link + 1), &select_fd, NULL, NULL, &select_tv);
 
       /* Check the return from select(), an interrupted system call error
-	     will be reported if a signal handler was used.  If the terminate
-	     flag is set this is not an error. */
+         will be reported if a signal handler was used.  If the terminate
+         flag is set this is not an error. */
       if (select_ret > 0)
       {
         if (!FD_ISSET (slconn->link, &select_fd))
@@ -398,13 +427,13 @@ sl_collect (SLCD *slconn, SLpacket **slpack)
 /***************************************************************************
  * sl_collect_nb:
  *
- * A wrapper for sl_collect_nb_size() to operate with the default
- * Mini-SEED record size.
+ * A wrapper for sl_collect_nb_size() to operate with up to the maximum
+ * miniSEED record size.
  ***************************************************************************/
 int
 sl_collect_nb (SLCD *slconn, SLpacket **slpack)
 {
-  return sl_collect_nb_size (slconn, slpack, SLRECSIZE);
+  return sl_collect_nb_size (slconn, slpack, SLRECSIZEMAX);
 }
 
 /***************************************************************************
@@ -428,13 +457,19 @@ sl_collect_nb (SLCD *slconn, SLpacket **slpack)
  * packet size.  Possible values for slrecsize are 128, 256, 512.
  * There is no error checking, so the value of slrecsize must be
  * checked before passing it to sl_collect_nb_size().
+ *
+ * 'slrecsize' has been re-purposed to be 'maxrecsize' and used to allow
+ * the caller to specify a maximum record size to return.
  ***************************************************************************/
 int
-sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int slrecsize)
+sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int maxrecsize)
 {
   int bytesread;
   double current_time;
   char retpacket;
+  int bufferlen;
+  uint8_t formatversion = 0;
+
 
   *slpack = NULL;
 
@@ -532,8 +567,8 @@ sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int slrecsize)
       int slconfret = 0;
 
       /* Only send query if a query is set and no streams are defined,
-	   * if streams are defined we'll send the query after configuration.
-	   */
+       * if streams are defined we'll send the query after configuration.
+       */
       if (slconn->info && slconn->streams == NULL)
       {
         if (sl_send_info (slconn, slconn->info, 1) != -1)
@@ -579,23 +614,36 @@ sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int slrecsize)
     slconn->stat->sl_state = SL_DATA;
   }
 
-  /* DEBUG
-     sl_log_r (slconn, 1, 0, "link: %d, sendptr: %d, recptr: %d, diff: %d\n",
-     slconn->link, slconn->stat->sendptr, slconn->stat->recptr,
-     (slconn->stat->recptr - slconn->stat->sendptr) );
-  */
-
   /* Process data in buffer */
-  while (slconn->stat->recptr - slconn->stat->sendptr >= SLHEADSIZE + slrecsize)
+  while (slconn->stat->recptr - slconn->stat->sendptr >= SLHEADSIZE + SLRECSIZEMIN)
   {
+    bufferlen = slconn->stat->recptr - slconn->stat->sendptr;
     retpacket = 1;
 
-    /* Check for an INFO packet */
-    if (!strncmp (&slconn->stat->databuf[slconn->stat->sendptr], INFOSIGNATURE, 6))
+    slconn->stat->slpack.slhead = &slconn->stat->databuf[slconn->stat->sendptr];
+    slconn->stat->slpack.msrecord = &slconn->stat->databuf[slconn->stat->sendptr + SLHEADSIZE];
+    slconn->stat->slpack.reclen = detect (slconn->stat->slpack.msrecord, bufferlen, &formatversion);
+
+    /* Return error if no miniSEED could be detected */
+    if (slconn->stat->slpack.reclen < 0)
+    {
+      sl_log_r (slconn, 2, 0, "%s(): non-miniSEED packet received!?! Terminating.\n", __func__);
+      return SLTERMINATE;
+    }
+
+    /* Stop processing if the buffer contains miniSEED but not enough data */
+    if (slconn->stat->slpack.reclen == 0 ||
+        (slconn->stat->slpack.reclen > 0 && slconn->stat->slpack.reclen + SLHEADSIZE  > bufferlen))
+    {
+      break;
+    }
+
+    /* Process an INFO packet */
+    if (!memcmp (slconn->stat->slpack.slhead, INFOSIGNATURE, 6))
     {
       char terminator;
 
-      terminator = (slconn->stat->databuf[slconn->stat->sendptr + SLHEADSIZE - 1] != '*');
+      terminator = (slconn->stat->slpack.slhead[SLHEADSIZE - 1] != '*');
 
       if (!slconn->stat->expect_info)
       {
@@ -631,7 +679,7 @@ sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int slrecsize)
     }
     else /* Update the stream chain entry if not an INFO packet */
     {
-      if ((update_stream (slconn, (SLpacket *)&slconn->stat->databuf[slconn->stat->sendptr])) == -1)
+      if ((update_stream (slconn, &slconn->stat->slpack)) == -1)
       {
         /* If updating didn't work the packet is broken */
         retpacket = 0;
@@ -639,12 +687,12 @@ sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int slrecsize)
     }
 
     /* Increment the send pointer */
-    slconn->stat->sendptr += (SLHEADSIZE + slrecsize);
+    slconn->stat->sendptr += (SLHEADSIZE + slconn->stat->slpack.reclen);
 
     /* Return packet */
     if (retpacket)
     {
-      *slpack = (SLpacket *)&slconn->stat->databuf[slconn->stat->sendptr - (SLHEADSIZE + slrecsize)];
+      *slpack = &slconn->stat->slpack;
       return SLPACKET;
     }
   }
@@ -764,30 +812,30 @@ sl_collect_nb_size (SLCD *slconn, SLpacket **slpack, int slrecsize)
 /***************************************************************************
  * update_stream:
  *
- * Update the appropriate stream chain entries given a Mini-SEED
+ * Update the appropriate stream chain entries given a miniSEED
  * record.
  *
  * Returns 0 if successfully updated and -1 if not found or error.
  ***************************************************************************/
-int
-update_stream (SLCD *slconn, SLpacket *slpack)
+static int
+update_stream (SLCD *slconn, const SLpacket *slpack)
 {
   SLstream *curstream;
   struct sl_fsdh_s fsdh;
   int seqnum;
   int swapflag = 0;
   int updates  = 0;
-  char net[3];
-  char sta[6];
+  char net[11];
+  char sta[11];
 
   if ((seqnum = sl_sequence (slpack)) == -1)
   {
-    sl_log_r (slconn, 2, 0, "update_stream(): could not determine sequence number\n");
+    sl_log_r (slconn, 2, 0, "%s(): could not determine sequence number\n", __func__);
     return -1;
   }
 
   /* Copy fixed header */
-  memcpy (&fsdh, &slpack->msrecord, sizeof (struct sl_fsdh_s));
+  memcpy (&fsdh, slpack->msrecord, sizeof (struct sl_fsdh_s));
 
   /* Check to see if byte swapping is needed (bogus year makes good test) */
   if ((fsdh.start_time.year < 1900) || (fsdh.start_time.year > 2050))
@@ -824,7 +872,7 @@ update_stream (SLCD *slconn, SLpacket *slpack)
 
       curstream->seqnum = seqnum;
 
-      snprintf (curstream->timestamp, 20,
+      snprintf (curstream->timestamp, sizeof(curstream->timestamp),
                 "%04d,%02d,%02d,%02d,%02d,%02d",
                 fsdh.start_time.year,
                 month,
@@ -853,7 +901,7 @@ update_stream (SLCD *slconn, SLpacket *slpack)
 
       curstream->seqnum = seqnum;
 
-      snprintf (curstream->timestamp, 20,
+      snprintf (curstream->timestamp, sizeof(curstream->timestamp),
                 "%04d,%02d,%02d,%02d,%02d,%02d",
                 fsdh.start_time.year,
                 month,
@@ -891,7 +939,7 @@ sl_newslcd (void)
 
   if (slconn == NULL)
   {
-    sl_log_r (NULL, 2, 0, "new_slconn(): error allocating memory\n");
+    sl_log_r (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
     return NULL;
   }
 
@@ -909,6 +957,7 @@ sl_newslcd (void)
   slconn->terminate    = 0;
 
   slconn->keepalive = 0;
+  slconn->iotimeout = 60;
   slconn->netto     = 600;
   slconn->netdly    = 30;
 
@@ -921,13 +970,15 @@ sl_newslcd (void)
 
   if (slconn->stat == NULL)
   {
-    sl_log_r (NULL, 2, 0, "new_slconn(): error allocating memory\n");
+    sl_log_r (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
     free (slconn);
     return NULL;
   }
 
   slconn->stat->recptr      = 0;
   slconn->stat->sendptr     = 0;
+  slconn->stat->slpack.slhead = NULL;
+  slconn->stat->slpack.msrecord = NULL;
   slconn->stat->expect_info = 0;
 
   slconn->stat->netto_trig     = -1;
@@ -1020,7 +1071,7 @@ sl_addstream (SLCD *slconn, const char *net, const char *sta,
     if (strcmp (curstream->net, UNINETWORK) == 0 &&
         strcmp (curstream->sta, UNISTATION) == 0)
     {
-      sl_log_r (slconn, 2, 0, "sl_addstream(): uni-station mode already configured!\n");
+      sl_log_r (slconn, 2, 0, "%s(): uni-station mode already configured!\n", __func__);
       return -1;
     }
   }
@@ -1036,7 +1087,7 @@ sl_addstream (SLCD *slconn, const char *net, const char *sta,
 
   if (newstream == NULL)
   {
-    sl_log_r (slconn, 2, 0, "sl_addstream(): error allocating memory\n");
+    sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
     return -1;
   }
 
@@ -1099,14 +1150,14 @@ sl_setuniparams (SLCD *slconn, const char *selectors,
 
     if (newstream == NULL)
     {
-      sl_log_r (slconn, 2, 0, "sl_setuniparams(): error allocating memory\n");
+      sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
       return -1;
     }
   }
   else if (strcmp (newstream->net, UNINETWORK) != 0 ||
            strcmp (newstream->sta, UNISTATION) != 0)
   {
-    sl_log_r (slconn, 2, 0, "sl_setuniparams(): multi-station mode already configured!\n");
+    sl_log_r (slconn, 2, 0, "%s(): multi-station mode already configured!\n", __func__);
     return -1;
   }
 
@@ -1160,7 +1211,8 @@ sl_request_info (SLCD *slconn, const char *infostr)
 /***************************************************************************
  * sl_sequence:
  *
- * Check for 'SL' signature and sequence number.
+ * Check for 'SL' signature and sequence number from buffer containing
+ * a SeedLink packet.
  *
  * Returns the packet sequence number of the SeedLink packet on success,
  *   0 for INFO packets or -1 on error.
@@ -1171,13 +1223,13 @@ sl_sequence (const SLpacket *slpack)
   int seqnum;
   char seqstr[7], *sqtail;
 
-  if (strncmp (slpack->slhead, SIGNATURE, 2))
+  if (memcmp (slpack->slhead, SIGNATURE, 2))
     return -1;
 
-  if (!strncmp (slpack->slhead, INFOSIGNATURE, 6))
+  if (!memcmp (slpack->slhead, INFOSIGNATURE, 6))
     return 0;
 
-  strncpy (seqstr, &slpack->slhead[2], 6);
+  memcpy (seqstr, slpack->slhead + 2, 6);
   seqstr[6] = '\0';
   seqnum    = strtoul (seqstr, &sqtail, 16);
 
@@ -1209,10 +1261,10 @@ sl_packettype (const SLpacket *slpack)
   uint16_t next_blkt;
 
   const struct sl_blkt_head_s *p;
-  fsdh = (struct sl_fsdh_s *)&slpack->msrecord;
+  fsdh = (struct sl_fsdh_s *)slpack->msrecord;
 
   /* Check for an INFO packet */
-  if (!strncmp (slpack->slhead, INFOSIGNATURE, 6))
+  if (!memcmp (slpack->slhead, INFOSIGNATURE, 6))
   {
     /* Check if it is terminated */
     if (slpack->slhead[SLHEADSIZE - 1] != '*')
@@ -1278,3 +1330,129 @@ sl_terminate (SLCD *slconn)
 
   slconn->terminate = 1;
 } /* End of sl_terminate() */
+
+/***************************************************************/ /**
+ * @brief Detect miniSEED record in buffer
+ *
+ * Determine if the buffer contains a miniSEED data record by
+ * verifying known signatures (fields with known limited values).
+ *
+ * If miniSEED 2.x is detected, search the record up to recbuflen
+ * bytes for a 1000 blockette. If no blockette 1000 is found, search
+ * at 64-byte offsets for the fixed section of the next header,
+ * thereby implying the record length.
+ *
+ * @param[in] record Buffer to test for record
+ * @param[in] recbuflen Length of buffer
+ * @param[out] formatversion Major version of format detected, 0 if unknown
+ *
+ * @retval -1 Data record not detected or error
+ * @retval 0 Data record detected but could not determine length
+ * @retval >0 Size of the record in bytes
+ *********************************************************************/
+static int
+detect (const char *record, uint64_t recbuflen, uint8_t *formatversion)
+{
+  uint8_t swapflag = 0; /* Byte swapping flag */
+  uint8_t foundlen = 0; /* Found record length */
+  int32_t reclen = -1; /* Size of record in bytes */
+
+  uint16_t blkt_offset; /* Byte offset for next blockette */
+  uint16_t blkt_type;
+  uint16_t next_blkt;
+  const char *nextfsdh;
+
+  if (!record || !formatversion)
+    return -1;
+
+  /* Buffer must be at least SLRECSIZEMIN */
+  if (recbuflen < SLRECSIZEMIN)
+    return -1;
+
+  /* Check for valid header, set format version */
+  *formatversion = 0;
+  if (MS3_ISVALIDHEADER (record))
+  {
+    *formatversion = 3;
+
+    reclen = MS3FSDH_LENGTH                   /* Length of fixed portion of header */
+             + *pMS3FSDH_SIDLENGTH (record)   /* Length of source identifier */
+             + *pMS3FSDH_EXTRALENGTH (record) /* Length of extra headers */
+             + *pMS3FSDH_DATALENGTH (record); /* Length of data payload */
+
+    foundlen = 1;
+  }
+  else if (MS2_ISVALIDHEADER (record))
+  {
+    *formatversion = 2;
+
+    /* Check to see if byte swapping is needed by checking for sane year and day */
+    if (!MS_ISVALIDYEARDAY (*pMS2FSDH_YEAR(record), *pMS2FSDH_DAY(record)))
+      swapflag = 1;
+
+    blkt_offset = HO2u(*pMS2FSDH_BLOCKETTEOFFSET (record), swapflag);
+
+    /* Loop through blockettes as long as number is non-zero and viable */
+    while (blkt_offset != 0 &&
+           blkt_offset > 47 &&
+           blkt_offset <= recbuflen)
+    {
+      memcpy (&blkt_type, record + blkt_offset, 2);
+      memcpy (&next_blkt, record + blkt_offset + 2, 2);
+
+      if (swapflag)
+      {
+        sl_gswap2 (&blkt_type);
+        sl_gswap2 (&next_blkt);
+      }
+
+      /* Found a 1000 blockette, not truncated */
+      if (blkt_type == 1000 &&
+          (int)(blkt_offset + 8) <= recbuflen)
+      {
+        foundlen = 1;
+
+        /* Field 3 of B1000 is a uint8_t value describing the record
+         * length as 2^(value).  Calculate 2-raised with a shift. */
+        reclen = (unsigned int)1 << *pMS2B1000_RECLEN(record+blkt_offset);
+
+        break;
+      }
+
+      /* Safety check for invalid offset */
+      if (next_blkt != 0 && (next_blkt < 4 || (next_blkt - 4) <= blkt_offset))
+      {
+        sl_log (2, 0, "Invalid blockette offset (%d) less than or equal to current offset (%d)\n",
+                next_blkt, blkt_offset);
+        return -1;
+      }
+
+      blkt_offset = next_blkt;
+    }
+
+    /* If record length was not determined by a 1000 blockette scan the buffer
+     * and search for the next record */
+    if (reclen == -1)
+    {
+      nextfsdh = record + 64;
+
+      /* Check for record header or blank/noise record at MINRECLEN byte offsets */
+      while (((nextfsdh - record) + 48) < recbuflen)
+      {
+        if (MS2_ISVALIDHEADER (nextfsdh))
+        {
+          foundlen = 1;
+          reclen = nextfsdh - record;
+          break;
+        }
+
+        nextfsdh += 64;
+      }
+    }
+  } /* End of miniSEED 2.x detection */
+
+  if (!foundlen)
+    return -1;
+  else
+    return reclen;
+} /* End of detect() */

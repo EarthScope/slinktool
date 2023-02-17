@@ -1,3 +1,29 @@
+2023.007:
+	- Return configured station count from sl_read_streamlist() as intended.
+	Thanks @Semecurbe.
+	- Add missing libslink.map and slink.pc.in. Thanks @morealaz.
+
+2022.074: version 2.7
+	- Add buffer scanning limit fix from andrei.akimov@berkeley.edu.
+
+2020.048:
+	- Support M SEED quality code.
+	- Fix segfault in sl_msr_print() when no record passed.
+
+2020.047:
+	- Determine received record length automatically, a pre-determined
+	record length is no longer needed.
+	- Support for IPv6 connections, conversion to pure getaddrinfo() usage.
+	- Allow host and port to be separated with '@', e.g. host@port to
+	allow for numeric IPv6 address usage.
+	- Include socket level timeout that defaults to 60 seconds.
+
+2020.046:
+	- Incorporate platform-specific declarations into libslink.h
+	- Remove support for Watcom-related wmake files.
+	- Update Makefile to include an install method, common shared target.
+	- Change licensing to Apache License 2.
+
 2016.290: version 2.6
 	- Change host name resolution to use getaddrinfo() on all platforms
 	except Windows.  Support is now nearly ubiquitous.  Still limited to

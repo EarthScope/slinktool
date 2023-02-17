@@ -10,11 +10,22 @@
  * and 1001.  The Blockettes are optionally parsed and the data samples
  * are optionally decompressed/unpacked.
  *
- * Some ideas and structures were used from seedsniff 2.0
+ * This file is part of the SeedLink Library.
  *
- * Written by Chad Trabant, IRIS Data Managment Center
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * modified: 2016.288
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Copyright (C) 2022:
+ * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
 #include <stdio.h>
@@ -24,6 +35,7 @@
 
 #include "libslink.h"
 #include "unpack.h"
+#include "mseedformat.h"
 
 #define SL_ISVALIDYEARDAY(Y, D) (Y >= 1900 && Y <= 2100 && D >= 1 && D <= 366)
 
@@ -48,7 +60,7 @@ sl_msr_new (void)
 
   if (msr == NULL)
   {
-    sl_log_rl (NULL, 2, 0, "sl_msr_new(): error allocating memory\n");
+    sl_log_rl (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
     return NULL;
   }
 
@@ -184,7 +196,7 @@ sl_msr_parse_size (SLlog *log, const char *msrecord, SLMSrecord **ppmsr,
 
   if (ppmsr == NULL)
   {
-    sl_log_rl (log, 2, 1, "msr_parse(): pointer to SLMSrecord cannot be NULL\n");
+    sl_log_rl (log, 2, 1, "%s(): pointer to SLMSrecord cannot be NULL\n", __func__);
     *ppmsr = NULL;
     return NULL;
   }
@@ -230,9 +242,8 @@ sl_msr_parse_size (SLlog *log, const char *msrecord, SLMSrecord **ppmsr,
   memcpy ((void *)&msr->fsdh, msrecord, 48);
 
   /* Sanity check for msr/quality indicator */
-  if (msr->fsdh.dhq_indicator != 'D' &&
-      msr->fsdh.dhq_indicator != 'R' &&
-      msr->fsdh.dhq_indicator != 'Q')
+
+  if (!MS2_ISDATAINDICATOR(msr->fsdh.dhq_indicator))
   {
     sl_log_rl (log, 2, 0, "record header/quality indicator unrecognized: %c\n",
                msr->fsdh.dhq_indicator);
@@ -383,10 +394,14 @@ int
 sl_msr_print (SLlog *log, SLMSrecord *msr, int details)
 {
   char sourcename[50];
-  char stime[25];
+  char stime[30];
   double latency;
   double dsamprate = 0.0;
   int usec;
+  int printed;
+
+  if (!msr)
+    return 0;
 
   /* Build the source name string */
   sl_msr_srcname (msr, sourcename, 0);
@@ -399,16 +414,21 @@ sl_msr_print (SLlog *log, SLMSrecord *msr, int details)
 
     if (usec > 1000000 || usec < 0)
     {
-      sl_log_rl (log, 1, 0, "Cannot apply microsecond offset\n");
+      sl_log_rl (log, 1, 0, "%s() Cannot apply negative microsecond offset\n", __func__);
       usec -= msr->Blkt1001->usec;
     }
   }
 
   /* Build a start time string */
-  snprintf (stime, sizeof (stime), "%04d,%03d,%02d:%02d:%02d.%06d",
-            msr->fsdh.start_time.year, msr->fsdh.start_time.day,
-            msr->fsdh.start_time.hour, msr->fsdh.start_time.min,
-            msr->fsdh.start_time.sec, usec);
+  printed = snprintf (stime, sizeof (stime), "%04d,%03d,%02d:%02d:%02d.%06d",
+                      msr->fsdh.start_time.year, msr->fsdh.start_time.day,
+                      msr->fsdh.start_time.hour, msr->fsdh.start_time.min,
+                      msr->fsdh.start_time.sec, usec);
+
+  if (printed >= sizeof(stime))
+  {
+    sl_log_rl (log, 1, 0, "%s() Time string overflow\n", __func__);
+  }
 
   /* Calculate the latency */
   latency = host_latency (msr);
@@ -426,7 +446,7 @@ sl_msr_print (SLlog *log, SLMSrecord *msr, int details)
                msr->fsdh.samprate_mult, dsamprate);
     sl_log_rl (log, 0, 0, "     num. of blockettes: %d\n",
                msr->fsdh.num_blockettes);
-    sl_log_rl (log, 0, 0, "        time correction: %ld\n",
+    sl_log_rl (log, 0, 0, "        time correction: %d\n",
                msr->fsdh.time_correct);
     sl_log_rl (log, 0, 0, "      begin data offset: %d\n", msr->fsdh.begin_data);
     sl_log_rl (log, 0, 0, "  fist blockette offset: %d\n",

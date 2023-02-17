@@ -2,8 +2,10 @@
 # Nmake file for libslink example client - Windows version
 # Use 'nmake -f Makefile.win'
 
+NODEBUG=1
+
 INCS = /I..
-OPTS = -D_CRT_SECURE_NO_WARNINGS
+OPTS = /O2 /D_CRT_SECURE_NO_WARNINGS
 LIBS = ../libslink.lib ws2_32.lib
 BIN = slclient.exe
 
