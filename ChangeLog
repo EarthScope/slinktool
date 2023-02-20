@@ -1,3 +1,11 @@
+2023.xxx: version 5.0.0
+	- Major new version based on libseed v3 with support for
+	SeedLink protocols 3 and 4.
+	- Remove -A, -SDS, and -BUD options, archiving should be
+	done with slarchive dedicated to this operation.
+	- Lots of cosmetic changes to output messages, generalization
+	for different payload types.
+
 2016.293: version 4.3
 	- Update libslink to 2.6.
 	- Reformat source code using included clang-format profile.
