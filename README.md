@@ -19,6 +19,16 @@ A Makefile.win is included for building for using with Nmake, i.e.
 For further installation simply copy the resulting binary and man page
 (in the 'doc' directory) to appropriate system directories.
 
+## Archiving miniSEED alternative
+
+The previous record archiving capability of slinktool, invoked with the `-A`,
+ `-BUD`, and `-SDS` options, has been removed.
+
+This functionality and more is supported in the dedicated `slachive`
+program:
+
+https://github.com/EarthScope/slarchive
+
 ## License
 
 Licensed under the Apache License, Version 2.0 (the "License");

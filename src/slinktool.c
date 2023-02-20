@@ -6,9 +6,10 @@
  * uni or multi-station mode and collects data.  Detailed information about
  * the data received can be printed and the data can be saved to files.
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
- *
- * modified 2016.293
+ * Written by Chad Trabant,
+ *   ORFEUS/EC-Project MEREDIAN
+ *   IRIS Data Management Center
+ *   EarthScope Data Services
  ***************************************************************************/
 
 #include <stdio.h>
@@ -22,23 +23,16 @@
 
 #include <libslink.h>
 
-#include "archive.h"
 #include "slinkxml.h"
 
 #define PACKAGE "slinktool"
-#define VERSION "4.3"
-
-/* Idle archive stream timeout */
-#define IDLE_ARCH_STREAM_TIMEOUT 120
+#define VERSION "5.0.0DEV"
 
 static short int verbose  = 0; /* flag to control general verbosity */
 static short int pingonly = 0; /* flag to control ping function */
 static short int ppackets = 0; /* flag to control printing of data packets */
 static short int psamples = 0; /* flag to control printing of data samples */
 static int stateint       = 0; /* packet interval to save statefile */
-static char *archformat   = 0; /* format string for a custom structure */
-static char *sdsdir       = 0; /* base directory for a SDS structure */
-static char *buddir       = 0; /* base directory for a BUD structure */
 static char *statefile    = 0; /* state file for saving/restoring the seq. no. */
 static char *dumpfile     = 0; /* output file for data dump */
 static FILE *outfile      = 0; /* the descriptor for the dumpfile */
@@ -146,15 +140,6 @@ main (int argc, char **argv)
   if (dumpfile)
     fclose (outfile);
 
-  if (buddir)
-    bud_streamproc (NULL, NULL, 0, 0);
-
-  if (archformat)
-    arch_streamproc (NULL, NULL, 0, 0, 0);
-
-  if (sdsdir)
-    sds_streamproc (NULL, NULL, 0, 0, 0);
-
   if (statefile)
     sl_savestate (slconn, statefile);
 
@@ -173,9 +158,8 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   double dtime;   /* Epoch time */
   double secfrac; /* Fractional part of epoch time */
   time_t ttime;   /* Integer part of epoch time */
-  char timestamp[20];
+  char timestamp[36] = {0};
   struct tm *timep;
-  int archflag = 1;
 
   /* The following is dependent on the packet type values in libslink.h */
   char *type[] = {"Data", "Detection", "Calibration", "Timing",
@@ -187,41 +171,12 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   secfrac = (double)((double)dtime - (int)dtime);
   ttime   = (time_t)dtime;
   timep   = localtime (&ttime);
-  snprintf (timestamp, 20, "%04d.%03d.%02d:%02d:%02d.%01.0f",
+  snprintf (timestamp, sizeof(timestamp), "%04d.%03d.%02d:%02d:%02d.%01.0f",
             timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
             timep->tm_min, timep->tm_sec, secfrac);
 
-  /* Process waveform data and send it on */
-  if (packet_type == SLDATA)
-  {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
-
-    /* Parse data record and print requested detail if any */
-    if (psamples)
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
-    else
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
-
-    if (ppackets)
-      sl_msr_print (slconn->log, msr, ppackets - 1);
-
-    if (psamples)
-      print_samples (msr);
-
-    /* Test for a so-called end-of-detection record */
-    if (msr->fsdh.samprate_fact == 0 && msr->fsdh.num_samples == 0)
-      archflag = 0;
-
-    /* Write packet to BUD structure if requested */
-    if (buddir && archflag)
-    {
-      if (bud_streamproc (buddir, msr, packet_size,
-                          IDLE_ARCH_STREAM_TIMEOUT))
-        sl_log (2, 0, "cannot write data to BUD at %s\n", buddir);
-    }
-  }
-  else if (packet_type == SLINF || packet_type == SLINFT)
+  /* Handle INFO packets */
+  if (packet_type == SLINF || packet_type == SLINFT)
   {
     int terminate;
 
@@ -232,23 +187,45 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 
     sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
 
+    if (msr == NULL)
+    {
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
+    }
+
     if (info_handler (msr, terminate) == -2)
     {
       sl_log (2, 1, "processing of INFO packet failed\n");
     }
-
-    archflag = 0;
   }
+  /* Trap unexpected keep alive packets */
   else if (packet_type == SLKEEP)
   {
     sl_log (2, 0, "keepalive packet received by packet_handler?!?\n");
-
-    archflag = 0;
   }
+  /* Handle data stream packets */
   else
   {
     sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
             timestamp, seqnum, type[packet_type]);
+
+    /* Parse data record and print requested detail if any */
+    if (psamples)
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
+    else
+      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+
+    if (msr == NULL)
+    {
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
+    }
+
+    if (ppackets)
+      sl_msr_print (slconn->log, msr, ppackets - 1);
+
+    if (psamples)
+      print_samples (msr);
   }
 
   /* Write packet to dumpfile if defined */
@@ -256,22 +233,6 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   {
     if (fwrite (msrecord, packet_size, 1, outfile) == 0)
       sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
-  }
-
-  /* Write packet to an archive if requested */
-  if (archformat && archflag)
-  {
-    if (arch_streamproc (archformat, msr, packet_size, packet_type,
-                         IDLE_ARCH_STREAM_TIMEOUT))
-      sl_log (2, 0, "cannot write data to archive\n");
-  }
-
-  /* Write packet to an SDS archive if requested */
-  if (sdsdir && archflag)
-  {
-    if (sds_streamproc (sdsdir, msr, packet_size, packet_type,
-                        IDLE_ARCH_STREAM_TIMEOUT))
-      sl_log (2, 0, "cannot write data to SDS at %s\n", sdsdir);
   }
 } /* End of packet_handler() */
 
@@ -475,18 +436,6 @@ parameter_proc (int argcount, char **argvec)
     else if (strcmp (argvec[optind], "-o") == 0)
     {
       dumpfile = getoptval (argcount, argvec, optind++);
-    }
-    else if (strcmp (argvec[optind], "-A") == 0)
-    {
-      archformat = getoptval (argcount, argvec, optind++);
-    }
-    else if (strcmp (argvec[optind], "-SDS") == 0)
-    {
-      sdsdir = getoptval (argcount, argvec, optind++);
-    }
-    else if (strcmp (argvec[optind], "-BUD") == 0)
-    {
-      buddir = getoptval (argcount, argvec, optind++);
     }
     else if (strcmp (argvec[optind], "-l") == 0)
     {
@@ -814,21 +763,6 @@ report_environ ()
   else
     sl_log (1, 0, "'dumpfile' not defined\n");
 
-  if (archformat)
-    sl_log (1, 0, "archformat:\t%s\n", archformat);
-  else
-    sl_log (1, 0, "'archformat' not defined\n");
-
-  if (sdsdir)
-    sl_log (1, 0, "sdsdir:\t%s\n", sdsdir);
-  else
-    sl_log (1, 0, "'sdsdir' not defined\n");
-
-  if (buddir)
-    sl_log (1, 0, "buddir:\t%s\n", buddir);
-  else
-    sl_log (1, 0, "'buddir' not defined\n");
-
   if (statefile)
     sl_log (1, 0, "statefile:\t%s\n", statefile);
   else
@@ -944,10 +878,7 @@ usage (void)
            "        the end time is optional, but the colon must be present\n"
            "\n"
            " ## Data saving options ##\n"
-           " -o dumpfile     write all received records to this file\n"
-           " -A format       save all received records is a custom file structure\n"
-           " -SDS SDSdir     save all received records in a SDS file structure\n"
-           " -BUD BUDdir     save all received data records in a BUD file structure\n"
+           " -o outfile      write all received records to this file\n"
            "\n"
            " ## Data server  information ## (requires SeedLink >= 3)\n"
            " -i type         send info request, type is one of the following:\n"
