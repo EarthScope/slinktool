@@ -202,6 +202,12 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
 
     sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
 
+    if (msr == NULL)
+    {
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
+    }
+
     if (info_handler (msr, terminate) == -2)
     {
       sl_log (2, 1, "processing of INFO packet failed\n");
@@ -227,6 +233,12 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
       sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
     else
       sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+
+    if (msr == NULL)
+    {
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
+    }
 
     if (ppackets)
       sl_msr_print (slconn->log, msr, ppackets - 1);
