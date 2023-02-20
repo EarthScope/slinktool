@@ -122,7 +122,7 @@ main (int argc, char **argv)
     ptype  = sl_packettype (slpack);
     seqnum = sl_sequence (slpack);
 
-    packet_handler ((char *)&slpack->msrecord, ptype, seqnum, SLRECSIZE);
+    packet_handler (slpack->msrecord, ptype, seqnum, slpack->reclen);
 
     if (statefile && stateint)
     {
