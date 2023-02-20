@@ -1,3 +1,7 @@
+2023.051: version 4.5.0
+	- Fix crash on record parsing error.
+	- Fix handling of record returned from libslink sl_collect().
+
 2023.048: version 4.4.1
 	- Fix non-C99 compiler error with ezxml.
 
