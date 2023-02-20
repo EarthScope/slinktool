@@ -7,7 +7,6 @@
 1. [Options](#options)
 1. [Examples](#examples)
 1. [Seedlink Selectors](#seedlink-selectors)
-1. [Archiving Data](#archiving-data)
 1. [Stream List File](#stream-list-file)
 1. [Notes](#notes)
 1. [Author](#author)
@@ -75,24 +74,6 @@ slinktool [options] [host][:][port]
 <b>-o </b><u>dumpfile</u>
 
 <p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be appended to this file.  The file is created if it does not exist.  A special mode for this option is to send all received packets to standard output when the dumpfile is specified as '-'.  In this case all output besides these records will be redirected to standard error.</p>
-
-<b>-A </b><u>format</u>
-
-<p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be appended to a directory/file structure defined by <b>format</b>. All directories implied in the <b>format</b> string will be created if necessary.  See the section <u>Archiving data</u>.</p>
-
-<b>-SDS </b><u>SDSdir</u>
-
-<p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be saved into a Simple Data Structure (SDS) dir/file structure starting at the specified directory.  This directory and all subdirectories will be created if necessary.  This option is esentially a preset version of '-A' option.  The SDS dir/file structure is:</p>
-<pre style="padding-left: 30px;">
-SDSdir/YEAR/NET/STA/CHAN.TYPE/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
-</pre>
-
-<b>-BUD </b><u>BUDdir</u>
-
-<p style="padding-left: 30px;">If specified, all waveform data packets (miniSEED data records) received will be saved into a Buffer of Uniform Data (BUD) dir/file structure starting at the specified directory.  This directory and all subdirectories will be created if necessary.  This option is esentially a preset version of '-A' option.  The BUD dir/file structure is:</p>
-<pre style="padding-left: 30px;">
-BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
-</pre>
 
 <b>-s </b><u>selectors</u>
 
@@ -180,58 +161,6 @@ BH? E        - BHZ, BHN, BHE & detection records of all channels
 !L !T        - exclude log and timing records
 </pre>
 
-## <a id='archiving-data'>Archiving Data</a>
-
-<p >Using the '-A <b>format</b>' option received data can be saved in a custom directory and file structure.  The archive <b>format</b> argument is expanded for each packet processed using the following flags:</p>
-
-<pre >
-  <b>n</b> : network code, white space removed
-  <b>s</b> : station code, white space removed
-  <b>l</b> : location code, white space removed
-  <b>c</b> : channel code, white space removed
-  <b>Y</b> : year, 4 digits
-  <b>y</b> : year, 2 digits zero padded
-  <b>j</b> : day of year, 3 digits zero padded
-  <b>H</b> : hour, 2 digits zero padded
-  <b>M</b> : minute, 2 digits zero padded
-  <b>S</b> : second, 2 digits zero padded
-  <b>F</b> : fractional seconds, 4 digits zero padded
-  <b>%</b> : the percent (%) character
-  <b>#</b> : the number (#) character
-  <b>t</b> : single character type code:
-         D - waveform data packet
-         E - detection packet
-         C - calibration packet
-         T - timing packet
-         L - log packet
-         O - opaque data packet
-         U - unknown/general packet
-         I - INFO packet
-         ? - unidentifiable packet
-</pre>
-
-<p >The flags are prefaced with either the <b>%</b> or <b>#</b> modifier. The <b>%</b> modifier indicates a defining flag while the <b>#</b> indicates a non-defining flag.  All received packets with the same set of defining flags will be saved to the same file. Non-defining flags will be expanded using the values in the first packet received for the resulting file name.</p>
-
-<p >Time flags are based on the start time of the given packet.</p>
-
-<p >For example, the format string:</p>
-
-<p ><b>/archive/%n/%s/%n.%s.%l.%c.%Y.%j</b></p>
-
-<p >would be expanded to day length files named something like:</p>
-
-<p ><b>/archive/NL/HGN/NL.HGN..BHE.2003.055</b></p>
-
-<p >Using non-defining flags the format string:</p>
-
-<p ><b>/data/%n.%s.%Y.%j.%H:#M:#S.miniseed</b></p>
-
-<p >would be expanded to:</p>
-
-<p ><b>/data/NL.HGN.2003.044.14:17:54.miniseed</b></p>
-
-<p >resulting in hour length files because the minute and second are specified with the non-defining modifier.  The minute and second fields are from the first packet in the file.</p>
-
 ## <a id='stream-list-file'>Stream List File</a>
 
 <p >The stream list file used with the '-l' option is expected to define a data stream on each line.  The format of each line is:</p>
@@ -261,8 +190,8 @@ MN AQU  BH? HH?
 
 <pre >
 Chad Trabant
-ORFEUS Data Center/EC-Project MEREDIAN
-IRIS Data Management Center
+previously ORFEUS Data Center/EC-Project MEREDIAN
+previously IRIS Data Management Center
 EarthScope Data Services
 </pre>
 

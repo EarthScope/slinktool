@@ -91,34 +91,6 @@ special mode for this option is to send all received packets to
 standard output when the dumpfile is specified as '-'.  In this case
 all output besides these records will be redirected to standard error.
 
-.IP "-A \fIformat\fR"
-If specified, all packets (miniSEED records) received will be
-appended to a directory/file structure defined by \fBformat\fP.
-All directories implied in the \fBformat\fP string will be created if
-necessary.  See the section \fIArchiving data\fR.
-
-.IP "-SDS \fISDSdir\fR"
-If specified, all packets (miniSEED records) received will be
-saved into a Simple Data Structure (SDS) dir/file structure
-starting at the specified directory.  This directory and all
-subdirectories will be created if necessary.  This option is
-esentially a preset version of '-A' option.  The SDS dir/file
-structure is:
-.nf
-SDSdir/YEAR/NET/STA/CHAN.TYPE/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
-.fi
-
-.IP "-BUD \fIBUDdir\fR"
-If specified, all waveform data packets (miniSEED data records)
-received will be saved into a Buffer of Uniform Data (BUD) dir/file
-structure starting at the specified directory.  This directory and all
-subdirectories will be created if necessary.  This option is
-esentially a preset version of '-A' option.  The BUD dir/file
-structure is:
-.nf
-BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
-.fi
-
 .IP "-s \fIselectors\fR"
 This defines default selectors.  If no multi-station data streams are
 configured these selectors will be used for uni-station mode.
@@ -250,67 +222,6 @@ BH? E        - BHZ, BHN, BHE & detection records of all channels
 !L !T        - exclude log and timing records
 .fi
 
-.SH "Archiving data"
-Using the '-A \fBformat\fP' option received data can be saved in a
-custom directory and file structure.  The archive \fBformat\fP
-argument is expanded for each packet processed using the following
-flags:
-
-.nf
-  \fBn\fP : network code, white space removed
-  \fBs\fP : station code, white space removed
-  \fBl\fP : location code, white space removed
-  \fBc\fP : channel code, white space removed
-  \fBY\fP : year, 4 digits
-  \fBy\fP : year, 2 digits zero padded
-  \fBj\fP : day of year, 3 digits zero padded
-  \fBH\fP : hour, 2 digits zero padded
-  \fBM\fP : minute, 2 digits zero padded
-  \fBS\fP : second, 2 digits zero padded
-  \fBF\fP : fractional seconds, 4 digits zero padded
-  \fB%\fP : the percent (%) character
-  \fB#\fP : the number (#) character
-  \fBt\fP : single character type code:
-         D - waveform data packet
-         E - detection packet
-         C - calibration packet
-         T - timing packet
-         L - log packet
-         O - opaque data packet
-         U - unknown/general packet
-         I - INFO packet
-         ? - unidentifiable packet
-.fi
-
-The flags are prefaced with either the \fB%\fP or \fB#\fP modifier.
-The \fB%\fP modifier indicates a defining flag while the \fB#\fP
-indicates a non-defining flag.  All received packets with the same set
-of defining flags will be saved to the same file. Non-defining flags
-will be expanded using the values in the first packet received for the
-resulting file name.
-
-Time flags are based on the start time of the given packet.
-
-For example, the format string:
-
-\fB/archive/%n/%s/%n.%s.%l.%c.%Y.%j\fP
-
-would be expanded to day length files named something like:
-
-\fB/archive/NL/HGN/NL.HGN..BHE.2003.055\fP
-
-Using non-defining flags the format string:
-
-\fB/data/%n.%s.%Y.%j.%H:#M:#S.miniseed\fP
-
-would be expanded to:
-
-\fB/data/NL.HGN.2003.044.14:17:54.miniseed\fP
-
-resulting in hour length files because the minute and second are
-specified with the non-defining modifier.  The minute and second
-fields are from the first packet in the file.
-
 .SH "Stream list file"
 The stream list file used with the '-l' option is expected to
 define a data stream on each line.  The format of each line is:
@@ -343,7 +254,7 @@ printing the raw or formatted responses to INFO requests.
 .SH AUTHOR
 .nf
 Chad Trabant
-ORFEUS Data Center/EC-Project MEREDIAN
-IRIS Data Management Center
+previously ORFEUS Data Center/EC-Project MEREDIAN
+previously IRIS Data Management Center
 EarthScope Data Services
 .fi
