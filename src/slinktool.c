@@ -3,8 +3,9 @@
  * testing.
  *
  * Connects to a SeedLink server, configures a connection using either
- * uni or multi-station mode and collects data.  Detailed information about
- * the data received can be printed and the data can be saved to files.
+ * and collects data and/or server details (INFO).  Detailed
+ * information about the data received can be printed and the data can
+ * be saved to files.
  *
  * Written by Chad Trabant,
  *   ORFEUS/EC-Project MEREDIAN
@@ -17,12 +18,17 @@
 #include <string.h>
 #include <time.h>
 
+//TODO
+// integrate libmseed 3 for parsing
+// convert from sl_dtime() to sl_nstime()
+// Add JSON INFO parsing routines akin to XML ones to pretty-print the output, print_json use elsewise
+// Add -F for INFO FORMATS
+
 #ifndef SLP_WIN
 #include <signal.h>
 #endif
 
 #include <libslink.h>
-
 #include "slinkxml.h"
 
 #define PACKAGE "slinktool"
@@ -39,7 +45,7 @@ static FILE *outfile      = 0; /* the descriptor for the dumpfile */
 
 static SLCD *slconn; /* connection parameters */
 
-/* Possible query types */
+/* Query types */
 static enum {
   SLTNoQuery,
   SLTIDQuery,
@@ -52,8 +58,8 @@ static enum {
 } slt_query = SLTNoQuery;
 
 /* Functions internal to this source file */
-static void packet_handler (char *msrecord, int packet_type,
-                            int seqnum, int packet_size);
+static void packet_handler (const SLpacketinfo *packetinfo,
+                            const char *payload, uint32_t payloadlength);
 static int info_handler (SLMSrecord *msr, int terminate);
 
 static int parameter_proc (int argcount, char **argvec);
@@ -61,6 +67,7 @@ static char *getoptval (int argcount, char **argvec, int argopt);
 static void print_samples (SLMSrecord *msr);
 static int ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
+static int print_json (const char *json, uint32_t jsonlength, int indent);
 static void report_environ ();
 static void usage (void);
 
@@ -71,10 +78,13 @@ static void term_handler (int sig);
 int
 main (int argc, char **argv)
 {
-  SLpacket *slpack;
-  int seqnum;
-  int ptype;
-  int packetcnt = 0;
+  const SLpacketinfo *packetinfo = NULL;
+  uint32_t maxpayloadsize = 262144;
+  uint32_t plbuffersize = 0;
+  char *plbuffer = NULL;
+  int status;
+
+  uint64_t packetcnt = 0;
 
 #ifndef SLP_WIN
   /* Signal handling, use POSIX calls with standardized semantics */
@@ -94,7 +104,7 @@ main (int argc, char **argv)
 #endif
 
   /* Allocate and initialize a new connection description */
-  slconn = sl_newslcd ();
+  slconn = sl_newslcd (PACKAGE, VERSION);
 
   /* Process given parameters (command line and parameter file) */
   if (parameter_proc (argc, argv) < 0)
@@ -112,12 +122,20 @@ main (int argc, char **argv)
     exit (ping_server (slconn));
 
   /* Loop with the connection manager */
-  while (sl_collect (slconn, &slpack))
+  while ((status = sl_collect (slconn, &packetinfo,
+                               &plbuffer, &plbuffersize,
+                               maxpayloadsize)) != SLTERMINATE)
   {
-    ptype  = sl_packettype (slpack);
-    seqnum = sl_sequence (slpack);
-
-    packet_handler ((char *)&slpack->msrecord, ptype, seqnum, SLRECSIZE);
+    if (status == SLPACKET)
+    {
+      packet_handler (packetinfo, plbuffer, packetinfo->payloadcollected);
+    }
+    else if (status == SLTOOLARGE)
+    {
+      sl_log (2, 0, "received payload length %u too large for buffer of %u\n",
+              packetinfo->payloadlength, maxpayloadsize);
+      break;
+    }
 
     if (statefile && stateint)
     {
@@ -128,8 +146,11 @@ main (int argc, char **argv)
       }
     }
 
-    /* Quit if no streams and terminated INFO is received */
-    if (slconn->streams == NULL && ptype == SLINFT)
+    /* An INFO query only: quit if no streams and INFO complete */
+    if (status == SLPACKET &&
+        slconn->streams == NULL &&
+        (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM ||
+         packetinfo->payloadformat == SLPAYLOAD_JSON_INFO))
       break;
   }
 
@@ -151,7 +172,8 @@ main (int argc, char **argv)
  * Process a received packet based on packet type.
  ***************************************************************************/
 static void
-packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
+packet_handler (const SLpacketinfo *packetinfo,
+                const char *payload, uint32_t payloadlength)
 {
   static SLMSrecord *msr = NULL;
 
@@ -161,11 +183,7 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
   char timestamp[36] = {0};
   struct tm *timep;
 
-  /* The following is dependent on the packet type values in libslink.h */
-  char *type[] = {"Data", "Detection", "Calibration", "Timing",
-                  "Message", "General", "Request", "Info",
-                  "Info (terminated)", "KeepAlive"};
-
+  // TODO use the ISO MonthDay wit DOY format instead, use libmseed functionality
   /* Build a current local time string */
   dtime   = sl_dtime ();
   secfrac = (double)((double)dtime - (int)dtime);
@@ -175,45 +193,17 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
             timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
             timep->tm_min, timep->tm_sec, secfrac);
 
-  /* Handle INFO packets */
-  if (packet_type == SLINF || packet_type == SLINFT)
+  sl_log (0, 1, "%s, seq %" PRIu64 ", Received %u bytes of payload format %s\n",
+          timestamp, packetinfo->seqnum, payloadlength,
+          sl_formatstr(packetinfo->payloadformat, packetinfo->payloadsubformat));
+
+  /* Handle miniSEED payload packets */
+  if (packetinfo->payloadformat == SLPAYLOAD_MSEED2 ||
+      packetinfo->payloadformat == SLPAYLOAD_MSEED3)
   {
-    int terminate;
-
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
-
-    terminate = (packet_type == SLINFT);
-
-    sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
-
-    if (msr == NULL)
-    {
-      sl_log (2, 0, "cannot parse miniSEED record\n");
-      return;
-    }
-
-    if (info_handler (msr, terminate) == -2)
-    {
-      sl_log (2, 1, "processing of INFO packet failed\n");
-    }
-  }
-  /* Trap unexpected keep alive packets */
-  else if (packet_type == SLKEEP)
-  {
-    sl_log (2, 0, "keepalive packet received by packet_handler?!?\n");
-  }
-  /* Handle data stream packets */
-  else
-  {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
-
     /* Parse data record and print requested detail if any */
-    if (psamples)
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
-    else
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+    sl_msr_parse (slconn->log, payload, &msr, 1,
+                  (psamples) ? 1 : 0, packetinfo->payloadlength);
 
     if (msr == NULL)
     {
@@ -227,11 +217,38 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
     if (psamples)
       print_samples (msr);
   }
+  /* Handle INFO packets */
+  else if (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFO ||
+           packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM)
+  {
+    sl_msr_parse (slconn->log, payload, &msr, 0, 0, packetinfo->payloadlength);
+
+    if (msr == NULL)
+    {
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
+    }
+
+    if (info_handler (msr, (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM) ? 1 : 0) == -2)
+    {
+      sl_log (2, 1, "processing of INFO record failed\n");
+    }
+  }
+  else if (packetinfo->payloadformat == SLPAYLOAD_JSON_INFO)
+  {
+    print_json (payload, payloadlength, 0);
+  }
+  //TODO add SLPAYLOAD_JSON support?
+  //TODO add SLPAYLOAD_XML support?
+  else
+  {
+    sl_log (1, 1, "Unsupported payload type: %c\n", packetinfo->payloadformat);
+  }
 
   /* Write packet to dumpfile if defined */
   if (dumpfile)
   {
-    if (fwrite (msrecord, packet_size, 1, outfile) == 0)
+    if (fwrite (payload, payloadlength, 1, outfile) == 0)
       sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
   }
 } /* End of packet_handler() */
@@ -747,6 +764,76 @@ print_stderr (const char *message)
 }
 
 /***************************************************************************
+ * print_json:
+ *
+ * print simply-formatted JSON by inserting indentation, spaces and newlines.
+ *
+ * Returns 0 on success and -1 on error.
+ ***************************************************************************/
+static int
+print_json (const char *json, uint32_t jsonlength, int indent)
+{
+  int idx;
+  int instring = 0;
+
+  if (!json)
+    return -1;
+
+  /* Print JSON character-by-character, inserting
+   * indentation, spaces and newlines for readability. */
+  sl_log (0, 0, "%*s", indent, "");
+  for (idx = 0; idx < jsonlength; idx++)
+  {
+    /* Toggle "in string" flag for double quotes */
+    if (json[idx] == '"')
+      instring = (instring) ? 0 : 1;
+
+    if (!instring)
+    {
+      if (json[idx] == ':')
+      {
+        sl_log (0, 0, ": ");
+      }
+      else if (json[idx] == ',')
+      {
+        sl_log (0, 0, ",\n%*s", indent, "");
+      }
+      else if (json[idx] == '{')
+      {
+        indent += 2;
+        sl_log (0, 0, "{\n%*s", indent, "");
+      }
+      else if (json[idx] == '[')
+      {
+        indent += 2;
+        sl_log (0, 0, "[\n%*s", indent, "");
+      }
+      else if (json[idx] == '}')
+      {
+        indent -= 2;
+        sl_log (0, 0, "\n%*s}", indent, "");
+      }
+      else if (json[idx] == ']')
+      {
+        indent -= 2;
+        sl_log (0, 0, "\n%*s]", indent, "");
+      }
+      else
+      {
+        sl_log (0, 0, "%c", json[idx]);
+      }
+    }
+    else
+    {
+      sl_log (0, 0, "%c", json[idx]);
+    }
+  }
+  sl_log (0, 0, "\n");
+
+  return 0;
+}  /* End of print_json() */
+
+/***************************************************************************
  * report_environ:
  * Report (print) the state of global variables, intended for testing.
  ***************************************************************************/
@@ -794,7 +881,12 @@ report_environ ()
   sl_log (1, 0, "nettimeout:\t%d\n", slconn->netto);
   sl_log (1, 0, "netdelay:\t%d\n", slconn->netdly);
 
-  sl_log (1, 0, "slconn->protocol_ver:\t%f\n", slconn->protocol_ver);
+  sl_log (1, 0, "slconn->protocol:\t%s\n", sl_protocol_details(slconn->protocol, NULL, NULL));
+  sl_log (1, 0, "slconn->server_protocols:\t%u (%s %s)\n",
+          slconn->server_protocols,
+          (slconn->server_protocols & SLPROTO3X) ? sl_protocol_details(SLPROTO3X, NULL, NULL) : "",
+          (slconn->server_protocols & SLPROTO40) ? sl_protocol_details(SLPROTO40, NULL, NULL) : "");
+
   sl_log (1, 0, "slconn->link:\t%d\n", slconn->link);
 
   curstream = slconn->streams;
@@ -802,22 +894,14 @@ report_environ ()
   sl_log (1, 0, "'streams' array:\n");
   while (curstream != NULL)
   {
-    if (curstream->net)
-      sl_log (1, 0, "Sta - net: %s\n", curstream->net);
-    else
-      sl_log (1, 0, "'net' not defined\n");
-
-    if (curstream->sta)
-      sl_log (1, 0, "Sta - sta: %s\n", curstream->sta);
-    else
-      sl_log (1, 0, "'sta' not defined\n");
+    sl_log (1, 0, "Sta - netstaid: %s\n", curstream->netstaid);
 
     if (curstream->selectors)
       sl_log (1, 0, "Sta - selectors: %s\n", curstream->selectors);
     else
       sl_log (1, 0, "'selectors' not defined\n");
 
-    sl_log (1, 0, "Sta - seqnum: %d\n", curstream->seqnum);
+    sl_log (1, 0, "Sta - seqnum: %" PRIu64 "\n", curstream->seqnum);
 
     if (curstream->timestamp[0] != '\0')
       sl_log (1, 0, "Sta - timestamp: %s\n", curstream->timestamp);
@@ -871,10 +955,10 @@ usage (void)
            " -S streams      define a stream list for multi-station mode\n"
            "   'streams' = 'stream1[:selectors1],stream2[:selectors2],...'\n"
            "        'stream' is in NET_STA format, for example:\n"
-           "        -S \"IU_KONO:BHE BHN,GE_WLF,MN_AQU:HH?.D\"\n\n"
+           "        -S \"IU_KONO:B_H_E B_H_N,GE_WLF,MN_AQU:H_H_?\"\n\n"
            " -tw begin:[end]  (requires SeedLink >= 3)\n"
            "        specify a time window in year,month,day,hour,min,sec format\n"
-           "        example: -tw 2002,08,05,14,00,00:2002,08,05,14,15,00\n"
+           "        example: -tw 2002-08-05T14:00:00Z:2002-08-05T14:15:00Z\n"
            "        the end time is optional, but the colon must be present\n"
            "\n"
            " ## Data saving options ##\n"

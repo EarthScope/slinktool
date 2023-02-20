@@ -5,9 +5,9 @@
 #   CFLAGS : Specify compiler options to use
 
 # Required compiler parameters
-CFLAGS += -I../libslink -I../ezxml
+CFLAGS += -I../../libslink -I../ezxml
 
-LDFLAGS = -L../libslink -L../ezxml
+LDFLAGS = -L../../libslink -L../ezxml
 LDLIBS  = -lslink -lezxml
 
 # For Windows w/ Unix-like build environments uncomment the following line
