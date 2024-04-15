@@ -19,6 +19,18 @@ A Makefile.win is included for building for using with Nmake, i.e.
 For further installation simply copy the resulting binary and man page
 (in the 'doc' directory) to appropriate system directories.
 
+Docker:
+A Dockerfile is included for building a container with slinktool compiled.
+To build:
+```
+docker build -t slinktool:latest .
+```
+The entrypoint script will pass though all arguments so usage follows the same syntax as the regular executable:
+```
+docker run slinktool -v -o data.mseed slink.host.com:18000
+```
+Note that if you are connecting to seedlink servers running on your local computer, you will need to add `--network="host"` to the docker command in order to use the host name `localhost`.
+
 ## Licensing
 
 Copyright (C) 2016 Chad Trabant, IRIS Data Management Center
