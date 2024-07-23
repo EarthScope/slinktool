@@ -24,7 +24,7 @@ For further installation simply copy the resulting binary and man page
 The record archiving function of slinktool invoked with the `-A`, or 
 preset `-BUD` and `-SDS`, options is deprecated and may be removed in a
 future release.  This program is not recommended for long-term collection
-of data streams.  Instead, the dedicated program `slachive` should
+of data streams.  Instead, the dedicated program `slarchive` should
 be used:
 
 https://github.com/EarthScope/slarchive
