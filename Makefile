@@ -1,12 +1,23 @@
 
-DIRS = libslink ezxml src
+.PHONY: all clean
+all clean: libslink libmseed ezxml
+	$(MAKE) -C src $@
 
-all clean install ::
-	@for d in $(DIRS) ; do \
-	    echo "Running $(MAKE) $@ in $$d" ; \
-	    if [ -f $$d/Makefile -o -f $$d/makefile ] ; \
-	        then ( cd $$d && $(MAKE) $@ ) ; \
-	    elif [ -d $$d ] ; \
-	        then ( echo "ERROR: no Makefile/makefile in $$d for $(CC)" ) ; \
-	    fi ; \
-	done
+.PHONY: libslink
+libslink:
+	$(MAKE) -C $@ $(MAKECMDGOALS)
+
+.PHONY: libmseed
+libmseed:
+	$(MAKE) -C $@ $(MAKECMDGOALS)
+
+.PHONY: ezxml
+ezxml:
+	$(MAKE) -C $@ $(MAKECMDGOALS)
+
+.PHONY: install
+install:
+	@echo
+	@echo "No install method"
+	@echo "Copy the binary and documentation to desired location"
+	@echo
