@@ -18,11 +18,6 @@
 #include <string.h>
 #include <time.h>
 
-//TODO
-// convert from sl_dtime() to sl_nstime()
-// Add JSON INFO parsing routines akin to XML ones to pretty-print the output, print_json use elsewise
-// Add -F for INFO FORMATS
-
 #ifndef SLP_WIN
 #include <signal.h>
 #endif
@@ -45,8 +40,7 @@ static FILE *outfile      = 0; /* the descriptor for the dumpfile */
 
 static SLCD *slconn; /* connection parameters */
 
-#define MAX_PAYLOAD_SIZE 10485760       /* maximum payload in bytes, 10 MiB */
-static char plbuffer[MAX_PAYLOAD_SIZE]; /* payload buffer */
+static char plbuffer[SL_MAX_PAYLOAD]; /* payload buffer */
 
 /* Query types */
 static enum {
