@@ -5,6 +5,9 @@
 	done with slarchive dedicated to this operation.
 	- Lots of cosmetic changes to output messages, generalization
 	for different payload types.
+	- Add libmseed v3 and support for miniSEED v2 and v3.
+	- Deprecate -tw option, leave undocumented.
+	- Add -ts and -te options to specify start and end times.
 
 2016.293: version 4.3
 	- Update libslink to 2.6.

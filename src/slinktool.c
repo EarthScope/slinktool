@@ -55,18 +55,20 @@ static enum {
 } slt_query = SLTNoQuery;
 
 /* Functions internal to this source file */
-static void packet_handler (const SLpacketinfo *packetinfo,
+static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
                             const char *payload, uint32_t payloadlength);
 static int info_handler_mseed (MS3Record *msr, int terminate);
-
-static int parameter_proc (int argcount, char **argvec);
+static const char *auth_value (const char *server, void *data);
+static void auth_finish  (const char *server, void *data);
+static int parameter_proc (SLCD *slconn, int argcount, char **argvec);
 static char *getoptval (int argcount, char **argvec, int argopt);
 static void print_samples (MS3Record *msr, int maxlines);
 static int ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
 static int print_json (const char *json, uint32_t jsonlength, int indent);
-static void report_environ ();
 static void usage (void);
+
+static char auth_buffer[1024] = {0};
 
 #ifndef SLP_WIN
 static void term_handler (int sig);
@@ -101,7 +103,7 @@ main (int argc, char **argv)
   slconn = sl_newslcd (PACKAGE, VERSION);
 
   /* Process given parameters (command line and parameter file) */
-  if (parameter_proc (argc, argv) < 0)
+  if (parameter_proc (slconn, argc, argv) < 0)
   {
     sl_log (2, 0, "parameter processing failed.\n");
     return -1;
@@ -109,7 +111,7 @@ main (int argc, char **argv)
 
   /* Print important parameters if verbose enough */
   if (verbose >= 3)
-    report_environ ();
+    sl_printslcd (slconn);
 
   /* Only do a ping if requested */
   if (pingonly)
@@ -121,7 +123,7 @@ main (int argc, char **argv)
   {
     if (status == SLPACKET)
     {
-      packet_handler (packetinfo, plbuffer, packetinfo->payloadcollected);
+      packet_handler (slconn, packetinfo, plbuffer, packetinfo->payloadcollected);
     }
     else if (status == SLTOOLARGE)
     {
@@ -148,8 +150,7 @@ main (int argc, char **argv)
   }
 
   /* Shutdown */
-  if (slconn->link != -1)
-    sl_disconnect (slconn);
+  sl_disconnect (slconn);
 
   if (dumpfile)
     fclose (outfile);
@@ -165,7 +166,7 @@ main (int argc, char **argv)
  * Process a received packet based on packet type.
  ***************************************************************************/
 static void
-packet_handler (const SLpacketinfo *packetinfo,
+packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
                 const char *payload, uint32_t payloadlength)
 {
   static MS3Record *msr = NULL;
@@ -203,7 +204,21 @@ packet_handler (const SLpacketinfo *packetinfo,
     }
 
     if (ppackets)
-      msr3_print (msr, ppackets - 1);
+    {
+      if (ppackets < 2)
+      {
+        /* Create single line summary and include latency */
+        ms_nstime2timestr (msr->starttime, timestamp, ISOMONTHDAY_Z, NANO_MICRO);
+
+        sl_log (0, 0, "%s, %d, %d, %" PRId64 " samples, %g Hz, %s (latency ~%.1f)\n",
+                msr->sid, msr->pubversion, msr->reclen, msr->samplecnt,
+                msr3_sampratehz(msr), timestamp, msr3_host_latency (msr));
+      }
+      else
+      {
+        msr3_print (msr, ppackets - 1);
+      }
+    }
 
     if (psamples)
       print_samples (msr, (ppackets >= 1) ? 0 : 6);
@@ -378,22 +393,85 @@ info_handler_mseed (MS3Record *msr, int terminate)
 } /* End of info_handler_mseed() */
 
 /***************************************************************************
+ * auth_value:
+ *
+ * A callback function registered at SLCD.auth_value() that should return
+ * a string to be sumitted with the SeedLink AUTH command.
+ *
+ * In this case, the function prompts the user for a username and password
+ * for interactive input.
+ *
+ * Returns authorization value string on success, and NULL on failure
+ ***************************************************************************/
+static const char *
+auth_value (const char *server, void *data)
+{
+  (void)data; /* User-supplied data is not used in this case */
+  char username[256] = {0};
+  char password[256] = {0};
+  int printed;
+
+  fprintf (stderr, "Enter username for %s: ", server);
+  fgets (username, sizeof (username), stdin);
+  username[strlen (username) - 1] = '\0';
+
+  fprintf (stderr, "Enter password: ");
+  fgets (password, sizeof (password), stdin);
+  password[strlen (password) - 1] = '\0';
+
+  /* Create AUTH value of "USERPASS <username> <password>" */
+  printed = snprintf (auth_buffer, sizeof (auth_buffer),
+                      "USERPASS %s %s",
+                      username, password);
+
+  if (printed >= sizeof (auth_buffer))
+  {
+    fprintf (stderr, "%s() Auth value is too large (%d bytes)\n", __func__, printed);
+
+    return NULL;
+  }
+
+  return auth_buffer;
+}
+
+/***************************************************************************
+ * auth_finish:
+ *
+ * A callback function registered at SLCD.auth_finish() that is called
+ * after the AUTH command has been sent to the server.
+ *
+ * In this case, the function clears the memory used to store the
+ * username and password populated by auth_value().
+ ***************************************************************************/
+static void
+auth_finish (const char *server, void *data)
+{
+  (void)data; /* User-supplied data is not used in this case */
+
+  /* Clear memory used to store auth value */
+  memset (auth_buffer, 0, sizeof (auth_buffer));
+}
+
+/***************************************************************************
  * parameter_proc:
  * Process the command line parameters.
  *
  * Returns 0 on success, and -1 on failure
  ***************************************************************************/
 static int
-parameter_proc (int argcount, char **argvec)
+parameter_proc (SLCD *slconn, int argcount, char **argvec)
 {
+  char starttimestr[32] = {0};
+  char endtimestr[32]   = {0};
   nstime_t nstime;
-  char timestr[64];
   int error = 0;
   int optind;
 
-  char *streamfile  = NULL; /* stream list file for configuring streams */
-  char *multiselect = NULL;
-  char *selectors   = NULL;
+  char *server_address = NULL;
+  char *streamfile     = NULL;
+  char *multiselect    = NULL;
+  char *selectors      = NULL;
+
   char *timewin     = NULL;
   char *timestart   = NULL;
   char *timeend     = NULL;
@@ -427,29 +505,33 @@ parameter_proc (int argcount, char **argvec)
     {
       ppackets += strspn (&argvec[optind][1], "p");
     }
+    else if (strcmp (argvec[optind], "-Ap") == 0)
+    {
+      sl_setauthparams (slconn, auth_value, auth_finish, NULL);
+    }
     else if (strncmp (argvec[optind], "-u", 2) == 0)
     {
       psamples = strspn (&argvec[optind][1], "u");
     }
     else if (strcmp (argvec[optind], "-d") == 0)
     {
-      slconn->dialup = 1;
+      sl_setdialupmode (slconn, 1);
     }
     else if (strcmp (argvec[optind], "-b") == 0)
     {
-      slconn->batchmode = 1;
+      sl_setbatchmode (slconn, 1);
     }
     else if (strcmp (argvec[optind], "-nt") == 0)
     {
-      slconn->netto = atoi (getoptval (argcount, argvec, optind++));
+      sl_setidletimeout (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-nd") == 0)
     {
-      slconn->netdly = atoi (getoptval (argcount, argvec, optind++));
+      sl_setreconnectdelay (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-k") == 0)
     {
-      slconn->keepalive = atoi (getoptval (argcount, argvec, optind++));
+      sl_setkeepalive (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-o") == 0)
     {
@@ -518,9 +600,9 @@ parameter_proc (int argcount, char **argvec)
       fprintf (stderr, "Unknown option: %s\n", argvec[optind]);
       exit (1);
     }
-    else if (!slconn->sladdr)
+    else if (server_address == NULL)
     {
-      slconn->sladdr = argvec[optind];
+      server_address = argvec[optind];
     }
     else
     {
@@ -530,7 +612,7 @@ parameter_proc (int argcount, char **argvec)
   }
 
   /* Make sure a server was specified */
-  if (!slconn->sladdr)
+  if (server_address == NULL)
   {
     fprintf (stderr, "No SeedLink server specified\n\n");
     fprintf (stderr, "%s version %s\n\n", PACKAGE, VERSION);
@@ -538,6 +620,8 @@ parameter_proc (int argcount, char **argvec)
     fprintf (stderr, "Try '-h' for detailed help\n");
     exit (1);
   }
+
+  sl_setserveraddress (slconn, server_address);
 
   /* Initialize the verbosity for the sl_log function */
   sl_loginit (verbose, NULL, NULL, NULL, NULL);
@@ -584,28 +668,30 @@ parameter_proc (int argcount, char **argvec)
 
   if (timestart)
   {
+    sl_isodatetime (starttimestr, timestart); /* Convert SeedLink-style (comma) time string */
+
     /* Parse and normalize time string */
-    if ((nstime = ms_timestr2nstime (timestart)) == NSTERROR)
+    if ((nstime = ms_timestr2nstime (starttimestr)) == NSTERROR)
     {
       sl_log (2, 0, "start time not in recognized format: '%s' \n", timestart);
       return -1;
     }
 
-    ms_nstime2timestr (nstime, timestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
-    slconn->begin_time = strdup (timestr);
+    ms_nstime2timestr (nstime, starttimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
   }
 
   if (timeend)
   {
+    sl_isodatetime (endtimestr, timeend); /* Convert SeedLink-style (comma) time string */
+
     /* Parse and normalize time string */
-    if ((nstime = ms_timestr2nstime (timeend)) == NSTERROR)
+    if ((nstime = ms_timestr2nstime (endtimestr)) == NSTERROR)
     {
       sl_log (2, 0, "end time not in recognized format: '%s' \n", timeend);
       return -1;
     }
 
-    ms_nstime2timestr (nstime, timestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
-    slconn->end_time = strdup (timestr);
+    ms_nstime2timestr (nstime, endtimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
   }
 
   /* DEPRECATED, legacy support for time window argument */
@@ -626,33 +712,38 @@ parameter_proc (int argcount, char **argvec)
 
     if (startptr[0] != '\0')
     {
-      sl_isodatetime (timestr, startptr); /* Convert SeedLink-style (comma) time string */
+      sl_isodatetime (starttimestr, startptr); /* Convert SeedLink-style (comma) time string */
 
-      if ((nstime = ms_timestr2nstime (timestr)) == NSTERROR)
+      if ((nstime = ms_timestr2nstime (starttimestr)) == NSTERROR)
       {
         sl_log (2, 0, "start time not in recognized format: '%s' \n", startptr);
         return -1;
       }
 
-      ms_nstime2timestr (nstime, timestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
-      slconn->begin_time = strdup (timestr);
+      ms_nstime2timestr (nstime, starttimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
     }
 
     if (endptr[0] != '\0')
     {
-      sl_isodatetime (timestr, endptr); /* Convert SeedLink-style (comma) time string */
+      sl_isodatetime (endtimestr, endptr); /* Convert SeedLink-style (comma) time string */
 
-      if ((nstime = ms_timestr2nstime (timestr)) == NSTERROR)
+      if ((nstime = ms_timestr2nstime (endtimestr)) == NSTERROR)
       {
         sl_log (2, 0, "end time not in recognized format: '%s' \n", endptr);
         return -1;
       }
 
-      ms_nstime2timestr (nstime, timestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
-      slconn->end_time = strdup (timestr);
+      ms_nstime2timestr (nstime, endtimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
     }
 
     free (startptr);
+  }
+
+  if (starttimestr[0] != '\0' || endtimestr[0] != '\0')
+  {
+    sl_settimewindow (slconn,
+                      starttimestr[0] ? starttimestr : NULL,
+                      endtimestr[0] ? endtimestr : NULL);
   }
 
   /* Parse the 'multiselect' string following '-S' */
@@ -662,7 +753,7 @@ parameter_proc (int argcount, char **argvec)
       return -1;
   }
   else if (slconn->streams == NULL && slconn->info == NULL)
-  { /* No 'streams' array, assuming uni-station mode */
+  { /* No 'streams' array or INFO requested, assuming uni-station mode */
     sl_setuniparams (slconn, selectors, -1, 0);
   }
 
@@ -941,85 +1032,6 @@ print_json (const char *json, uint32_t jsonlength, int indent)
   return 0;
 }  /* End of print_json() */
 
-/***************************************************************************
- * report_environ:
- * Report (print) the state of global variables, intended for testing.
- ***************************************************************************/
-static void
-report_environ ()
-{
-  SLstream *curstream;
-
-  sl_log (1, 0, "verbose:\t%d\n", verbose);
-  sl_log (1, 0, "pingonly:\t%d\n", pingonly);
-
-  if (dumpfile)
-    sl_log (1, 0, "dumpfile:\t%s\n", dumpfile);
-  else
-    sl_log (1, 0, "'dumpfile' not defined\n");
-
-  if (statefile)
-    sl_log (1, 0, "statefile:\t%s\n", statefile);
-  else
-    sl_log (1, 0, "'statefile' not defined\n");
-
-  if (slconn->sladdr)
-    sl_log (1, 0, "sladdr:\t%s\n", slconn->sladdr);
-  else
-    sl_log (1, 0, "'slconn->sladdr' not defined\n");
-
-  if (slconn->begin_time)
-    sl_log (1, 0, "slconn->begin_time:\t%s\n", slconn->begin_time);
-  else
-    sl_log (1, 0, "'slconn->begin_time' not defined\n");
-  if (slconn->end_time)
-    sl_log (1, 0, "slconn->end_time:\t%s\n", slconn->end_time);
-  else
-    sl_log (1, 0, "'slconn->end_time' not defined\n");
-
-  sl_log (1, 0, "slconn->dialup:\t%d\n", slconn->dialup);
-  sl_log (1, 0, "slconn->multistation:\t%d\n", slconn->multistation);
-
-  if (slconn->info)
-    sl_log (1, 0, "slconn->info:\t%s\n", slconn->info);
-  else
-    sl_log (1, 0, "'slconn->info' not defined\n");
-
-  sl_log (1, 0, "keepalive:\t%d\n", slconn->keepalive);
-  sl_log (1, 0, "nettimeout:\t%d\n", slconn->netto);
-  sl_log (1, 0, "netdelay:\t%d\n", slconn->netdly);
-
-  sl_log (1, 0, "slconn->protocol:\t%s\n", sl_protocol_details(slconn->protocol, NULL, NULL));
-  sl_log (1, 0, "slconn->server_protocols:\t%u (%s %s)\n",
-          slconn->server_protocols,
-          (slconn->server_protocols & SLPROTO3X) ? sl_protocol_details(SLPROTO3X, NULL, NULL) : "",
-          (slconn->server_protocols & SLPROTO40) ? sl_protocol_details(SLPROTO40, NULL, NULL) : "");
-
-  sl_log (1, 0, "slconn->link:\t%d\n", slconn->link);
-
-  curstream = slconn->streams;
-
-  sl_log (1, 0, "'streams' array:\n");
-  while (curstream != NULL)
-  {
-    sl_log (1, 0, "Sta - netstaid: %s\n", curstream->netstaid);
-
-    if (curstream->selectors)
-      sl_log (1, 0, "Sta - selectors: %s\n", curstream->selectors);
-    else
-      sl_log (1, 0, "'selectors' not defined\n");
-
-    sl_log (1, 0, "Sta - seqnum: %" PRIu64 "\n", curstream->seqnum);
-
-    if (curstream->timestamp[0] != '\0')
-      sl_log (1, 0, "Sta - timestamp: %s\n", curstream->timestamp);
-    else
-      sl_log (1, 0, "'timestamp' not defined\n");
-
-    curstream = curstream->next;
-  }
-} /* End of report_environ() */
-
 #ifndef SLP_WIN
 /***************************************************************************
  * term_handler:
@@ -1048,7 +1060,9 @@ usage (void)
            " -v              be more verbose, multiple flags can be used\n"
            " -P              ping the server, report the server ID and exit\n"
            " -p              print details of data packets, multiple flags can be used\n"
-           " -u              print unpacked samples of data packets\n\n"
+           " -u              print unpacked samples of data packets\n"
+           " -Ap            prompt for authentication details (v4 only)\n"
+           "\n"
            " -nd delay       network re-connect delay (seconds), default 30\n"
            " -nt timeout     network timeout (seconds), re-establish connection if no\n"
            "                   data/keepalives are received in this time, default 600\n"
