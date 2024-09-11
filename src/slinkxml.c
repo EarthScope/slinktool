@@ -1,12 +1,11 @@
 /***************************************************************************
  * slinkxml.c
- * INFO message handling routines
+ *
+ * INFO message printing routines
  *
  * Written by:
  *   Chad Trabant, ORFEUS Data Center/MEREDIAN Project, IRIS/DMC
  *   Andres Heinloo, GFZ Potsdam GEOFON Project
- *
- * modified: 2007.038
  ***************************************************************************/
 
 #include <stdio.h>
@@ -25,18 +24,22 @@ prtinfo_identification (ezxml_t xmldoc)
 {
   char *rootname = ezxml_name (xmldoc);
 
-  if (strcmp (rootname, "seedlink"))
+  if (rootname == NULL || strcmp (rootname, "seedlink"))
   {
     sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
     return;
   }
 
+  const char *software     = ezxml_attr (xmldoc, "software");
+  const char *organization = ezxml_attr (xmldoc, "organization");
+  const char *started      = ezxml_attr (xmldoc, "started");
+
   printf ("SeedLink server: %s\n"
           "Organization   : %s\n"
           "Start time     : %s\n",
-          ezxml_attr (xmldoc, "software"),
-          ezxml_attr (xmldoc, "organization"),
-          ezxml_attr (xmldoc, "started"));
+          (software) ? software : "",
+          (organization) ? organization : "",
+          (started) ? started : "");
 
 } /* End of prtinfo_identification() */
 
@@ -48,9 +51,10 @@ void
 prtinfo_stations (ezxml_t xmldoc)
 {
   ezxml_t station;
-  char *rootname = ezxml_name (xmldoc);
+  char *rootname    = ezxml_name (xmldoc);
+  int station_count = 0;
 
-  if (strcmp (rootname, "seedlink"))
+  if (rootname == NULL || strcmp (rootname, "seedlink"))
   {
     sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
     return;
@@ -58,10 +62,21 @@ prtinfo_stations (ezxml_t xmldoc)
 
   for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next (station))
   {
+    const char *network     = ezxml_attr (station, "network");
+    const char *name        = ezxml_attr (station, "name");
+    const char *description = ezxml_attr (station, "description");
+
     printf ("%-2s %-5s %s\n",
-            ezxml_attr (station, "network"),
-            ezxml_attr (station, "name"),
-            ezxml_attr (station, "description"));
+            (network) ? network : "",
+            (name) ? name : "",
+            (description) ? description : "");
+
+    station_count++;
+  }
+
+  if (station_count == 0)
+  {
+    sl_log (0, 1, "No station information received\n");
   }
 } /* End of prtinfo_stations() */
 
@@ -73,9 +88,10 @@ void
 prtinfo_streams (ezxml_t xmldoc)
 {
   ezxml_t station, stream;
-  char *rootname = ezxml_name (xmldoc);
+  char *rootname   = ezxml_name (xmldoc);
+  int stream_count = 0;
 
-  if (strcmp (rootname, "seedlink"))
+  if (rootname == NULL || strcmp (rootname, "seedlink"))
   {
     sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
     return;
@@ -83,28 +99,35 @@ prtinfo_streams (ezxml_t xmldoc)
 
   for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next (station))
   {
-    const char *name, *network, *stream_check;
+    const char *name    = ezxml_attr (station, "name");
+    const char *network = ezxml_attr (station, "network");
 
-    name         = ezxml_attr (station, "name");
-    network      = ezxml_attr (station, "network");
-    stream_check = ezxml_attr (station, "stream_check");
-
-    if (!strcmp (stream_check, "enabled"))
+    stream_count = 0;
+    for (stream = ezxml_child (station, "stream"); stream; stream = ezxml_next (stream))
     {
-      for (stream = ezxml_child (station, "stream"); stream; stream = ezxml_next (stream))
-      {
-        printf ("%-2s %-5s %-2s %-3s %s %s  -  %s\n", network, name,
-                ezxml_attr (stream, "location"),
-                ezxml_attr (stream, "seedname"),
-                ezxml_attr (stream, "type"),
-                ezxml_attr (stream, "begin_time"),
-                ezxml_attr (stream, "end_time"));
-      }
+      const char *location   = ezxml_attr (stream, "location");
+      const char *seedname   = ezxml_attr (stream, "seedname");
+      const char *type       = ezxml_attr (stream, "type");
+      const char *begin_time = ezxml_attr (stream, "begin_time");
+      const char *end_time   = ezxml_attr (stream, "end_time");
+
+      printf ("%-2s %-5s %-2s %-3s %s %s  -  %s\n",
+              (network) ? network : "",
+              (name) ? name : "",
+              (location) ? location : "",
+              (seedname) ? seedname : "",
+              (type) ? type : "",
+              (begin_time) ? begin_time : "",
+              (end_time) ? end_time : "");
+
+      stream_count++;
     }
-    else
+
+    if (stream_count == 0)
     {
-      sl_log (0, 1, "%-2s %-5s: No stream information, stream check disabled\n",
-              network, name);
+      sl_log (0, 1, "%-2s %-5s: No stream information received\n",
+              (network) ? network : "",
+              (name) ? name : "");
     }
   }
 } /* End of prtinfo_streams() */
@@ -118,8 +141,9 @@ prtinfo_gaps (ezxml_t xmldoc)
 {
   ezxml_t station, stream, gap;
   char *rootname = ezxml_name (xmldoc);
+  int gap_count  = 0;
 
-  if (strcmp (rootname, "seedlink"))
+  if (rootname == NULL || strcmp (rootname, "seedlink"))
   {
     sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
     return;
@@ -127,35 +151,39 @@ prtinfo_gaps (ezxml_t xmldoc)
 
   for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next (station))
   {
-    const char *name, *network, *stream_check;
+    const char *name    = ezxml_attr (station, "name");
+    const char *network = ezxml_attr (station, "network");
 
-    name         = ezxml_attr (station, "name");
-    network      = ezxml_attr (station, "network");
-    stream_check = ezxml_attr (station, "stream_check");
-
-    if (!strcmp (stream_check, "enabled"))
+    gap_count = 0;
+    for (stream = ezxml_child (station, "stream"); stream; stream = ezxml_next (stream))
     {
-      for (stream = ezxml_child (station, "stream"); stream; stream = ezxml_next (stream))
+      const char *location = ezxml_attr (stream, "location");
+      const char *seedname = ezxml_attr (stream, "seedname");
+      const char *type     = ezxml_attr (stream, "type");
+
+      for (gap = ezxml_child (stream, "gap"); gap; gap = ezxml_next (gap))
       {
-        const char *location, *seedname, *type;
+        const char *begin_time = ezxml_attr (gap, "begin_time");
+        const char *end_time   = ezxml_attr (gap, "end_time");
 
-        location = ezxml_attr (stream, "location");
-        seedname = ezxml_attr (stream, "seedname");
-        type     = ezxml_attr (stream, "type");
-
-        for (gap = ezxml_child (stream, "gap"); gap; gap = ezxml_next (gap))
-        {
-          printf ("%-2s %-5s %-2s %-3s %s %s  -  %s\n", network, name,
-                  location, seedname, type,
-                  ezxml_attr (gap, "begin_time"),
-                  ezxml_attr (gap, "end_time"));
-        }
+        printf ("%-2s %-5s %-2s %-3s %s %s  -  %s\n",
+                (network) ? network : "",
+                (name) ? name : "",
+                (location) ? location : "",
+                (seedname) ? seedname : "",
+                (type) ? type : "",
+                (begin_time) ? begin_time : "",
+                (end_time) ? end_time : "");
       }
+
+      gap_count++;
     }
-    else
+
+    if (gap_count == 0)
     {
-      sl_log (0, 1, "%-2s %-5s: No gap information, stream check disabled\n",
-              network, name);
+      sl_log (0, 1, "%-2s %-5s: No gap information received\n",
+              (network) ? network : "",
+              (name) ? name : "");
     }
   }
 } /* End of prtinfo_gaps() */
@@ -170,7 +198,7 @@ prtinfo_connections (ezxml_t xmldoc)
   ezxml_t station, connection;
   char *rootname = ezxml_name (xmldoc);
 
-  if (strcmp (rootname, "seedlink"))
+  if (rootname == NULL || strcmp (rootname, "seedlink"))
   {
     sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
     return;
@@ -182,17 +210,15 @@ prtinfo_connections (ezxml_t xmldoc)
 
   for (station = ezxml_child (xmldoc, "station"); station; station = ezxml_next (station))
   {
-    const char *network, *name;
-
-    network = ezxml_attr (station, "network");
-    name    = ezxml_attr (station, "name");
+    const char *network = ezxml_attr (station, "network");
+    const char *name    = ezxml_attr (station, "name");
 
     for (connection = ezxml_child (station, "connection"); connection; connection = ezxml_next (connection))
     {
       unsigned long qlen = 0;
       int active = 0, window = 0, realtime = 0, selectors = 0, eod = 0;
       const char *current_seq;
-      char address[25];
+      char address[256];
       char flags[4] = {' ', ' ', ' ', 0};
 
       window    = (ezxml_child (connection, "window")) ? 1 : 0;
@@ -226,14 +252,24 @@ prtinfo_connections (ezxml_t xmldoc)
       if (eod)
         flags[2] = 'E'; /* Connection is waiting to be closed */
 
-      sprintf (address, "%.15s:%.5s",
-               ezxml_attr (connection, "host"),
-               ezxml_attr (connection, "port"));
+      const char *host = ezxml_attr (connection, "host");
+      const char *port = ezxml_attr (connection, "port");
 
-      printf ("%-2s %-5s %-21s %s %8s %4s ", network, name, address,
-              ezxml_attr (connection, "ctime"),
-              ezxml_attr (connection, "txcount"),
-              ezxml_attr (connection, "sequence_gaps"));
+      sprintf (address, "%s:%s",
+               (host) ? host : "",
+               (port) ? port : "");
+
+      const char *ctime         = ezxml_attr (connection, "ctime");
+      const char *txcount       = ezxml_attr (connection, "txcount");
+      const char *sequence_gaps = ezxml_attr (connection, "sequence_gaps");
+
+      printf ("%-2s %-5s %-21s %s %8s %4s ",
+              (network) ? network : "",
+              (name) ? name : "",
+              address,
+              (ctime) ? ctime : "",
+              (txcount) ? txcount : "",
+              (sequence_gaps) ? sequence_gaps : "");
 
       if (realtime && active)
         printf ("%5lu ", qlen);
