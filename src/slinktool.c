@@ -18,10 +18,6 @@
 #include <string.h>
 #include <time.h>
 
-#ifndef SLP_WIN
-#include <signal.h>
-#endif
-
 #include <libslink.h>
 #include <libmseed.h>
 #include "slinkxml.h"
@@ -40,7 +36,7 @@ static FILE *outfile      = 0; /* the descriptor for the dumpfile */
 
 static SLCD *slconn; /* connection parameters */
 
-static char plbuffer[SL_MAX_PAYLOAD]; /* payload buffer */
+static char plbuffer[10485760]; /* 10 MiB payload buffer */
 
 /* Query types */
 static enum {
@@ -70,10 +66,6 @@ static void usage (void);
 
 static char auth_buffer[1024] = {0};
 
-#ifndef SLP_WIN
-static void term_handler (int sig);
-#endif
-
 int
 main (int argc, char **argv)
 {
@@ -82,30 +74,20 @@ main (int argc, char **argv)
 
   uint64_t packetcnt = 0;
 
-#ifndef SLP_WIN
-  /* Signal handling, use POSIX calls with standardized semantics */
-  struct sigaction sa;
-
-  sa.sa_flags = SA_RESTART;
-  sigemptyset (&sa.sa_mask);
-
-  sa.sa_handler = term_handler;
-  sigaction (SIGINT, &sa, NULL);
-  sigaction (SIGQUIT, &sa, NULL);
-  sigaction (SIGTERM, &sa, NULL);
-
-  sa.sa_handler = SIG_IGN;
-  sigaction (SIGHUP, &sa, NULL);
-  sigaction (SIGPIPE, &sa, NULL);
-#endif
-
   /* Allocate and initialize a new connection description */
-  slconn = sl_newslcd (PACKAGE, VERSION);
+  slconn = sl_initslcd (PACKAGE, VERSION);
 
   /* Process given parameters (command line and parameter file) */
   if (parameter_proc (slconn, argc, argv) < 0)
   {
     sl_log (2, 0, "parameter processing failed.\n");
+    return -1;
+  }
+
+  /* Set signal handlers to trigger clean connection shutdown */
+  if (sl_set_termination_handler (slconn) < 0)
+  {
+    sl_log (2, 0, "Failed to set termination handler\n");
     return -1;
   }
 
@@ -145,7 +127,9 @@ main (int argc, char **argv)
     if (status == SLPACKET &&
         slconn->streams == NULL &&
         (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM ||
-         packetinfo->payloadformat == SLPAYLOAD_JSON_INFO))
+         (packetinfo->payloadformat == SLPAYLOAD_JSON &&
+          (packetinfo->payloadsubformat == SLPAYLOAD_JSON_INFO ||
+           packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR))))
       break;
   }
 
@@ -240,12 +224,18 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
       sl_log (2, 1, "processing of INFO record failed\n");
     }
   }
-  else if (packetinfo->payloadformat == SLPAYLOAD_JSON_INFO)
+  else if (packetinfo->payloadformat == SLPAYLOAD_JSON)
   {
+    // TODO implemennt info_handler_json() like info_handler_mseed() to do:
+    // TODO add SLPAYLOAD_JSON_INFO formatted printing
+    // TODO add SLPAYLOAD_JSON_ERROR formatted printing
+    // TODO keep printing formatted JSON if not
+
+    //           packetinfo->payloadsubformat == SLPAYLOAD_JSON_INFO
+    //           packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR
     print_json (payload, payloadlength, 0);
   }
-  //TODO add SLPAYLOAD_JSON support?
-  //TODO add SLPAYLOAD_XML support?
+
   else
   {
     sl_log (1, 1, "Unsupported payload type: %c\n", packetinfo->payloadformat);
@@ -472,6 +462,9 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
   char *multiselect    = NULL;
   char *selectors      = NULL;
 
+  char inforequest[100] = {0};
+  char *infoitem        = NULL;
+
   char *timewin     = NULL;
   char *timestart   = NULL;
   char *timeend     = NULL;
@@ -505,9 +498,13 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     {
       ppackets += strspn (&argvec[optind][1], "p");
     }
+    else if (strcmp (argvec[optind], "-T") == 0)
+    {
+      sl_set_tlsmode (slconn, 1);
+    }
     else if (strcmp (argvec[optind], "-Ap") == 0)
     {
-      sl_setauthparams (slconn, auth_value, auth_finish, NULL);
+      sl_set_auth_params (slconn, auth_value, auth_finish, NULL);
     }
     else if (strncmp (argvec[optind], "-u", 2) == 0)
     {
@@ -515,23 +512,23 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     }
     else if (strcmp (argvec[optind], "-d") == 0)
     {
-      sl_setdialupmode (slconn, 1);
+      sl_set_dialupmode (slconn, 1);
     }
     else if (strcmp (argvec[optind], "-b") == 0)
     {
-      sl_setbatchmode (slconn, 1);
+      sl_set_batchmode (slconn, 1);
     }
     else if (strcmp (argvec[optind], "-nt") == 0)
     {
-      sl_setidletimeout (slconn, atoi (getoptval (argcount, argvec, optind++)));
+      sl_set_idletimeout (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-nd") == 0)
     {
-      sl_setreconnectdelay (slconn, atoi (getoptval (argcount, argvec, optind++)));
+      sl_set_reconnectdelay (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-k") == 0)
     {
-      sl_setkeepalive (slconn, atoi (getoptval (argcount, argvec, optind++)));
+      sl_set_keepalive (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-o") == 0)
     {
@@ -555,33 +552,28 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     }
     else if (strcmp (argvec[optind], "-i") == 0)
     {
-      if (sl_request_info (slconn, getoptval (argcount, argvec, optind++)) == 0)
-        slt_query = SLTGenericQuery;
+      infoitem = getoptval (argcount, argvec, optind++);
+      slt_query = SLTGenericQuery;
     }
     else if (strcmp (argvec[optind], "-I") == 0)
     {
-      if (sl_request_info (slconn, "ID") == 0)
-        slt_query = SLTIDQuery;
+      slt_query = SLTIDQuery;
     }
     else if (strcmp (argvec[optind], "-L") == 0)
     {
-      if (sl_request_info (slconn, "STATIONS") == 0)
-        slt_query = SLTStationQuery;
+      slt_query = SLTStationQuery;
     }
     else if (strcmp (argvec[optind], "-Q") == 0)
     {
-      if (sl_request_info (slconn, "STREAMS") == 0)
-        slt_query = SLTStreamQuery;
+      slt_query = SLTStreamQuery;
     }
     else if (strcmp (argvec[optind], "-G") == 0)
     {
-      if (sl_request_info (slconn, "GAPS") == 0)
-        slt_query = SLTGapQuery;
+      slt_query = SLTGapQuery;
     }
     else if (strcmp (argvec[optind], "-C") == 0)
     {
-      if (sl_request_info (slconn, "CONNECTIONS") == 0)
-        slt_query = SLTConnectionQuery;
+      slt_query = SLTConnectionQuery;
     }
     else if (strcmp (argvec[optind], "-ts") == 0)
     {
@@ -621,7 +613,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     exit (1);
   }
 
-  sl_setserveraddress (slconn, server_address);
+  sl_set_serveraddress (slconn, server_address);
 
   /* Initialize the verbosity for the sl_log function */
   sl_loginit (verbose, NULL, NULL, NULL, NULL);
@@ -664,7 +656,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
 
   /* Load the stream list from a file if specified */
   if (streamfile)
-    sl_read_streamlist (slconn, streamfile, selectors);
+    sl_add_streamlist_file (slconn, streamfile, selectors);
 
   if (timestart)
   {
@@ -741,20 +733,70 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
 
   if (starttimestr[0] != '\0' || endtimestr[0] != '\0')
   {
-    sl_settimewindow (slconn,
-                      starttimestr[0] ? starttimestr : NULL,
-                      endtimestr[0] ? endtimestr : NULL);
+    sl_set_timewindow (slconn,
+                       starttimestr[0] ? starttimestr : NULL,
+                       endtimestr[0] ? endtimestr : NULL);
   }
 
-  /* Parse the 'multiselect' string following '-S' */
-  if (multiselect)
+  /* Configure an INFO request */
+  if (slt_query != SLTNoQuery)
+  {
+    /* Convert station and stream pattern delimiter in multiselect to a space */
+    if (multiselect && (tptr = strchr (multiselect, ':')) != NULL)
+      *tptr = ' ';
+
+    if (slt_query == SLTGenericQuery)
+    {
+      if (multiselect)
+        snprintf (inforequest, sizeof (inforequest), "%s %s", infoitem, multiselect);
+      else
+        snprintf (inforequest, sizeof (inforequest), "%s", infoitem);
+    }
+    else if (slt_query == SLTIDQuery)
+    {
+      snprintf (inforequest, sizeof (inforequest), "ID");
+    }
+    else if (slt_query == SLTStationQuery)
+    {
+      if (multiselect)
+        snprintf (inforequest, sizeof (inforequest), "STATIONS %s", multiselect);
+      else
+        snprintf (inforequest, sizeof (inforequest), "STATIONS");
+    }
+    else if (slt_query == SLTStreamQuery)
+    {
+      if (multiselect)
+        snprintf (inforequest, sizeof (inforequest), "STREAMS %s", multiselect);
+      else
+        snprintf (inforequest, sizeof (inforequest), "STREAMS");
+    }
+    else if (slt_query == SLTGapQuery)
+    {
+      snprintf (inforequest, sizeof (inforequest), "GAPS");
+    }
+    else if (slt_query == SLTConnectionQuery)
+    {
+      if (multiselect)
+        snprintf (inforequest, sizeof (inforequest), "CONNECTIONS %s", multiselect);
+      else
+        snprintf (inforequest, sizeof (inforequest), "CONNECTIONS");
+    }
+
+    if (sl_request_info (slconn, inforequest))
+    {
+      sl_log (2, 0, "cannot request INFO type: %s\n", inforequest);
+      return -1;
+    }
+  }
+  /* If not INFO, parse the 'multiselect' string following '-S' */
+  else if (multiselect)
   {
     if (sl_parse_streamlist (slconn, multiselect, selectors) == -1)
       return -1;
   }
   else if (slconn->streams == NULL && slconn->info == NULL)
   { /* No 'streams' array or INFO requested, assuming uni-station mode */
-    sl_setuniparams (slconn, selectors, -1, 0);
+    sl_set_allstation_params (slconn, selectors, -1, 0);
   }
 
   /* Attempt to recover sequence numbers from state file */
@@ -1032,18 +1074,6 @@ print_json (const char *json, uint32_t jsonlength, int indent)
   return 0;
 }  /* End of print_json() */
 
-#ifndef SLP_WIN
-/***************************************************************************
- * term_handler:
- * Signal handler routine to set the termination flag.
- ***************************************************************************/
-static void
-term_handler (int sig)
-{
-  sl_terminate (slconn);
-}
-#endif
-
 /***************************************************************************
  * usage:
  * Print the usage message and exit.
@@ -1061,7 +1091,8 @@ usage (void)
            " -P              ping the server, report the server ID and exit\n"
            " -p              print details of data packets, multiple flags can be used\n"
            " -u              print unpacked samples of data packets\n"
-           " -Ap            prompt for authentication details (v4 only)\n"
+           " -T              Enable secure TLS connection, already enabled if port 18500\n"
+           " -Ap             prompt for authentication details (v4 only)\n"
            "\n"
            " -nd delay       network re-connect delay (seconds), default 30\n"
            " -nt timeout     network timeout (seconds), re-establish connection if no\n"
