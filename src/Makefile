@@ -5,9 +5,9 @@
 #   CFLAGS : Specify compiler options to use
 
 # Required compiler parameters
-CFLAGS += -I../../libslink -I../libmseed -I../ezxml
+CFLAGS += -I../libslink -I../libmseed -I../ezxml
 
-LDFLAGS = -L../../libslink -L../libmseed -L../ezxml
+LDFLAGS = -L../libslink -L../libmseed -L../ezxml
 
 LDLIBS  = -lslink -lmseed -lezxml
 

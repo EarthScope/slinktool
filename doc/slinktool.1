@@ -38,12 +38,13 @@ were encountered the return code will be 1.
 .IP "-p         "
 Print details of received miniSEED data records. This flag can be
 used multiple times ("-p -p" or "-pp") for more detail.  One flag: a
-single summary line for each data packet received.  Two flags: details
-of the miniSEED data records received, including information from
-fixed header and 100/1000/1001 blockettes.
+single summary line for each data packet received.  Two+ flags: more
+details of the payload received.
 
 .IP "-u         "
 Print data samples in data packets, implies at least one -p flag.
+By default only 6 lines of samples are printed (36 samples), adding
+more -u flags (e.g. -uu) will print all samples.
 
 .IP "-nd \fIdelay\fR"
 The network reconnect delay (in seconds) for the connection to
@@ -110,14 +111,12 @@ NET_STA format and \fIselectors\fR are normal SeedLink selectors, see
 examples and notes below.  If no selectors are provided for a given
 stream, the default selectors, if defined, will be used.
 
-.IP "-tw \fIstart:[end]\fR  (requires SeedLink >= 3)"
-Specifies a time window applied, by the server, to data streams.
-The format for both times is year,month,day,hour,min,sec; for example:
-"2002,08,05,14,00:2002,08,05,14,15,00".
-The end time is optional but the colon must be present.  If no end
-time is specified the server will send data indefinately.  This option
-will override any saved state information.
+.IP "-ts \fstarttime\fR"
+Specify a start time to request from the server.
+Warning: time windowing might be disabled on the remote server.
 
+.IP "-te \fendtime\fR"
+Specify an end time to request from the server.
 Warning: time windowing might be disabled on the remote server.
 
 .IP "-i \fIlevel\fR  (requires SeedLink >= 3)"
