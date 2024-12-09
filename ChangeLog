@@ -4,14 +4,15 @@
 	- NOTE: The stream list file format expected with the `-l`
 	option has now changed with the "Station ID" being the first
 	argument instead of a separate network and station codes.
-	- Remove -A, -SDS, and -BUD options, archiving should be
-	done with slarchive dedicated to this operation.
 	- Lots of cosmetic changes to output messages, generalization
 	for different payload types.
 	- Add libmseed v3 and support for miniSEED v2 and v3.
 	- Deprecate -tw option, leave undocumented.
 	- Add -ts and -te options to specify start and end times.
 	- Add -T option to enable TLS mode on any port.
+	- Add -F for formatted INFO output, legacy options remain.
+	- Remove -A, -SDS, and -BUD options, archiving should be
+	done with slarchive dedicated to this operation.
 
 2016.293: version 4.3
 	- Update libslink to 2.6.

@@ -20,19 +20,21 @@
 
 #include <libslink.h>
 #include <libmseed.h>
-#include "slinkxml.h"
+
+#include "slinkinfo.h"
 
 #define PACKAGE "slinktool"
 #define VERSION "5.0.0DEV"
 
-static short int verbose  = 0; /* flag to control general verbosity */
-static short int pingonly = 0; /* flag to control ping function */
-static short int ppackets = 0; /* flag to control printing of data packets */
-static short int psamples = 0; /* flag to control printing of data samples */
-static int stateint       = 0; /* packet interval to save statefile */
-static char *statefile    = 0; /* state file for saving/restoring the seq. no. */
-static char *dumpfile     = 0; /* output file for data dump */
-static FILE *outfile      = 0; /* the descriptor for the dumpfile */
+static uint8_t verbose     = 0; /* flag to control general verbosity */
+static uint8_t formatlevel = 0; /* flag to control format verbosity */
+static uint8_t pingonly    = 0; /* flag to control ping function */
+static uint8_t ppackets    = 0; /* flag to control printing of data packets */
+static uint8_t psamples    = 0; /* flag to control printing of data samples */
+static int stateint        = 0; /* packet interval to save statefile */
+static char *statefile     = 0; /* state file for saving/restoring the seq. no. */
+static char *dumpfile      = 0; /* output file for data dump */
+static FILE *outfile       = 0; /* the descriptor for the dumpfile */
 
 static SLCD *slconn; /* connection parameters */
 
@@ -40,15 +42,10 @@ static char plbuffer[10485760]; /* 10 MiB payload buffer */
 
 /* Query types */
 static enum {
-  SLTNoQuery,
-  SLTIDQuery,
-  SLTStationQuery,
-  SLTStreamQuery,
-  SLTGapQuery,
-  SLTConnectionQuery,
-  SLTGenericQuery,
-  SLTKeepAliveQuery
-} slt_query = SLTNoQuery;
+  INFO_REQUEST_NONE,
+  INFO_REQUEST_RAW,
+  INFO_REQUEST_FORMAT
+} info_request = INFO_REQUEST_NONE;
 
 /* Functions internal to this source file */
 static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
@@ -226,16 +223,19 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
   }
   else if (packetinfo->payloadformat == SLPAYLOAD_JSON)
   {
-    // TODO implemennt info_handler_json() like info_handler_mseed() to do:
-    // TODO add SLPAYLOAD_JSON_INFO formatted printing
-    // TODO add SLPAYLOAD_JSON_ERROR formatted printing
-    // TODO keep printing formatted JSON if not
-
-    //           packetinfo->payloadsubformat == SLPAYLOAD_JSON_INFO
-    //           packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR
-    print_json (payload, payloadlength, 0);
+    if (info_request == INFO_REQUEST_RAW)
+    {
+      print_json (payload, payloadlength, 0);
+    }
+    else if (packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR)
+    {
+      print_info_json (payload, payloadlength, 0);
+    }
+    else
+    {
+      print_info_json (payload, payloadlength, formatlevel);
+    }
   }
-
   else
   {
     sl_log (1, 1, "Unsupported payload type: %c\n", packetinfo->payloadformat);
@@ -262,13 +262,12 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
 static int
 info_handler_mseed (MS3Record *msr, int terminate)
 {
-  static char *xml_buffer = 0;
-  static int xml_size     = 0;
+  static char *xml_buffer  = NULL;
+  static size_t xml_length = 0;
 
   char channel[11];
   char *xml_bit;
   int xml_bitsize;
-  ezxml_t xmldoc;
 
   if (!msr)
     return -2;
@@ -277,34 +276,33 @@ info_handler_mseed (MS3Record *msr, int terminate)
   xml_bitsize = (int)msr->numsamples;
 
   /* Buffer size sanity check: 10MiB limit */
-  if ((xml_size + xml_bitsize) > 10485760)
+  if ((xml_length + xml_bitsize) > 10485760)
   {
     sl_log (2, 0, "%s(): XML buffer beyond sanity limit\n", __func__);
 
-    if (xml_buffer)
-      free (xml_buffer);
+    free (xml_buffer);
     xml_buffer = 0;
-    xml_size   = 0;
+    xml_length = 0;
 
     return -2;
   }
 
   /* Grow XML string buffer, include room (+1) for NULL terminator */
-  if ((xml_buffer = realloc (xml_buffer, (xml_size + xml_bitsize + 1))) == NULL)
+  if ((xml_buffer = realloc (xml_buffer, (xml_length + xml_bitsize + 1))) == NULL)
   {
     sl_log (2, 0, "%s(): XML buffer memory allocation error\n", __func__);
     return -2;
   }
 
   /* First character is terminator for initial buffer allocation */
-  if (xml_size == 0)
+  if (xml_length == 0)
   {
     *xml_buffer = '\0';
   }
 
   /* Append new XML to buffer */
   strncat (xml_buffer, xml_bit, xml_bitsize);
-  xml_size += xml_bitsize;
+  xml_length += xml_bitsize;
 
   /* Check for an error condition */
   ms_sid2nslc (msr->sid, NULL, NULL, NULL, channel);
@@ -313,10 +311,9 @@ info_handler_mseed (MS3Record *msr, int terminate)
   {
     sl_log (2, 0, "INFO type requested is not enabled\n");
 
-    if (xml_buffer)
-      free (xml_buffer);
+    free (xml_buffer);
     xml_buffer = 0;
-    xml_size   = 0;
+    xml_length = 0;
 
     return -2;
   }
@@ -324,57 +321,23 @@ info_handler_mseed (MS3Record *msr, int terminate)
   /* Process the XML if terminated */
   if (terminate)
   {
-    /* Parse the XML if not dumping the raw XML */
-    if (slt_query != SLTGenericQuery)
+    /* Parse the XML for formatted output */
+    if (info_request == INFO_REQUEST_FORMAT)
     {
-      if ((xmldoc = ezxml_parse_str (xml_buffer, xml_size)) == NULL)
-      {
-        sl_log (2, 0, "%s(): XML parse error\n", __func__);
-
-        if (xml_buffer)
-          free (xml_buffer);
-        xml_buffer = 0;
-        xml_size   = 0;
-
-        return -2;
-      }
-
-      switch (slt_query)
-      {
-      case SLTIDQuery:
-        prtinfo_identification (xmldoc);
-        break;
-      case SLTStationQuery:
-        prtinfo_stations (xmldoc);
-        break;
-      case SLTStreamQuery:
-        prtinfo_streams (xmldoc);
-        break;
-      case SLTGapQuery:
-        prtinfo_gaps (xmldoc);
-        break;
-      case SLTConnectionQuery:
-        prtinfo_connections (xmldoc);
-        break;
-      default:
-        sl_log (2, 0, "%s(): unrecognized INFO query: %d\n", __func__, slt_query);
-        break;
-      }
-
-      ezxml_free (xmldoc);
+      print_info_xml (xml_buffer, xml_length, formatlevel);
     }
+    /* Dump the raw XML */
     else
     {
       fprintf (stdout, "%s\n", xml_buffer);
     }
 
     /* Clean up */
-    slt_query = SLTNoQuery;
+    info_request = INFO_REQUEST_NONE;
 
-    if (xml_buffer)
-      free (xml_buffer);
+    free (xml_buffer);
     xml_buffer = 0;
-    xml_size   = 0;
+    xml_length = 0;
 
     return -1;
   }
@@ -462,8 +425,8 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
   char *multiselect    = NULL;
   char *selectors      = NULL;
 
-  char inforequest[100] = {0};
-  char *infoitem        = NULL;
+  char info_cmd[100] = {0};
+  char *info_type    = NULL;
 
   char *timewin     = NULL;
   char *timestart   = NULL;
@@ -552,28 +515,42 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     }
     else if (strcmp (argvec[optind], "-i") == 0)
     {
-      infoitem = getoptval (argcount, argvec, optind++);
-      slt_query = SLTGenericQuery;
+      info_type    = getoptval (argcount, argvec, optind++);
+      info_request = INFO_REQUEST_RAW;
+    }
+    else if (strcmp (argvec[optind], "-F") == 0)
+    {
+      info_type    = getoptval (argcount, argvec, optind++);
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-I") == 0)
     {
-      slt_query = SLTIDQuery;
+      info_type    = "ID";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-L") == 0)
     {
-      slt_query = SLTStationQuery;
+      info_type    = "STATIONS";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-Q") == 0)
     {
-      slt_query = SLTStreamQuery;
+      info_type    = "STREAMS";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-G") == 0)
     {
-      slt_query = SLTGapQuery;
+      info_type    = "GAPS";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-C") == 0)
     {
-      slt_query = SLTConnectionQuery;
+      info_type    = "CONNECTIONS";
+      info_request = INFO_REQUEST_FORMAT;
+    }
+    else if (strncmp (argvec[optind], "-f", 2) == 0)
+    {
+      formatlevel += strspn (&argvec[optind][1], "f");
     }
     else if (strcmp (argvec[optind], "-ts") == 0)
     {
@@ -739,52 +716,20 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
   }
 
   /* Configure an INFO request */
-  if (slt_query != SLTNoQuery)
+  if (info_request != INFO_REQUEST_NONE)
   {
     /* Convert station and stream pattern delimiter in multiselect to a space */
     if (multiselect && (tptr = strchr (multiselect, ':')) != NULL)
       *tptr = ' ';
 
-    if (slt_query == SLTGenericQuery)
-    {
-      if (multiselect)
-        snprintf (inforequest, sizeof (inforequest), "%s %s", infoitem, multiselect);
-      else
-        snprintf (inforequest, sizeof (inforequest), "%s", infoitem);
-    }
-    else if (slt_query == SLTIDQuery)
-    {
-      snprintf (inforequest, sizeof (inforequest), "ID");
-    }
-    else if (slt_query == SLTStationQuery)
-    {
-      if (multiselect)
-        snprintf (inforequest, sizeof (inforequest), "STATIONS %s", multiselect);
-      else
-        snprintf (inforequest, sizeof (inforequest), "STATIONS");
-    }
-    else if (slt_query == SLTStreamQuery)
-    {
-      if (multiselect)
-        snprintf (inforequest, sizeof (inforequest), "STREAMS %s", multiselect);
-      else
-        snprintf (inforequest, sizeof (inforequest), "STREAMS");
-    }
-    else if (slt_query == SLTGapQuery)
-    {
-      snprintf (inforequest, sizeof (inforequest), "GAPS");
-    }
-    else if (slt_query == SLTConnectionQuery)
-    {
-      if (multiselect)
-        snprintf (inforequest, sizeof (inforequest), "CONNECTIONS %s", multiselect);
-      else
-        snprintf (inforequest, sizeof (inforequest), "CONNECTIONS");
-    }
+    if (multiselect)
+      snprintf (info_cmd, sizeof (info_cmd), "%s %s", info_type, multiselect);
+    else
+      snprintf (info_cmd, sizeof (info_cmd), "%s", info_type);
 
-    if (sl_request_info (slconn, inforequest))
+    if (sl_request_info (slconn, info_cmd))
     {
-      sl_log (2, 0, "cannot request INFO type: %s\n", inforequest);
+      sl_log (2, 0, "cannot request INF: %s\n", info_cmd);
       return -1;
     }
   }
@@ -971,9 +916,18 @@ ping_server (SLCD *slconn)
 {
   char serverid[100];
   char site[100];
+  char *cp;
   int retval;
 
   retval = sl_ping (slconn, serverid, site);
+
+  /* Truncate server ID and site strings at carriage return or new line */
+  if ((cp = strchr (serverid, '\r')) != NULL ||
+      (cp = strchr (serverid, '\n')) != NULL)
+    *cp = '\0';
+  if ((cp = strchr (site, '\r')) != NULL ||
+      (cp = strchr (site, '\n')) != NULL)
+    *cp = '\0';
 
   if (retval == 0)
   {
@@ -1100,7 +1054,7 @@ usage (void)
            " -k interval     send keepalive (heartbeat) packets this often (seconds)\n"
            " -x sfile[:int]  save/restore stream state information to this file\n"
            " -d              configure the connection in dial-up mode\n"
-           " -b              configure the connection in batch mode\n"
+           " -b              configure the connection in batch mode (SLv3)\n"
            "\n"
            " ## Data stream selection ##\n"
            " -s selectors    selectors for uni-station or default for multi-station mode\n"
@@ -1116,15 +1070,16 @@ usage (void)
            " ## Data saving options ##\n"
            " -o outfile      write all received records to this file\n"
            "\n"
-           " ## Data server  information ## (requires SeedLink >= 3)\n"
-           " -i type         send info request, type is one of the following:\n"
-           "                   ID, CAPABILITIES, STATIONS, STREAMS, GAPS, CONNECTIONS, ALL\n"
-           "                   the returned raw XML is displayed when using this option\n"
-           " -I              print formatted server id and version\n"
-           " -L              print formatted station list (if supported by server)\n"
-           " -Q              print formatted stream list (if supported by server)\n"
-           " -G              print formatted gap list (if supported by server)\n"
-           " -C              print formatted connection list (if supported by server)\n"
+           " ## Data server information ## (requires SeedLink >= 3)\n"
+           " -f              increase level of details included in formatted output\n"
+           " -i type         request info, print in raw form\n"
+           " -F type         request info, parse and print formatted form\n"
+           "                   Standard info types are:\n"
+           "                   ID, STATIONS, STREAMS, CONNECTIONS, CAPABILITIES, FORMATS\n"
+           " -I              equivalent to -F ID\n"
+           " -L              equivalent to -F STATIONS\n"
+           " -Q              equivalent to -F STREAMS\n"
+           " -C              equivalent to -F CONNECTIONS\n"
            "\n"
            " [host][:][port] Address of the SeedLink server in host:port format\n"
            "                   Default host is 'localhost' and default port is '18000'\n");

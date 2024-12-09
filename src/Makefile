@@ -20,7 +20,7 @@ LDLIBS  = -lslink -lmseed -lezxml
 
 BIN  = ../slinktool
 
-SRCS = slinkxml.c slinktool.c
+SRCS = slinkinfo.c slinktool.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(BIN)
