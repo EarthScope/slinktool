@@ -2032,7 +2032,7 @@ negotiate_v4 (SLCD *slconn)
   char v4selector[32] = {0};
   char start_time[31] = {0};
   char end_time[31]   = {0};
-  char sendstr[10];  /* A buffer for small command strings */
+  char sendstr[32];  /* A buffer for small command strings */
   char readbuf[200]; /* A buffer for responses */
   SLstream *curstream;
 
