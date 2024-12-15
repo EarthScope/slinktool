@@ -1,3 +1,6 @@
+2024.350: v4.1.2
+	- Fix termination of ENDFETCH command.
+
 2024.333: v4.1.1
 	- Handle payload lengths less than SL_MIN_PAYLOAD (64) bytes.
 	- Update packet tracking details just before returning the complete

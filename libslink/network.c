@@ -2315,7 +2315,7 @@ negotiate_v4 (SLCD *slconn)
               slconn->sladdr, stationcnt);
 
     /* Issue END or ENDFETCH command to finalize stream selection and start streaming */
-    sprintf (sendstr, (slconn->dialup) ? "ENDFETCH" : "END\r\n");
+    sprintf (sendstr, (slconn->dialup) ? "ENDFETCH\r\n" : "END\r\n");
 
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
               (int)strcspn (sendstr, "\r\n"), sendstr);
