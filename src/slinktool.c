@@ -51,7 +51,8 @@ static enum {
 static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
                             const char *payload, uint32_t payloadlength);
 static int info_handler_mseed (MS3Record *msr, int terminate);
-static const char *auth_value (const char *server, void *data);
+static const char *auth_value_userpass (const char *server, void *data);
+static const char *auth_value_token (const char *server, void *data);
 static void auth_finish  (const char *server, void *data);
 static int parameter_proc (SLCD *slconn, int argcount, char **argvec);
 static char *getoptval (int argcount, char **argvec, int argopt);
@@ -157,6 +158,7 @@ static void
 packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
                 const char *payload, uint32_t payloadlength)
 {
+  (void)slconn; /* Unused for now */
   static MS3Record *msr = NULL;
   char timestamp[64] = {0};
   int64_t now_nano;
@@ -364,7 +366,7 @@ info_handler_mseed (MS3Record *msr, int terminate)
  * Returns authorization value string on success, and NULL on failure
  ***************************************************************************/
 static const char *
-auth_value (const char *server, void *data)
+auth_value_userpass (const char *server, void *data)
 {
   (void)data; /* User-supplied data is not used in this case */
   char username[256] = {0};
@@ -395,6 +397,43 @@ auth_value (const char *server, void *data)
 }
 
 /***************************************************************************
+ * auth_value_token:
+ *
+ * A callback function registered at SLCD.auth_value() that should return
+ * a string to be submitted with the SeedLink AUTH command.
+ *
+ * In this case, the function prompts the user for a username and password
+ * for interactive input.
+ *
+ * Returns authorization value string on success, and NULL on failure
+ ***************************************************************************/
+static const char *
+auth_value_token (const char *server, void *data)
+{
+  (void)data; /* User-supplied data is not used in this case */
+  char token[4096] = {0};
+  int printed;
+
+  fprintf (stderr, "Enter token for [%s]: ", server);
+  fgets (token, sizeof (token), stdin);
+  token[strlen (token) - 1] = '\0';
+
+  /* Create AUTH value of "JWT <token>" */
+  printed = snprintf (auth_buffer, sizeof (auth_buffer),
+                      "JWT %s",
+                      token);
+
+  if (printed >= sizeof (auth_buffer))
+  {
+    fprintf (stderr, "%s() Auth value is too large (%d bytes)\n", __func__, printed);
+
+    return NULL;
+  }
+
+  return auth_buffer;
+}
+
+/***************************************************************************
  * auth_finish:
  *
  * A callback function registered at SLCD.auth_finish() that is called
@@ -406,6 +445,7 @@ auth_value (const char *server, void *data)
 static void
 auth_finish (const char *server, void *data)
 {
+  (void)server; /* Server name is not used in this case */
   (void)data; /* User-supplied data is not used in this case */
 
   /* Clear memory used to store auth value */
@@ -474,7 +514,11 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     }
     else if (strcmp (argvec[optind], "-Ap") == 0)
     {
-      sl_set_auth_params (slconn, auth_value, auth_finish, NULL);
+      sl_set_auth_params (slconn, auth_value_userpass, auth_finish, NULL);
+    }
+    else if (strcmp (argvec[optind], "-At") == 0)
+    {
+      sl_set_auth_params (slconn, auth_value_token, auth_finish, NULL);
     }
     else if (strncmp (argvec[optind], "-u", 2) == 0)
     {
@@ -1053,7 +1097,8 @@ usage (void)
            " -p              print details of data packets, multiple flags can be used\n"
            " -u              print unpacked samples of data packets\n"
            " -T              Enable secure TLS connection, already enabled if port 18500\n"
-           " -Ap             prompt for authentication details (v4 only)\n"
+           " -Ap             prompt for user and password authentication details (v4 only)\n"
+           " -At             prompt for JWT authentication token (v4 only)\n"
            "\n"
            " -nd delay       network re-connect delay (seconds), default 30\n"
            " -nt timeout     network timeout (seconds), re-establish connection if no\n"
