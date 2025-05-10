@@ -160,7 +160,9 @@ sl_globmatch (char *string, char *pattern)
     case '\\':
       if (*pattern)
         c = *pattern++;
-    default:
+      break;
+
+      default:
       if (c != *string)
         return SL_GLOBMATCH_FALSE;
       break;

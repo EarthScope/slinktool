@@ -28,10 +28,10 @@
 extern "C" {
 #endif
 
-#define LIBSLINK_RELEASE "2024.350"    /**< libslink release date */
+#define LIBSLINK_RELEASE "2025.130"    /**< libslink release date */
 #define LIBSLINK_VERSION_MAJOR  4      /**< libslink major version */
 #define LIBSLINK_VERSION_MINOR  1      /**< libslink minor version */
-#define LIBSLINK_VERSION_PATCH  3      /**< libslink patch version */
+#define LIBSLINK_VERSION_PATCH  5      /**< libslink patch version */
 #define LIBSLINK_STRINGIFY(a)   LIBSLINK_XSTRINGIFY(a)
 #define LIBSLINK_XSTRINGIFY(a)  #a
 /** @def LIBSLINK_VERSION
@@ -384,6 +384,7 @@ extern int sl_set_auth_params (SLCD *slconn,
                                const char *(*auth_value) (const char *server, void *auth_data),
                                void (*auth_finish) (const char *server, void *auth_data),
                                void *auth_data);
+extern int sl_set_auth_envvars (SLCD *slconn, const char *uservar, const char *passvar);
 extern int sl_set_keepalive (SLCD *slconn, int keepalive);
 extern int sl_set_iotimeout (SLCD *slconn, int iotimeout);
 extern int sl_set_idletimeout (SLCD *slconn, int idletimeout);

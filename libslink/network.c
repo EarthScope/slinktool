@@ -254,7 +254,9 @@ tls_configure (SLCD *slconn, const char *nodename)
  * @param slconn The ::SLCD connection to connect
  * @param sayhello If true, send HELLO command to server
  *
- * @returns -1 on errors otherwise the socket descriptor created.
+ * @retval socket descriptor created on success (positive)
+ * @retval -1 on connection error
+ * @retval -2 on fatal connection error, should not be retried
  *
  * @sa sl_collect()
  ***************************************************************************/
@@ -406,10 +408,12 @@ sl_connect (SLCD *slconn, int sayhello)
   /* Everything should be connected, get capabilities, etc. */
   if (sayhello)
   {
-    if (sayhello_int (slconn) == -1)
+    int rv = sayhello_int (slconn);
+
+    if (rv < 0)
     {
       sl_disconnect (slconn);
-      return -1;
+      return rv;
     }
   }
 
@@ -572,7 +576,7 @@ sl_ping (SLCD *slconn, char *serverid, char *site)
   }
 
   /* Send HELLO */
-  sprintf (sendstr, "HELLO\r\n");
+  snprintf (sendstr, sizeof (sendstr), "HELLO\r\n");
 
   sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
             (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -948,7 +952,9 @@ sl_poll (SLCD *slconn, int readability, int writability, int timeout_ms)
  * The connection is promoted to the highest version supported by both
  * server and client.
  *
- * Returns -1 on errors, 0 on success.
+ * Returns 0 on success
+ *        -1 on non-fatal error
+ *        -2 on fatal errors
  ***************************************************************************/
 static int
 sayhello_int (SLCD *slconn)
@@ -969,7 +975,7 @@ sayhello_int (SLCD *slconn)
   char readbuf[1024];
 
   /* Send HELLO */
-  sprintf (sendstr, "HELLO\r\n");
+  snprintf (sendstr, sizeof (sendstr), "HELLO\r\n");
 
   sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
             (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -1114,7 +1120,7 @@ sayhello_int (SLCD *slconn)
   /* Promote protocol if supported by server */
   if (slconn->server_protocols & SLPROTO40)
   {
-    sprintf (sendstr, "SLPROTO 4.0\r\n");
+    snprintf (sendstr, sizeof (sendstr), "SLPROTO 4.0\r\n");
 
     /* Send SLPROTO and recv response */
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
@@ -1183,7 +1189,7 @@ sayhello_int (SLCD *slconn)
     char *extreply = 0;
 
     /* Send EXTREPLY capability flag */
-    sprintf (sendstr, "CAPABILITIES EXTREPLY\r\n");
+    snprintf (sendstr, sizeof (sendstr), "CAPABILITIES EXTREPLY\r\n");
 
     /* Send CAPABILITIES and recv response */
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
@@ -1233,12 +1239,12 @@ sayhello_int (SLCD *slconn)
   if (slconn->protocol & SLPROTO40)
   {
     /* Create USERAGENT, optional client name and version */
-    sprintf (sendstr,
-             "USERAGENT %s%s%s libslink/%s\r\n",
-             (slconn->clientname) ? slconn->clientname : "",
-             (slconn->clientname && slconn->clientversion) ? "/" : "",
-             (slconn->clientname && slconn->clientversion) ? slconn->clientversion : "",
-             LIBSLINK_VERSION);
+    snprintf (sendstr, sizeof (sendstr),
+              "USERAGENT %s%s%s libslink/%s\r\n",
+              (slconn->clientname) ? slconn->clientname : "",
+              (slconn->clientname && slconn->clientversion) ? "/" : "",
+              (slconn->clientname && slconn->clientversion) ? slconn->clientversion : "",
+              LIBSLINK_VERSION);
 
     /* Send USERAGENT and recv response */
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
@@ -1298,9 +1304,9 @@ sayhello_int (SLCD *slconn)
     }
 
     /* Create full AUTH command */
-    sprintf (sendstr,
-             "AUTH %s\r\n",
-             auth_value);
+    snprintf (sendstr, sizeof (sendstr),
+              "AUTH %s\r\n",
+              auth_value);
 
     /* Call user-supplied finish callback function */
     if (slconn->auth_finish)
@@ -1334,9 +1340,9 @@ sayhello_int (SLCD *slconn)
       while (*cp == ' ' || *cp == '\r' || *cp == '\n')
         *cp-- = '\0';
 
-      sl_log_r (slconn, 1, 2, "[%s] AUTH not accepted: %s\n", slconn->sladdr,
+      sl_log_r (slconn, 1, 0, "[%s] AUTH not accepted: %s\n", slconn->sladdr,
                 readbuf+6);
-      return -1;
+      return -2;
     }
     else
     {
@@ -1381,7 +1387,7 @@ batchmode_int (SLCD *slconn)
     return -1;
 
   /* Send BATCH and recv response */
-  sprintf (sendstr, "BATCH\r\n");
+  snprintf (sendstr, sizeof (sendstr), "BATCH\r\n");
 
   sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
             (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -1488,7 +1494,7 @@ negotiate_uni_v3 (SLCD *slconn)
       {
 
         /* Build SELECT command, send it and receive response */
-        sprintf (sendstr, "SELECT %.*s\r\n", sellen, selptr);
+        snprintf (sendstr, sizeof (sendstr), "SELECT %.*s\r\n", sellen, selptr);
 
         sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
                   (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -1555,11 +1561,11 @@ negotiate_uni_v3 (SLCD *slconn)
   {
     if (end_time[0])
     {
-      sprintf (sendstr, "TIME %.31s %.31s\r\n", start_time, end_time);
+      snprintf (sendstr, sizeof (sendstr), "TIME %.31s %.31s\r\n", start_time, end_time);
     }
     else
     {
-      sprintf (sendstr, "TIME %.31s\r\n", start_time);
+      snprintf (sendstr, sizeof (sendstr), "TIME %.31s\r\n", start_time);
     }
 
     sl_log_r (slconn, 1, 1, "[%s] requesting specified time window\n",
@@ -1571,11 +1577,11 @@ negotiate_uni_v3 (SLCD *slconn)
 
     if (slconn->dialup)
     {
-      sprintf (cmd, "FETCH");
+      snprintf (cmd, sizeof (cmd), "FETCH");
     }
     else
     {
-      sprintf (cmd, "DATA");
+      snprintf (cmd, sizeof(cmd), "DATA");
     }
 
     /* Append the last packet time if the feature is enabled */
@@ -1592,8 +1598,8 @@ negotiate_uni_v3 (SLCD *slconn)
       }
 
       /* Increment sequence number by 1 */
-      sprintf (sendstr, "%s %0" PRIX64 " %.31s\r\n", cmd,
-               (curstream->seqnum + 1), timestr);
+      snprintf (sendstr, sizeof (sendstr), "%s %0" PRIX64 " %.31s\r\n", cmd,
+                (curstream->seqnum + 1), timestr);
 
       sl_log_r (slconn, 1, 1,
                 "[%s] resuming data from %0" PRIX64 " (Dec %" PRIu64 ") at %.31s\n",
@@ -1603,8 +1609,8 @@ negotiate_uni_v3 (SLCD *slconn)
     else
     {
       /* Increment sequence number by 1 */
-      sprintf (sendstr, "%s %0" PRIX64 "\r\n", cmd,
-               (curstream->seqnum + 1));
+      snprintf (sendstr, sizeof (sendstr), "%s %0" PRIX64 "\r\n", cmd,
+                (curstream->seqnum + 1));
 
       sl_log_r (slconn, 1, 1,
                 "[%s] resuming data from %0" PRIX64 " (Dec %" PRIu64 ")\n",
@@ -1616,11 +1622,11 @@ negotiate_uni_v3 (SLCD *slconn)
   {
     if (slconn->dialup)
     {
-      sprintf (sendstr, "FETCH\r\n");
+      snprintf (sendstr, sizeof (sendstr), "FETCH\r\n");
     }
     else
     {
-      sprintf (sendstr, "DATA\r\n");
+      snprintf (sendstr, sizeof (sendstr), "DATA\r\n");
     }
 
     sl_log_r (slconn, 1, 1, "[%s] requesting next available data\n", slconn->sladdr);
@@ -1700,7 +1706,7 @@ negotiate_multi_v3 (SLCD *slconn)
       *sta++ = '\0';
 
     /* Send the STATION command */
-    sprintf (sendstr, "STATION %s %s\r\n", (sta) ? sta : "", net);
+    snprintf (sendstr, sizeof (sendstr), "STATION %s %s\r\n", (sta) ? sta : "", net);
 
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n",
               curstream->stationid,
@@ -1775,7 +1781,7 @@ negotiate_multi_v3 (SLCD *slconn)
         else
         {
           /* Build SELECT command, send it and receive response */
-          sprintf (sendstr, "SELECT %.*s\r\n", sellen, selptr);
+          snprintf (sendstr, sizeof (sendstr), "SELECT %.*s\r\n", sellen, selptr);
 
           sl_log_r (slconn, 1, 2, "[%s] sending: SELECT %.*s\n",
                     curstream->stationid,
@@ -1856,11 +1862,11 @@ negotiate_multi_v3 (SLCD *slconn)
     {
       if (end_time[0] == '\0')
       {
-        sprintf (sendstr, "TIME %.31s\r\n", start_time);
+        snprintf (sendstr, sizeof (sendstr), "TIME %.31s\r\n", start_time);
       }
       else
       {
-        sprintf (sendstr, "TIME %.31s %.31s\r\n", start_time, end_time);
+        snprintf (sendstr, sizeof (sendstr), "TIME %.31s %.31s\r\n", start_time, end_time);
       }
       sl_log_r (slconn, 1, 1, "[%s] requesting specified time window\n",
                 curstream->stationid);
@@ -1871,11 +1877,11 @@ negotiate_multi_v3 (SLCD *slconn)
 
       if (slconn->dialup)
       {
-        sprintf (cmd, "FETCH");
+        snprintf (cmd, sizeof (cmd), "FETCH");
       }
       else
       {
-        sprintf (cmd, "DATA");
+        snprintf (cmd, sizeof (cmd), "DATA");
       }
 
       /* Append the last packet time if the feature is enabled */
@@ -1892,8 +1898,8 @@ negotiate_multi_v3 (SLCD *slconn)
         }
 
         /* Increment sequence number by 1 */
-        sprintf (sendstr, "%s %0" PRIX64 " %.31s\r\n", cmd,
-                 (curstream->seqnum + 1), timestr);
+        snprintf (sendstr, sizeof (sendstr), "%s %0" PRIX64 " %.31s\r\n", cmd,
+                  (curstream->seqnum + 1), timestr);
 
         sl_log_r (slconn, 1, 1,
                   "[%s] resuming data from %0" PRIX64 " (Dec %" PRIu64 ") at %.31s\n",
@@ -1902,8 +1908,8 @@ negotiate_multi_v3 (SLCD *slconn)
       }
       else
       { /* Increment sequence number by 1 */
-        sprintf (sendstr, "%s %0" PRIX64 "\r\n", cmd,
-                 (curstream->seqnum + 1));
+        snprintf (sendstr, sizeof (sendstr), "%s %0" PRIX64 "\r\n", cmd,
+                  (curstream->seqnum + 1));
 
         sl_log_r (slconn, 1, 1,
                   "[%s] resuming data from %0" PRIX64 " (Dec %" PRIu64 ")\n",
@@ -1916,11 +1922,11 @@ negotiate_multi_v3 (SLCD *slconn)
     {
       if (slconn->dialup)
       {
-        sprintf (sendstr, "FETCH\r\n");
+        snprintf (sendstr, sizeof (sendstr), "FETCH\r\n");
       }
       else
       {
-        sprintf (sendstr, "DATA\r\n");
+        snprintf (sendstr, sizeof (sendstr), "DATA\r\n");
       }
 
       sl_log_r (slconn, 1, 1, "[%s] requesting next available data\n",
@@ -1988,7 +1994,7 @@ negotiate_multi_v3 (SLCD *slconn)
   }
 
   /* Issue END action command */
-  sprintf (sendstr, "END\r\n");
+  snprintf (sendstr, sizeof (sendstr), "END\r\n");
 
   sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
             (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -2104,7 +2110,7 @@ negotiate_v4 (SLCD *slconn)
     cmdtail->next = NULL;
 
     /* Generate STATION command */
-    snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+    snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
               "STATION %s\r",
               curstream->stationid);
 
@@ -2167,7 +2173,7 @@ negotiate_v4 (SLCD *slconn)
           cmdtail->next = NULL;
 
           /* Generate SELECT command */
-          snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+          snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
                     "SELECT %s\r",
                     cmd_selector);
         }
@@ -2198,7 +2204,7 @@ negotiate_v4 (SLCD *slconn)
     {
       if (curstream->seqnum != SL_UNSETSEQUENCE)
       {
-        snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
                   "DATA %" PRIu64 "%s%s%s\r",
                   (curstream->seqnum + 1),
                   start_time,
@@ -2207,7 +2213,7 @@ negotiate_v4 (SLCD *slconn)
       }
       else
       {
-        snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
                   "DATA ALL %s%s%s\r",
                   start_time,
                   (end_time[0]) ? " " : "",
@@ -2218,17 +2224,17 @@ negotiate_v4 (SLCD *slconn)
     {
       if (curstream->seqnum == SL_UNSETSEQUENCE)
       {
-        snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
                   "DATA\r");
       }
       else if (curstream->seqnum == SL_ALLDATASEQUENCE)
       {
-        snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
                   "DATA ALL\r");
       }
       else
       {
-        snprintf (cmdtail->cmd, sizeof(cmdtail->cmd),
+        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd),
                   "DATA %" PRIu64 "\r",
                   (curstream->seqnum + 1));
       }
@@ -2268,7 +2274,7 @@ negotiate_v4 (SLCD *slconn)
   while (cmdptr)
   {
     bytesread = sl_recvresp (slconn, readbuf, sizeof (readbuf),
-                             NULL, curstream->stationid);
+                             NULL, cmdptr->nsid);
 
     if (bytesread < 0)
     {
@@ -2315,7 +2321,7 @@ negotiate_v4 (SLCD *slconn)
               slconn->sladdr, stationcnt);
 
     /* Issue END or ENDFETCH command to finalize stream selection and start streaming */
-    sprintf (sendstr, (slconn->dialup) ? "ENDFETCH\r\n" : "END\r\n");
+    snprintf (sendstr, sizeof (sendstr), (slconn->dialup) ? "ENDFETCH\r\n" : "END\r\n");
 
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
               (int)strcspn (sendstr, "\r\n"), sendstr);

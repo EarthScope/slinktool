@@ -182,11 +182,11 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
 
     if (samplerate)
     {
-      uint16_t samprate_fact;
-      uint16_t samprate_mult;
+      int16_t samprate_fact;
+      int16_t samprate_mult;
 
-      samprate_fact = HO2u(*pMS2FSDH_SAMPLERATEFACT (plbuffer), swapflag);
-      samprate_mult = HO2u(*pMS2FSDH_SAMPLERATEMULT (plbuffer), swapflag);
+      samprate_fact = HO2d (*pMS2FSDH_SAMPLERATEFACT (plbuffer), swapflag);
+      samprate_mult = HO2d (*pMS2FSDH_SAMPLERATEMULT (plbuffer), swapflag);
 
       if (samprate_fact > 0)
         *samplerate = (double)samprate_fact;

@@ -110,10 +110,18 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo,
     if (slconn->stat->conn_state == DOWN &&
         slconn->stat->netdly_time < current_time)
     {
-      if (sl_connect (slconn, 1) != -1)
+      int connect_status = sl_connect (slconn, 1);
+
+      if (connect_status == -2)
+      {
+        return SLTERMINATE;
+      }
+
+      if (connect_status > 0)
       {
         slconn->stat->conn_state = UP;
       }
+
       slconn->stat->netto_time     = 0;
       slconn->stat->netdly_time    = 0;
       slconn->stat->keepalive_time = 0;
@@ -1166,8 +1174,8 @@ sl_set_timewindow (SLCD *slconn, const char *start_time, const char *end_time)
  * JWT <token>
  * ```
  *
- * The \a auth_finish callback is executed when authentication is complete.
- * This can be used to free memory or perform other cleanup tasks.
+ * The \a auth_finish callback, if not NULL, is executed when authentication
+ * is complete. This can be used to free memory or perform other cleanup tasks.
  *
  * The \a auth_data parameter is a pointer to caller-supplied data that
  * is passed to the callback functions.
@@ -1198,6 +1206,79 @@ sl_set_auth_params (SLCD *slconn,
 
     return 0;
 } /* End of sl_set_auth_params() */
+
+/* Internal auth_value handler to return auth_data */
+const char *
+internal_auth_value_data (const char *server, void *auth_data)
+{
+  (void)server; /* Unused parameter */
+  return (const char *)auth_data;
+}
+
+/**********************************************************************/ /**
+ * @brief Configure authentication with environment variables
+ *
+ * Use the specified environment variables to set the authentication
+ * parameters for the SeedLink connection.
+ *
+ * @param[in] slconn     SeedLink connection description
+ * @param[in] uservar    Environment variable for username
+ * @param[in] passvar    Environment variable for password
+ *
+ * @retval  0 : success
+ * @retval -1 : error
+ *
+ * @sa sl_set_auth_params()
+ ***************************************************************************/
+int
+sl_set_auth_envvars (SLCD *slconn, const char *uservar, const char *passvar)
+{
+  if (!slconn)
+  {
+    return -1;
+  }
+
+  const char *username = getenv (uservar);
+  const char *password = getenv (passvar);
+
+  if (username == NULL || password == NULL)
+  {
+    sl_log_r (NULL, 2, 0, "%s(): error retrieving authentication environment variables\n", __func__);
+
+    if (username == NULL)
+    {
+      sl_log_r (NULL, 2, 0, "  Environment variable %s not set\n", uservar);
+    }
+    if (password == NULL)
+    {
+      sl_log_r (NULL, 2, 0, "  Environment variable %s not set\n", passvar);
+    }
+
+    return -1;
+  }
+
+  /* Create AUTH value of "USERPASS <username> <password>" */
+  size_t avlength = strlen (username) + strlen (password) + 11;
+
+  char *auth_value = (char *)malloc (avlength);
+  if (auth_value == NULL)
+  {
+    sl_log_r (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
+    return -1;
+  }
+
+  snprintf (auth_value, avlength,
+            "USERPASS %s %s",
+            username, password);
+
+  /* Set the authentication parameters */
+  sl_set_auth_params (slconn,
+                      internal_auth_value_data,
+                      NULL,
+                      auth_value);
+
+  return 0;
+}
 
 /**********************************************************************/ /**
  * @brief Set SeedLink connection keep alive interval in seconds
@@ -1811,9 +1892,9 @@ sl_printslcd (SLCD *slconn)
   sl_log_r (slconn, 0, 0, "         I/O timeout: %d seconds\n", slconn->iotimeout);
   sl_log_r (slconn, 0, 0, "        Idle timeout: %d seconds\n", slconn->netto);
   sl_log_r (slconn, 0, 0, "     Reconnect delay: %d seconds\n", slconn->netdly);
-  sl_log_r (slconn, 0, 0, "        auth_value(): %p\n", slconn->auth_value);
-  sl_log_r (slconn, 0, 0, "       auth_finish(): %p\n", slconn->auth_finish);
-  sl_log_r (slconn, 0, 0, "           auth_data: %p\n", slconn->auth_data);
+  sl_log_r (slconn, 0, 0, "        auth_value(): %s\n", (slconn->auth_value) ? "SET" : "NOT SET");
+  sl_log_r (slconn, 0, 0, "       auth_finish(): %s\n", (slconn->auth_finish) ? "SET" : "NOT SET");
+  sl_log_r (slconn, 0, 0, "           auth_data: %s\n", (slconn->auth_data) ? "SET" : "NOT SET");
   sl_log_r (slconn, 0, 0, "   Non-blocking mode: %d\n", slconn->noblock);
   sl_log_r (slconn, 0, 0, "        Dial-up mode: %d\n", slconn->dialup);
   sl_log_r (slconn, 0, 0, "          Batch mode: %d\n", slconn->batchmode);
