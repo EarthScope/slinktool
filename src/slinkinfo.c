@@ -34,6 +34,7 @@ print_info_json (const char *json, size_t json_length, int verbose)
   if (doc == NULL || root == NULL)
   {
     sl_log (1, 0, "%s() JSON INFO not provided\n", __func__);
+    yyjson_doc_free (doc);
     return;
   }
 
@@ -48,6 +49,7 @@ print_info_json (const char *json, size_t json_length, int verbose)
              (error_code) ? error_code : "",
              (error_message) ? error_message : "");
 
+    yyjson_doc_free (doc);
     return;
   }
 

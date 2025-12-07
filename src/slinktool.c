@@ -32,9 +32,9 @@ static uint8_t pingonly    = 0; /* flag to control ping function */
 static uint8_t ppackets    = 0; /* flag to control printing of data packets */
 static uint8_t psamples    = 0; /* flag to control printing of data samples */
 static int stateint        = 0; /* packet interval to save statefile */
-static char *statefile     = 0; /* state file for saving/restoring the seq. no. */
-static char *dumpfile      = 0; /* output file for data dump */
-static FILE *outfile       = 0; /* the descriptor for the dumpfile */
+static char *statefile     = NULL; /* state file for saving/restoring the seq. no. */
+static char *dumpfile      = NULL; /* output file for data dump */
+static FILE *outfile       = NULL; /* the descriptor for the dumpfile */
 
 static SLCD *slconn; /* connection parameters */
 
@@ -290,7 +290,7 @@ info_handler_mseed (MS3Record *msr, int terminate)
     sl_log (2, 0, "%s(): XML buffer beyond sanity limit\n", __func__);
 
     free (xml_buffer);
-    xml_buffer = 0;
+    xml_buffer = NULL;
     xml_length = 0;
 
     return -2;
@@ -300,6 +300,11 @@ info_handler_mseed (MS3Record *msr, int terminate)
   if ((xml_buffer = realloc (xml_buffer, (xml_length + xml_bitsize + 1))) == NULL)
   {
     sl_log (2, 0, "%s(): XML buffer memory allocation error\n", __func__);
+
+    free (xml_buffer);
+    xml_buffer = NULL;
+    xml_length = 0;
+
     return -2;
   }
 
@@ -321,7 +326,7 @@ info_handler_mseed (MS3Record *msr, int terminate)
     sl_log (2, 0, "INFO type requested is not enabled\n");
 
     free (xml_buffer);
-    xml_buffer = 0;
+    xml_buffer = NULL;
     xml_length = 0;
 
     return -2;
@@ -345,7 +350,7 @@ info_handler_mseed (MS3Record *msr, int terminate)
     info_request = INFO_REQUEST_NONE;
 
     free (xml_buffer);
-    xml_buffer = 0;
+    xml_buffer = NULL;
     xml_length = 0;
 
     return -1;
@@ -374,12 +379,20 @@ auth_value_userpass (const char *server, void *data)
   int printed;
 
   fprintf (stderr, "Enter username for %s: ", server);
-  fgets (username, sizeof (username), stdin);
-  username[strlen (username) - 1] = '\0';
+  if (fgets (username, sizeof (username), stdin) == NULL)
+  {
+    fprintf (stderr, "%s() failed to read username\n", __func__);
+    return NULL;
+  }
+  username[strcspn (username, "\n")] = '\0';
 
   fprintf (stderr, "Enter password: ");
-  fgets (password, sizeof (password), stdin);
-  password[strlen (password) - 1] = '\0';
+  if (fgets (password, sizeof (password), stdin) == NULL)
+  {
+    fprintf (stderr, "%s() failed to read password\n", __func__);
+    return NULL;
+  }
+  password[strcspn (password, "\n")] = '\0';
 
   /* Create AUTH value of "USERPASS <username> <password>" */
   printed = snprintf (auth_buffer, sizeof (auth_buffer),
@@ -415,8 +428,12 @@ auth_value_token (const char *server, void *data)
   int printed;
 
   fprintf (stderr, "Enter token for [%s]: ", server);
-  fgets (token, sizeof (token), stdin);
-  token[strlen (token) - 1] = '\0';
+  if (fgets (token, sizeof (token), stdin) == NULL)
+  {
+    fprintf (stderr, "%s() failed to read token\n", __func__);
+    return NULL;
+  }
+  token[strcspn (token, "\n")] = '\0';
 
   /* Create AUTH value of "JWT <token>" */
   printed = snprintf (auth_buffer, sizeof (auth_buffer),
@@ -925,22 +942,15 @@ print_samples (MS3Record *msr, int maxlines)
     tdata = (char *)msr->datasamples;
 
     /* Print 70 character samples per line */
-    lines    = (msr->numsamples / 70) + 1;
+    lines    = (msr->numsamples + 69) / 70;
     maxlines = (maxlines <= 0) ? lines : maxlines;
 
     for (cnt = 0, line = 0;
          line < lines && line < maxlines;
          line++)
     {
-      for (col = 0; col < 6; col++)
-      {
-        if (cnt < msr->numsamples)
-        {
-          sl_log (0, 0, "%.70s", &tdata[cnt]);
-          cnt += 70;
-        }
-      }
-      sl_log (0, 0, "\n");
+      sl_log (0, 0, "%.70s\n", &tdata[cnt]);
+      cnt += 70;
     }
 
     /* Print ellipsis is not all samples were printed */

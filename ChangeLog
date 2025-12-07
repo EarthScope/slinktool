@@ -7,13 +7,13 @@
 	- Lots of cosmetic changes to output messages, generalization
 	for different payload types.
 	- Perform SeedLink v4 authentication if SEEDLINK_USERNAME and
-  SEEDLINK_PASSWORD environment variables are set.
+	SEEDLINK_PASSWORD environment variables are set.
 	- Add libmseed v3 and support for miniSEED v2 and v3.
 	- Deprecate -tw option, leave functional but undocumented.
 	- Add -ts and -te options to specify start and end times.
 	- Add -T option to enable TLS mode on any port.
 	- Add -F for formatted INFO output, legacy options remain.
-	- Remove -A, -SDS, and -BUD options, archiving should be
+	- Remove -A, -SDS, and -BUD options; archiving should be
 	done with slarchive dedicated to this operation.
 
 2016.293: version 4.3
