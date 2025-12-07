@@ -198,7 +198,7 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
       if (ppackets < 2)
       {
         /* Create single line summary and include latency */
-        ms_nstime2timestr (msr->starttime, timestamp, ISOMONTHDAY_Z, NANO_MICRO);
+        ms_nstime2timestr_n (msr->starttime, timestamp, sizeof (timestamp), ISOMONTHDAY_Z, NANO_MICRO);
 
         sl_log (0, 0, "%s, %d, %d, %" PRId64 " samples, %g Hz, %s (latency ~%.1f)\n",
                 msr->sid, msr->pubversion, msr->reclen, msr->samplecnt,
@@ -714,7 +714,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
       return -1;
     }
 
-    ms_nstime2timestr (nstime, starttimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
+    ms_nstime2timestr_n (nstime, starttimestr, sizeof (starttimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
   }
 
   if (timeend)
@@ -728,7 +728,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
       return -1;
     }
 
-    ms_nstime2timestr (nstime, endtimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
+    ms_nstime2timestr_n (nstime, endtimestr, sizeof (endtimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
   }
 
   /* DEPRECATED, legacy support for time window argument */
@@ -757,7 +757,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
         return -1;
       }
 
-      ms_nstime2timestr (nstime, starttimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
+      ms_nstime2timestr_n (nstime, starttimestr, sizeof (starttimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
     }
 
     if (endptr[0] != '\0')
@@ -770,7 +770,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
         return -1;
       }
 
-      ms_nstime2timestr (nstime, endtimestr, ISOMONTHDAY_Z, NANO_MICRO_NONE);
+      ms_nstime2timestr_n (nstime, endtimestr, sizeof (endtimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
     }
 
     free (startptr);
