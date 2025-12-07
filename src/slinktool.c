@@ -537,6 +537,14 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     {
       sl_set_auth_params (slconn, auth_value_token, auth_finish, NULL);
     }
+    else if (strcmp (argvec[optind], "-3") == 0)
+    {
+      sl_set_protocol (slconn, SLPROTO3X);
+    }
+    else if (strcmp (argvec[optind], "-4") == 0)
+    {
+      sl_set_protocol (slconn, SLPROTO40);
+    }
     else if (strncmp (argvec[optind], "-u", 2) == 0)
     {
       psamples = strspn (&argvec[optind][1], "u");
@@ -1109,6 +1117,7 @@ usage (void)
            " -T              Enable secure TLS connection, already enabled if port 18500\n"
            " -Ap             prompt for user and password authentication details (v4 only)\n"
            " -At             prompt for JWT authentication token (v4 only)\n"
+           " -3 or -4        use SeedLink 3.x or 4.0 protocol explicitly\n"
            "\n"
            " -nd delay       network re-connect delay (seconds), default 30\n"
            " -nt timeout     network timeout (seconds), re-establish connection if no\n"

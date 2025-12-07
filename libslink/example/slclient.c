@@ -19,7 +19,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2024:
+ * Copyright (C) 2025:
  * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
@@ -107,6 +107,11 @@ main (int argc, char **argv)
       sl_log (2, 0, "received payload length %u too large for max buffer of %u\n",
               packetinfo->payloadlength, plbuffersize);
 
+      break;
+    }
+    else if (status == SLAUTHFAIL)
+    {
+      sl_log (2, 0, "authentication failed\n");
       break;
     }
     else if (status == SLNOPACKET)
@@ -228,6 +233,14 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     else if (strcmp (argvec[optind], "-At") == 0)
     {
       sl_set_auth_params (slconn, auth_value_token, auth_finish, NULL);
+    }
+    else if (strcmp (argvec[optind], "-3") == 0)
+    {
+      sl_set_protocol (slconn, SLPROTO3X);
+    }
+    else if (strcmp (argvec[optind], "-4") == 0)
+    {
+      sl_set_protocol (slconn, SLPROTO40);
     }
     else if (strcmp (argvec[optind], "-nt") == 0)
     {
@@ -439,6 +452,7 @@ usage (void)
            " -p             print details of data packets\n"
            " -Ap            prompt for authentication user/password (v4 only)\n"
            " -At            prompt for authentication token (v4 only)\n"
+           " -3 or -4       use SeedLink 3.x or 4.0 protocol explicitly\n"
            "\n"
            " -nd delay      network re-connect delay (seconds), default 30\n"
            " -nt timeout    network timeout (seconds), re-establish connection if no\n"
