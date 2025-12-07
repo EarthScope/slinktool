@@ -22,6 +22,7 @@
 #define _LARGEFILE_SOURCE 1
 
 #include <errno.h>
+#include <stddef.h>
 
 #include "msio.h"
 
@@ -103,10 +104,10 @@ header_callback (char *buffer, size_t size, size_t num, void *userdata)
   struct header_callback_parameters *hcp = (struct header_callback_parameters *)userdata;
 
   char startstr[21] = {0}; /* Maximum of 20 digit value */
-  char endstr[21]   = {0}; /* Maximum of 20 digit value */
-  int startdigits   = 0;
-  int enddigits     = 0;
-  char *dash        = NULL;
+  char endstr[21] = {0};   /* Maximum of 20 digit value */
+  uint8_t startdigits = 0;
+  uint8_t enddigits = 0;
+  char *dash = NULL;
   char *ptr;
 
   if (!buffer || !userdata)
@@ -119,7 +120,7 @@ header_callback (char *buffer, size_t size, size_t num, void *userdata)
   if (size > 22 && strncasecmp (buffer, "Content-Range: bytes", 20) == 0)
   {
     /* Process each character, starting just afer "bytes" unit */
-    for (ptr = buffer + 20; *ptr != '\0' && (ptr - buffer) < size; ptr++)
+    for (ptr = buffer + 20; *ptr != '\0' && (ptr - buffer) < (ptrdiff_t)size; ptr++)
     {
       /* Skip spaces before start of range */
       if (*ptr == ' ' && startdigits == 0)
@@ -141,24 +142,23 @@ header_callback (char *buffer, size_t size, size_t num, void *userdata)
       if (startdigits >= sizeof (startstr) || enddigits >= sizeof (endstr))
       {
         startdigits = 0;
-        enddigits   = 0;
+        enddigits = 0;
         break;
       }
     }
 
     /* Convert start and end values to numbers if non-zero length */
     if (hcp->startoffset && startdigits)
-      *hcp->startoffset = (int64_t) strtoull (startstr, NULL, 10);
+      *hcp->startoffset = (int64_t)strtoull (startstr, NULL, 10);
 
     if (hcp->endoffset && enddigits)
-      *hcp->endoffset = (int64_t) strtoull (endstr, NULL, 10);
+      *hcp->endoffset = (int64_t)strtoull (endstr, NULL, 10);
   }
 
   return size;
 }
 
 #endif /* defined(LIBMSEED_URL) */
-
 
 /***************************************************************************
  * msio_fopen:
@@ -177,11 +177,10 @@ header_callback (char *buffer, size_t size, size_t num, void *userdata)
  *
  * Return 0 on success and -1 on error.
  *
- * \ref MessageOnError - this function logs a message on error
+ * @ref MessageOnError - this function logs a message on error
  ***************************************************************************/
 int
-msio_fopen (LMIO *io, const char *path, const char *mode,
-          int64_t *startoffset, int64_t *endoffset)
+msio_fopen (LMIO *io, const char *path, const char *mode, int64_t *startoffset, int64_t *endoffset)
 {
   int knownfile = 0;
 
@@ -314,7 +313,7 @@ msio_fopen (LMIO *io, const char *path, const char *mode,
     if ((startoffset && *startoffset > 0) || (endoffset && *endoffset > 0))
     {
       char startstr[21] = {0};
-      char endstr[21]   = {0};
+      char endstr[21] = {0};
       char rangestr[42];
 
       /* Build Range header value.
@@ -389,7 +388,7 @@ msio_fopen (LMIO *io, const char *path, const char *mode,
 
     if ((io->handle = fopen (path, mode)) == NULL)
     {
-      ms_log (2, "Cannot open: %s (%s)\n", path, strerror(errno));
+      ms_log (2, "Cannot open: %s (%s)\n", path, strerror (errno));
       return -1;
     }
 
@@ -405,7 +404,7 @@ msio_fopen (LMIO *io, const char *path, const char *mode,
   }
 
   return 0;
-}  /* End of msio_fopen() */
+} /* End of msio_fopen() */
 
 /*********************************************************************
  * msio_fclose:
@@ -414,7 +413,7 @@ msio_fopen (LMIO *io, const char *path, const char *mode,
  *
  * Returns 0 on success and negative value on error.
  *
- * \ref MessageOnError - this function logs a message on error
+ * @ref MessageOnError - this function logs a message on error
  *********************************************************************/
 int
 msio_fclose (LMIO *io)
@@ -458,7 +457,6 @@ msio_fclose (LMIO *io)
 
   return 0;
 } /* End of msio_fclose() */
-
 
 /*********************************************************************
  * msio_fread:
@@ -507,7 +505,7 @@ msio_fread (LMIO *io, void *buffer, size_t size)
     fd_set fdwrite;
     fd_set fdexcep;
     long curl_timeo = -1;
-    int maxfd       = -1;
+    int maxfd = -1;
     int rc;
 
     if (!io->still_running)
@@ -515,7 +513,7 @@ msio_fread (LMIO *io, void *buffer, size_t size)
 
     /* Set up destination buffer in write callback parameters */
     rcp.buffer = buffer;
-    rcp.size   = size;
+    rcp.size = size;
     if (curl_easy_setopt (io->handle, CURLOPT_WRITEDATA, (void *)&rcp) != CURLE_OK)
     {
       ms_log (2, "Cannot set CURLOPT_WRITEDATA\n");
@@ -531,7 +529,7 @@ msio_fread (LMIO *io, void *buffer, size_t size)
     do
     {
       /* Default timeout for read failure */
-      timeout.tv_sec  = 60;
+      timeout.tv_sec = 60;
       timeout.tv_usec = 0;
 
       curl_multi_timeout (io->handle2, &curl_timeo);
@@ -629,9 +627,9 @@ msio_feof (LMIO *io)
  * The header is built as "PROGRAM/VERSION libmseed/version libcurl/version"
  * where VERSION is optional.
  *
- * Returns 0 on succes non-zero otherwise.
+ * Returns 0 on success non-zero otherwise.
  *
- * \ref MessageOnError - this function logs a message on error
+ * @ref MessageOnError - this function logs a message on error
  *********************************************************************/
 int
 msio_url_useragent (const char *program, const char *version)
@@ -651,10 +649,8 @@ msio_url_useragent (const char *program, const char *version)
 
   /* Build User-Agent header and add internal versions */
   snprintf (header, sizeof (header),
-            "User-Agent: %s%s%s libmseed/" LIBMSEED_VERSION " libcurl/" LIBCURL_VERSION,
-            program,
-            (version) ? "/" : "",
-            (version) ? version : "");
+            "User-Agent: %s%s%s libmseed/" LIBMSEED_VERSION " libcurl/" LIBCURL_VERSION, program,
+            (version) ? "/" : "", (version) ? version : "");
 
   return msio_url_addheader (header);
 #endif
@@ -667,9 +663,9 @@ msio_url_useragent (const char *program, const char *version)
  *
  * Set global user-password credentials for URL-based IO.
  *
- * Returns 0 on succes non-zero otherwise.
+ * Returns 0 on success non-zero otherwise.
  *
- * \ref MessageOnError - this function logs a message on error
+ * @ref MessageOnError - this function logs a message on error
  *********************************************************************/
 int
 msio_url_userpassword (const char *userpassword)
@@ -709,9 +705,9 @@ msio_url_userpassword (const char *userpassword)
  *
  * Add header to global list for URL-based IO.
  *
- * Returns 0 on succes non-zero otherwise.
+ * Returns 0 on success non-zero otherwise.
  *
- * \ref MessageOnError - this function logs a message on error
+ * @ref MessageOnError - this function logs a message on error
  *********************************************************************/
 int
 msio_url_addheader (const char *header)
