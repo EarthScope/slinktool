@@ -19,7 +19,7 @@ slinktool [options] [host][:][port]
 
 ## <a id="description">Description</a>
 
-<b>slinktool</b> connects to a <em>SeedLink</em> server and queries the server for information or requests data using uni-station or multi-station mode and prints information about the packets received. All received packets can optionally be dumped to a single file or saved in custom directory and file layouts.
+<b>slinktool</b> connects to a <em>SeedLink</em> server and queries the server for information or requests data using uni-station or multi-station mode and prints information about the packets received. All received packets can optionally be dumped to a single file.
 
 ## <a id="options">Options</a>
 
@@ -166,19 +166,19 @@ BH? E        - BHZ, BHN, BHE & detection records of all channels
 The stream list file used with the '-l' option is expected to define a data stream on each line.  The format of each line is:
 
 ```
-Network Station [selectors]
+StationID [selectors]
 ```
 
-The selectors are optional.  If default selectors are also specified (with the '-s' option), they will be used when no selectors are specified for a given stream.  An example file follows:
+<em>StationID</em> is in NET_STA format.  The selectors are optional.  If default selectors are also specified (with the '-s' option), they will be used when no selectors are specified for a given stream.  An example file follows:
 
 ```
 ----  Begin example file -----
-# Comment lines begin with a '#' or '*'
-# Example stream list file for use with the -l argument of slclient or
-# with the sl_read_streamlist() libslink function.
-GE ISP  BH?.D
-NL HGN
-MN AQU  BH? HH?
+# Comment lines begin with a '#'
+# Example stream list file for use with the -l argument of slinktool or
+# with the sl_add_streamlist_file() libslink function.
+GE_ISP  BH?.D
+NL_HGN
+MN_AQU  BH? HH?
 ----  End example file -----
 ```
 
@@ -188,6 +188,18 @@ MN AQU  BH? HH?
 
 - <b>SEEDLINK_PASSWORD</b>
   If both are set, they are used for SeedLink v4 USERPASS authentication. This is an alternative to prompting with \fB-Ap\fR.  The server must support authentication.
+
+- <b>LIBSLINK_CA_CERT_FILE</b>
+  Location of a CA certificate file to load for TLS server verification.
+
+- <b>LIBSLINK_CA_CERT_PATH</b>
+  Path to a directory of CA certificate files to load for TLS server verification.
+
+- <b>LIBSLINK_TLS_DEBUG</b>
+  TLS debugging output level (integer), increase for more detail.
+
+- <b>LIBSLINK_CERT_UNVERIFIED_OK</b>
+  If set, allow unverified TLS certificates (TLS 1.2 connections only).
 
 ## <a id="notes">Notes</a>
 

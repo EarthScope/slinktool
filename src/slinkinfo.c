@@ -1,5 +1,5 @@
 /***************************************************************************
- * slinkxml.c
+ * slinkinfo.c
  *
  * INFO message printing routines
  *
@@ -288,6 +288,7 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
   if (rootname == NULL || strcmp (rootname, "seedlink"))
   {
     sl_log (1, 0, "XML INFO root tag is not <seedlink>, invalid data\n");
+    ezxml_free (xmldoc);
     return;
   }
 

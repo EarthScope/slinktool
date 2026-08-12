@@ -8,14 +8,6 @@ in the 'doc' directory.
 
 In most environments a simple 'make' will compile the program.
 
-SunOS/Solaris:
-In order to compile under Solaris the 'src/Makefile' needs to be edited.
-See the Makefile for instructions.
-
-Windows:
-A Makefile.win is included for building for using with Nmake, i.e.
-'nmake -f Makefile.win'.
-
 For further installation simply copy the resulting binary and man page
 (in the 'doc' directory) to appropriate system directories.
 
@@ -43,4 +35,4 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Copyright (C) 2023 Chad Trabant, EarthScope Data Services
+Copyright (C) 2026 Chad Trabant, EarthScope Data Services

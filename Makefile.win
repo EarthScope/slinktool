@@ -1,9 +1,0 @@
-
-# Default target is to build
-build :: all
-
-# Run make in each subdirectory
-all clean ::
-	@cd ezxml     && $(MAKE) /nologo -f Makefile.win $*
-	@cd libslink  && $(MAKE) /nologo -f Makefile.win $*
-	@cd src       && $(MAKE) /nologo -f Makefile.win $*

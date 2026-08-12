@@ -1,4 +1,4 @@
-2024.xxx: version 5.0.0
+2026.224: version 5.0.0
 	- Major new version based on libslink v4 with support for
 	SeedLink protocols 3 and 4.
 	- NOTE: The stream list file format expected with the `-l`
