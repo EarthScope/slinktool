@@ -28,9 +28,9 @@
 
 #include "libslink.h"
 
-void sl_loginit_main (SLlog *logp, int verbosity,
-                      void (*log_print) (const char *), const char *logprefix,
-                      void (*diag_print) (const char *), const char *errprefix);
+void sl_loginit_main (SLlog *logp, int verbosity, void (*log_print) (const char *),
+                      const char *logprefix, void (*diag_print) (const char *),
+                      const char *errprefix);
 
 int sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list *varlist);
 
@@ -49,8 +49,7 @@ SLlog global_SLlog = {NULL, NULL, NULL, NULL, 0};
  * @param errprefix  Line prefix for error entries
  ***************************************************************************/
 void
-sl_loginit (int verbosity,
-            void (*log_print) (const char *), const char *logprefix,
+sl_loginit (int verbosity, void (*log_print) (const char *), const char *logprefix,
             void (*diag_print) (const char *), const char *errprefix)
 {
   sl_loginit_main (&global_SLlog, verbosity, log_print, logprefix, diag_print, errprefix);
@@ -72,8 +71,7 @@ sl_loginit (int verbosity,
  * @param errprefix  Line prefix for error entries
  ***************************************************************************/
 void
-sl_loginit_r (SLCD *slconn, int verbosity,
-              void (*log_print) (const char *), const char *logprefix,
+sl_loginit_r (SLCD *slconn, int verbosity, void (*log_print) (const char *), const char *logprefix,
               void (*diag_print) (const char *), const char *errprefix)
 {
   if (!slconn)
@@ -86,11 +84,11 @@ sl_loginit_r (SLCD *slconn, int verbosity,
     if (slconn->log == NULL)
       return;
 
-    slconn->log->log_print  = NULL;
-    slconn->log->logprefix  = NULL;
+    slconn->log->log_print = NULL;
+    slconn->log->logprefix = NULL;
     slconn->log->diag_print = NULL;
-    slconn->log->errprefix  = NULL;
-    slconn->log->verbosity  = 0;
+    slconn->log->errprefix = NULL;
+    slconn->log->verbosity = 0;
   }
 
   sl_loginit_main (slconn->log, verbosity, log_print, logprefix, diag_print, errprefix);
@@ -114,8 +112,7 @@ sl_loginit_r (SLCD *slconn, int verbosity,
  * @returns a pointer to the created/re-initialized ::SLlog struct.
  ***************************************************************************/
 SLlog *
-sl_loginit_rl (SLlog *log, int verbosity,
-               void (*log_print) (const char *), const char *logprefix,
+sl_loginit_rl (SLlog *log, int verbosity, void (*log_print) (const char *), const char *logprefix,
                void (*diag_print) (const char *), const char *errprefix)
 {
   SLlog *logp;
@@ -127,11 +124,11 @@ sl_loginit_rl (SLlog *log, int verbosity,
     if (logp == NULL)
       return NULL;
 
-    logp->log_print  = NULL;
-    logp->logprefix  = NULL;
+    logp->log_print = NULL;
+    logp->logprefix = NULL;
     logp->diag_print = NULL;
-    logp->errprefix  = NULL;
-    logp->verbosity  = 0;
+    logp->errprefix = NULL;
+    logp->verbosity = 0;
   }
   else
   {
@@ -172,9 +169,8 @@ sl_loginit_rl (SLlog *log, int verbosity,
  * @param errprefix  Line prefix for error entries
  ***************************************************************************/
 void
-sl_loginit_main (SLlog *logp, int verbosity,
-                 void (*log_print) (const char *), const char *logprefix,
-                 void (*diag_print) (const char *), const char *errprefix)
+sl_loginit_main (SLlog *logp, int verbosity, void (*log_print) (const char *),
+                 const char *logprefix, void (*diag_print) (const char *), const char *errprefix)
 {
   if (!logp)
     return;
@@ -349,7 +345,7 @@ sl_log_rl (const SLlog *log, int level, int verb, const char *format, ...)
 int
 sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list *varlist)
 {
-  static char message[MAX_LOG_MSG_LENGTH];
+  char message[MAX_LOG_MSG_LENGTH];
   int retvalue = 0;
   int presize;
 
@@ -376,10 +372,8 @@ sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list
         message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
 
-      presize  = strlen (message);
-      retvalue = vsnprintf (&message[presize],
-                            MAX_LOG_MSG_LENGTH - presize,
-                            format, *varlist);
+      presize = strlen (message);
+      retvalue = vsnprintf (&message[presize], MAX_LOG_MSG_LENGTH - presize, format, *varlist);
 
       message[MAX_LOG_MSG_LENGTH - 1] = '\0';
 
@@ -400,10 +394,8 @@ sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list
         message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
 
-      presize  = strlen (message);
-      retvalue = vsnprintf (&message[presize],
-                            MAX_LOG_MSG_LENGTH - presize,
-                            format, *varlist);
+      presize = strlen (message);
+      retvalue = vsnprintf (&message[presize], MAX_LOG_MSG_LENGTH - presize, format, *varlist);
 
       message[MAX_LOG_MSG_LENGTH - 1] = '\0';
 
@@ -424,10 +416,8 @@ sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list
         message[MAX_LOG_MSG_LENGTH - 1] = '\0';
       }
 
-      presize  = strlen (message);
-      retvalue = vsnprintf (&message[presize],
-                            MAX_LOG_MSG_LENGTH - presize,
-                            format, *varlist);
+      presize = strlen (message);
+      retvalue = vsnprintf (&message[presize], MAX_LOG_MSG_LENGTH - presize, format, *varlist);
 
       message[MAX_LOG_MSG_LENGTH - 1] = '\0';
 

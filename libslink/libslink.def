@@ -13,8 +13,10 @@ EXPORTS
   sl_set_idletimeout
   sl_set_reconnectdelay
   sl_set_blockingmode
-  sl_set_dialupmod
+  sl_set_dialupmode
   sl_set_batchmode
+  sl_set_tlsmode
+  sl_set_protocol
   sl_add_stream
   sl_set_allstation_params
   sl_request_info
@@ -51,9 +53,6 @@ EXPORTS
   sl_nstime
   sl_isodatetime
   sl_commadatetime
-  sl_v3tov4selector
+  sl_v3to4selector
   sl_usleep
   sl_strncpclean
-  sl_gswap2
-  sl_gswap4
-  sl_gswap8

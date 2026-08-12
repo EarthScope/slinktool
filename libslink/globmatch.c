@@ -9,10 +9,11 @@
  *
  * This code is released into the public domain.
  *
- * Version: 1
+ * Version: 2
  ***************************************************************************/
 
 #include <stddef.h>
+#include <string.h>
 
 #include "globmatch.h"
 
@@ -30,25 +31,31 @@ static int _match_charclass (const char **pp, unsigned char c);
  * `[!a-z]` negation, matches when no characters in the range, e.g. `[!A-Z]` or `[^A-Z]`
  * `\` prefix to match a literal character, e.g. `\*`, `\?`, `\[`
  *
+ * Notes / limitations:
+ * - Escapes are not interpreted inside `[...]`; e.g. `[\]]` is a class
+ *   containing `\` terminated by the first `]`.
+ * - Descending ranges (e.g. `[z-a]`) are treated as the three literal
+ *   characters rather than an error.
+ * - A trailing `\` with no following character matches a literal `\`.
+ *
  * @param string  The string to check.
  * @param pattern The globbing pattern to match.
  *
  * @returns 0 if string does not match pattern and non-zero otherwise.
  ***************************************************************************/
 int
-GLOBMATCH(globmatch) (const char *string, const char *pattern)
+GLOBMATCH (globmatch) (const char *string, const char *pattern)
 {
-  if (string == NULL || pattern == NULL)
-    return 0;
-
-  const char *star_p = NULL; /* position of last '*' in pattern */
-  const char *star_s = NULL; /* position in string when last '*' seen */
+  const char *star_p = NULL;   /* position of the most recent '*' in pattern */
+  const char *star_s = NULL;   /* position in string when that '*' was seen */
+  unsigned char star_skip = 0; /* byte to skip past on backtrack, or 0 if none */
   unsigned char c;
 
   if (string == NULL || pattern == NULL)
     return 0;
 
-  for (;;) {
+  for (;;)
+  {
     c = (unsigned char)*pattern++;
 
     switch (c)
@@ -77,23 +84,29 @@ GLOBMATCH(globmatch) (const char *string, const char *pattern)
       if (*pattern == '\0')
         return 1;
 
-      /* If the next significant pattern character is a literal, fast-forward
-         the string to its next occurrence to reduce backtracking. */
+      /* Determine the literal byte (if any) following the '*'. If it is a
+         literal, we can skip string characters that cannot match it. */
       {
         unsigned char next = (unsigned char)*pattern;
 
         if (next == '\\' && pattern[1])
           next = (unsigned char)pattern[1];
+        else if (next == '?' || next == '[')
+          next = 0; /* not a literal; skip the optimization */
 
-        if (next != '?' && next != '[' && next != '*')
+        star_skip = next;
+
+        if (star_skip)
         {
-          while (*string && (unsigned char)*string != next)
-            string++;
+          const char *found = strchr (string, star_skip);
+          if (found == NULL)
+            return 0; /* required literal cannot occur in remaining string */
+          string = found;
         }
       }
 
-      star_p = pattern - 1; /* remember position of '*' */
-      star_s = string;     /* remember current string position */
+      star_p = pattern - 1;
+      star_s = string;
       continue;
 
     case '[':
@@ -129,7 +142,24 @@ GLOBMATCH(globmatch) (const char *string, const char *pattern)
     {
       if (*star_s == '\0')
         return 0;
-      string = ++star_s;
+
+      star_s++;
+
+      /* Reuse the saved fast-forward byte so we don't walk non-matching
+         characters one at a time on each retry. */
+      if (star_skip)
+      {
+        const char *found = strchr (star_s, star_skip);
+        if (found == NULL)
+          return 0;
+        star_s = found;
+      }
+      else if (*star_s == '\0')
+      {
+        return 0;
+      }
+
+      string = star_s;
       pattern = star_p + 1;
       continue;
     }
@@ -152,7 +182,7 @@ static int
 _match_charclass (const char **pp, unsigned char c)
 {
   const char *p;
-  int negate  = 0;
+  int negate = 0;
   int matched = 0;
 
   if (pp == NULL || *pp == NULL)
@@ -186,12 +216,11 @@ _match_charclass (const char **pp, unsigned char c)
   {
     unsigned char pc = (unsigned char)*p;
 
-    if (p[1] == '-' && p[2] && p[2] != ']' &&
-        (unsigned char)pc <= (unsigned char)p[2])
+    if (p[1] == '-' && p[2] && p[2] != ']' && (unsigned char)pc <= (unsigned char)p[2])
     {
       /* Range X-Y (only ascending ranges are supported) */
       unsigned char start = pc;
-      unsigned char end   = (unsigned char)p[2];
+      unsigned char end = (unsigned char)p[2];
 
       matched |= (c >= start && c <= end);
 

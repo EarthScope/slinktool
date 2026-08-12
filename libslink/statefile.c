@@ -58,6 +58,9 @@ sl_savestate (SLCD *slconn, const char *statefile)
   char line[200];
   int linelen;
 
+  if (!slconn || !statefile)
+    return -1;
+
   curstream = slconn->streams;
 
   /* Open the state file */
@@ -70,25 +73,21 @@ sl_savestate (SLCD *slconn, const char *statefile)
   sl_log_r (slconn, 1, 2, "saving connection state to state file\n");
 
   /* Write header line */
-  fputs (HEADER_V2"\n", fp);
+  fputs (HEADER_V2 "\n", fp);
 
   /* Traverse stream list and write sequence numbers and time stamps*/
   while (curstream != NULL)
   {
     if (curstream->seqnum == SL_UNSETSEQUENCE)
-      linelen = snprintf (line, sizeof (line), "%s UNSET %s\n",
-                          curstream->stationid,
+      linelen = snprintf (line, sizeof (line), "%s UNSET %s\n", curstream->stationid,
                           curstream->timestamp);
     else
-      linelen = snprintf (line, sizeof (line), "%s %" PRIu64 " %s\n",
-                          curstream->stationid,
-                          curstream->seqnum,
-                          curstream->timestamp);
+      linelen = snprintf (line, sizeof (line), "%s %" PRIu64 " %s\n", curstream->stationid,
+                          curstream->seqnum, curstream->timestamp);
 
     if (linelen <= 0)
     {
-      sl_log_r (slconn, 2, 0, "Error creating state file entry for: %s\n",
-                curstream->stationid);
+      sl_log_r (slconn, 2, 0, "Error creating state file entry for: %s\n", curstream->stationid);
     }
     else if (fputs (line, fp) == EOF)
     {
@@ -169,6 +168,9 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
   uint64_t seqnum;
   int count;
 
+  if (!slconn || !statefile)
+    return -1;
+
   /* Open the state file */
   if ((fp = fopen (statefile, "rb")) == NULL)
   {
@@ -199,11 +201,9 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
       *ptr = '\0';
 
     /* Store pointers to space-separated fields & convert spaces to terminators */
-    for (idx = 0, fields = 0;
-         line[idx] && fields < 5;
-         idx++)
+    for (idx = 0, fields = 0; line[idx] && fields < 5; idx++)
     {
-      if (!isspace(line[idx]))
+      if (!isspace ((unsigned char)line[idx]))
       {
         if (idx == 0 || line[idx - 1] == '\0')
         {
@@ -234,9 +234,9 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
     /* Format V2: StationID Sequence# [Timestamp] */
     if (format == 2 && fields >= 2)
     {
-      stationstr  = field[0];
+      stationstr = field[0];
       sequencestr = field[1];
-      timestr     = (fields >= 3) ? field[2] : NULL;
+      timestr = (fields >= 3) ? field[2] : NULL;
     }
     /* Legacy format: NET STA Sequence# [Timestamp] */
     else if (format == 0 && fields >= 3)
@@ -251,21 +251,32 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
         snprintf (stationid, sizeof (stationid), "%s_%s", field[0], field[1]);
       }
 
-      stationstr  = stationid;
+      stationstr = stationid;
       sequencestr = field[2];
-      timestr     = (fields >= 4) ? field[3] : NULL;
+      timestr = (fields >= 4) ? field[3] : NULL;
     }
     else
     {
       sl_log_r (slconn, 2, 0, "could not parse line %d of state file: %s\n", count, line);
       retval = -1;
+      count++;
       continue;
     }
 
-    /* Convert legacy SeedLink, comma-delimited date-time to ISO-compatible format
+    /* Validate the timestamp, converting the legacy SeedLink comma-delimited
+     * date-time to ISO-compatible format if needed (already ISO in V2):
      * Example: '2021,11,19,17,23,18' => '2021-11-18T17:23:18.0Z' */
-    if (timestr && format == 0)
+    if (timestr)
     {
+      if (strlen (timestr) > sizeof (timestamp) - 2)
+      {
+        sl_log_r (slconn, 1, 0, "timestamp on line %d of statefile is too long: '%s'\n", count,
+                  timestr);
+        retval = -1;
+        count++;
+        continue;
+      }
+
       if (sl_isodatetime (timestamp, timestr) != NULL)
       {
         timestr = timestamp;
@@ -275,6 +286,7 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
         sl_log_r (slconn, 1, 0, "could not convert timestamp on line %d of statefile: '%s'\n",
                   count, timestr);
         retval = -1;
+        count++;
         continue;
       }
     }
@@ -289,9 +301,11 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
 
       if (*endptr)
       {
-        sl_log_r (slconn, 2, 0, "could not parse sequence number from line %d of state file: '%s'\n",
-                  count, sequencestr);
+        sl_log_r (slconn, 2, 0,
+                  "could not parse sequence number from line %d of state file: '%s'\n", count,
+                  sequencestr);
         retval = -1;
+        count++;
         continue;
       }
     }
@@ -306,8 +320,8 @@ sl_recoverstate (SLCD *slconn, const char *statefile)
 
         if (timestr)
         {
-          strncpy (curstream->timestamp, timestr, sizeof(curstream->timestamp) - 1);
-          curstream->timestamp[sizeof(curstream->timestamp) - 1] = '\0';
+          strncpy (curstream->timestamp, timestr, sizeof (curstream->timestamp) - 1);
+          curstream->timestamp[sizeof (curstream->timestamp) - 1] = '\0';
         }
 
         break;

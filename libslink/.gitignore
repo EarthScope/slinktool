@@ -9,6 +9,9 @@ docs/xml/
 *.obj
 *.elf
 
+# Auto-generated compiler dependency files (-MMD -MP)
+*.d
+
 # Libraries
 *.lib
 *.a
@@ -34,3 +37,17 @@ docs/xml/
 *.su
 *.idb
 *.pdb
+
+# Test rig
+__pycache__/
+*.py[cod]
+
+# Development environment
+.vscode/
+.venv/
+venv/
+
+TODO
+TODO.txt
+CLAUDE.md
+

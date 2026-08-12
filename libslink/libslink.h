@@ -28,9 +28,9 @@
 extern "C" {
 #endif
 
-#define LIBSLINK_RELEASE "2025.340"    /**< libslink release date */
+#define LIBSLINK_RELEASE "2026.224"    /**< libslink release date */
 #define LIBSLINK_VERSION_MAJOR  4      /**< libslink major version */
-#define LIBSLINK_VERSION_MINOR  2      /**< libslink minor version */
+#define LIBSLINK_VERSION_MINOR  3      /**< libslink minor version */
 #define LIBSLINK_VERSION_PATCH  0      /**< libslink patch version */
 #define LIBSLINK_STRINGIFY(a)   LIBSLINK_XSTRINGIFY(a)
 #define LIBSLINK_XSTRINGIFY(a)  #a
@@ -214,7 +214,12 @@ typedef struct SLlog
 
 #define SL_MAX_PAYLOAD SL_RECV_BUFFER_SIZE //!< Deprecated, use SL_RECV_BUFFER_SIZE
 
-/** Protocols recognized by the library */
+/** Protocols recognized by the library.
+ *
+ * Non-zero values are bit flags, combined with bitwise OR to record the set
+ * of protocols a server offers. Any future addition must be the next unused
+ * power of two (4, 8, 16, ...), never the next sequential integer, or it
+ * will collide with a combination of the existing flags. */
 typedef enum
 {
   UNSET_PROTO = 0, //!< Unset value
@@ -267,15 +272,15 @@ typedef enum
 
 /** @def SL_EPOCH2SLTIME
     @brief macro to convert Unix/POSIX epoch time to high precision epoch time */
-#define SL_EPOCH2SLTIME(X) (X) * (int64_t) SLTMODULUS
+#define SL_EPOCH2SLTIME(X) ((X) * (int64_t) SLTMODULUS)
 
 /** @def SL_SLTIME2EPOCH
     @brief Macro to convert high precision epoch time to Unix/POSIX epoch time */
-#define SL_SLTIME2EPOCH(X) (X) / SLTMODULUS
+#define SL_SLTIME2EPOCH(X) ((X) / SLTMODULUS)
 
 /** @def sl_dtime
     @brief Macro to return current time as double epoch, replace legacy function */
-#define sl_dtime(X) SL_SLTIME2EPOCH((double)sl_nstime())
+#define sl_dtime() SL_SLTIME2EPOCH((double)sl_nstime())
 
 /** @brief SeedLink packet information */
 typedef struct SLpacketinfo
@@ -360,7 +365,7 @@ typedef struct SLCD
 
   /// @cond HIDDEN_FIELDS
   SOCKET      link;             //The network socket descriptor
-  LIBPROTOCOL protocol;         //Protocol in use
+  LIBPROTOCOL protocol;         //Protocol in use, negotiated fresh on each connection
   uint32_t    server_protocols; //Server protocol versions supported by library
   char       *capabilities;     //HELLO capabilities supported by server (incomplete)
   char       *caparray;         //Array of capabilities
@@ -371,6 +376,8 @@ typedef struct SLCD
 
   uint8_t     recvbuffer[SL_RECV_BUFFER_SIZE]; // Network receive buffer
   uint32_t    recvdatalen;      // Length of data in receive buffer
+  uint8_t     protocol_forced;  //Caller fixed the protocol with sl_set_protocol()
+  uint8_t     config_error;     //Negotiation failed due to caller configuration, not the server
   /// @endcond
 } SLCD;
 
@@ -411,7 +418,7 @@ extern int sl_add_streamlist_file (SLCD *slconn, const char *streamfile,
 #define sl_parse_streamlist sl_add_streamlist /**< For backwards compatibility */
 extern int sl_add_streamlist (SLCD *slconn, const char *streamlist,
                               const char *defselect);
-extern int sl_configlink (SLCD *slconn);
+extern SOCKET sl_configlink (SLCD *slconn);
 extern int sl_send_info (SLCD *slconn, const char *info_level,
                          int verbose);
 extern SOCKET sl_connect (SLCD *slconn, int sayhello);

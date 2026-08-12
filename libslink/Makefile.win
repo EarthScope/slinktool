@@ -92,6 +92,7 @@ MBEDTLS_OBJS = \
 	mbedtls/library/psa_crypto_hash.c \
 	mbedtls/library/psa_crypto_mac.c \
 	mbedtls/library/psa_crypto_pake.c \
+	mbedtls/library/psa_crypto_random.c \
 	mbedtls/library/psa_crypto_rsa.c \
 	mbedtls/library/psa_crypto_se.c \
 	mbedtls/library/psa_crypto_slot_management.c \

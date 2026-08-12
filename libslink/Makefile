@@ -32,6 +32,12 @@ LIB_NAME = libslink
 LIB_A = $(LIB_NAME).a
 
 CFLAGS += -Imbedtls/include
+CFLAGS += -Wall -Wextra -Wno-sign-compare
+
+# Auto-generated per-object header dependencies (see the -include below),
+# so a change to a header actually triggers recompilation of every .c
+# that includes it, instead of `make` seeing an up-to-date-looking .o.
+CFLAGS += -MMD -MP
 
 MBEDTLS_SRCS = $(wildcard mbedtls/library/*.c)
 MBEDTLS_OBJS = $(MBEDTLS_SRCS:.c=.o)
@@ -74,10 +80,12 @@ $(LIB_SO): $(MBEDTLS_LOBJS) $(LIB_LOBJS)
 	ln -s $(LIB_SO) $(LIB_SO_MAJOR)
 
 test check: static FORCE
-	@$(MAKE) -C test test
+	@$(MAKE) -C tests test
 
 clean:
 	@$(RM) $(LIB_OBJS) $(LIB_LOBJS) $(LIB_A) $(LIB_SO) $(LIB_SO_MAJOR) $(LIB_SO_BASE) $(MBEDTLS_OBJS) $(MBEDTLS_LOBJS)
+	@$(RM) $(LIB_OBJS:.o=.d) $(LIB_LOBJS:.lo=.d) $(MBEDTLS_OBJS:.o=.d) $(MBEDTLS_LOBJS:.lo=.d)
+	@$(MAKE) -C tests clean
 	@echo "All clean."
 
 install: shared
@@ -104,5 +112,7 @@ install: shared
 # Standard object building for shared library using -fPIC
 .c.lo:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c $< -o $@
+
+-include $(LIB_OBJS:.o=.d) $(LIB_LOBJS:.lo=.d) $(MBEDTLS_OBJS:.o=.d) $(MBEDTLS_LOBJS:.lo=.d)
 
 FORCE:

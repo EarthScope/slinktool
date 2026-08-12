@@ -33,16 +33,17 @@
 #define PACKAGE "slclient"
 #define VERSION LIBSLINK_VERSION
 
-static short int verbose  = 0;
+static short int verbose = 0;
 static short int ppackets = 0;
-static char *statefile    = 0; /* state file for saving/restoring state */
+static char *statefile = 0; /* state file for saving/restoring state */
 
-static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
-                            const char *payload, uint32_t payloadlen);
+static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo, const char *payload,
+                            uint32_t payloadlen);
 static int parameter_proc (SLCD *slconn, int argcount, char **argvec);
+static char *required_argument (int argcount, char **argvec, int *optind);
 static const char *auth_value_userpass (const char *server, void *data);
 static const char *auth_value_token (const char *server, void *data);
-static void auth_finish  (const char *server, void *data);
+static void auth_finish (const char *server, void *data);
 static void usage (void);
 
 static char auth_buffer[1024] = {0};
@@ -91,8 +92,7 @@ main (int argc, char **argv)
   }
 
   /* Loop with the connection manager */
-  while ((status = sl_collect (slconn, &packetinfo,
-                               plbuffer, plbuffersize)) != SLTERMINATE)
+  while ((status = sl_collect (slconn, &packetinfo, plbuffer, plbuffersize)) != SLTERMINATE)
   {
     if (status == SLPACKET)
     {
@@ -118,7 +118,7 @@ main (int argc, char **argv)
     {
       /* Here should only occur when non-blocking, i.e. slconn->noblock == 1 */
       sl_log (0, 2, "sleeping after receiving no data from sl_collect()\n");
-      sl_usleep(500000);
+      sl_usleep (500000);
     }
 
     /* Here we could send an in-stream INFO request with sl_request_info() */
@@ -141,8 +141,8 @@ main (int argc, char **argv)
  * Process a received packet based on packet type.
  ***************************************************************************/
 static void
-packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
-                const char *payload, uint32_t payloadlength)
+packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo, const char *payload,
+                uint32_t payloadlength)
 {
   char payloadsummary[128] = {0};
   double dtime;   /* Epoch time */
@@ -153,33 +153,36 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
   int printed;
 
   /* Build a current local time string */
-  dtime   = sl_dtime (void);
+  dtime = sl_dtime ();
   secfrac = (double)((double)dtime - (int)dtime);
-  itime   = (time_t)dtime;
-  timep   = localtime (&itime);
+  itime = (time_t)dtime;
+  timep = localtime (&itime);
 
-  printed = snprintf (timestamp, sizeof (timestamp), "%04d-%03dT%02d:%02d:%02d.%01.0f",
-                      timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
-                      timep->tm_min, timep->tm_sec, secfrac);
+  printed = snprintf (timestamp, sizeof (timestamp), "%04d-%03dT%02d:%02d:%02d.%1d",
+                      timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour, timep->tm_min,
+                      timep->tm_sec, (int)(secfrac * 10));
 
   if (printed >= sizeof (timestamp))
   {
     sl_log (1, 0, "%s() Time string overflow\n", __func__);
   }
 
-  sl_log (0, 1, "%s, seq %" PRIu64 ", Received %u bytes of payload format %s\n",
-          timestamp, packetinfo->seqnum, payloadlength,
-          sl_formatstr(packetinfo->payloadformat, packetinfo->payloadsubformat));
+  sl_log (0, 1, "%s, seq %" PRIu64 ", Received %u bytes of payload format %s\n", timestamp,
+          packetinfo->seqnum, payloadlength,
+          sl_formatstr (packetinfo->payloadformat, packetinfo->payloadsubformat));
 
-  /* Print summary of the payload */
-  if (sl_payload_summary (slconn->log, packetinfo, payload, payloadlength,
-                          payloadsummary, sizeof (payloadsummary)) != -1)
+  /* Print details of the payload, if requested */
+  if (ppackets)
   {
-    sl_log (1, 1, "%s\n", payloadsummary);
-  }
-  else
-  {
-    sl_log (1, 1, "%s() Error generating payload summary\n", __func__);
+    if (sl_payload_summary (slconn->log, packetinfo, payload, payloadlength, payloadsummary,
+                            sizeof (payloadsummary)) != -1)
+    {
+      sl_log (1, 1, "%s\n", payloadsummary);
+    }
+    else
+    {
+      sl_log (1, 1, "%s() Error generating payload summary\n", __func__);
+    }
   }
 
 } /* End of packet_handler() */
@@ -195,15 +198,11 @@ static int
 parameter_proc (SLCD *slconn, int argcount, char **argvec)
 {
   int optind;
-  int error = 0;
 
   char *server_address = NULL;
-  char *streamfile     = NULL;
-  char *multiselect    = NULL;
-  char *selectors      = NULL;
-
-  if (argcount <= 1)
-    error++;
+  char *streamfile = NULL;
+  char *multiselect = NULL;
+  char *selectors = NULL;
 
   /* Process all command line arguments */
   for (optind = 1; optind < argcount; optind++)
@@ -244,31 +243,31 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     }
     else if (strcmp (argvec[optind], "-nt") == 0)
     {
-      sl_set_idletimeout (slconn, atoi (argvec[++optind]));
+      sl_set_idletimeout (slconn, atoi (required_argument (argcount, argvec, &optind)));
     }
     else if (strcmp (argvec[optind], "-nd") == 0)
     {
-      sl_set_reconnectdelay (slconn, atoi (argvec[++optind]));
+      sl_set_reconnectdelay (slconn, atoi (required_argument (argcount, argvec, &optind)));
     }
     else if (strcmp (argvec[optind], "-k") == 0)
     {
-      sl_set_keepalive (slconn, atoi (argvec[++optind]));
+      sl_set_keepalive (slconn, atoi (required_argument (argcount, argvec, &optind)));
     }
     else if (strcmp (argvec[optind], "-l") == 0)
     {
-      streamfile = argvec[++optind];
+      streamfile = required_argument (argcount, argvec, &optind);
     }
     else if (strcmp (argvec[optind], "-s") == 0)
     {
-      selectors = argvec[++optind];
+      selectors = required_argument (argcount, argvec, &optind);
     }
     else if (strcmp (argvec[optind], "-S") == 0)
     {
-      multiselect = argvec[++optind];
+      multiselect = required_argument (argcount, argvec, &optind);
     }
     else if (strcmp (argvec[optind], "-x") == 0)
     {
-      statefile = argvec[++optind];
+      statefile = required_argument (argcount, argvec, &optind);
     }
     else if (strncmp (argvec[optind], "-", 1) == 0)
     {
@@ -304,13 +303,6 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
   /* Report the program version */
   sl_log (0, 1, "%s version: %s\n", PACKAGE, VERSION);
 
-  /* If errors then report the usage message and quit */
-  if (error)
-  {
-    usage ();
-    exit (1);
-  }
-
   /* Load the stream list from a file if specified */
   if (streamfile)
     sl_add_streamlist_file (slconn, streamfile, selectors);
@@ -339,6 +331,24 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
 } /* End of parameter_proc() */
 
 /***************************************************************************
+ * required_argument:
+ *
+ * Return the value following the option at argvec[*optind], advancing
+ * *optind to it.  Exits the program if no such value exists.
+ ***************************************************************************/
+static char *
+required_argument (int argcount, char **argvec, int *optind)
+{
+  if (*optind + 1 >= argcount)
+  {
+    fprintf (stderr, "Option %s requires a value\n", argvec[*optind]);
+    exit (1);
+  }
+
+  return argvec[++(*optind)];
+} /* End of required_argument() */
+
+/***************************************************************************
  * auth_value_userpass:
  *
  * A callback function registered at SLCD.auth_value() that should return
@@ -358,17 +368,17 @@ auth_value_userpass (const char *server, void *data)
   int printed;
 
   fprintf (stderr, "Enter username for [%s]: ", server);
-  fgets (username, sizeof (username), stdin);
-  username[strlen (username) - 1] = '\0';
+  if (fgets (username, sizeof (username), stdin) == NULL)
+    return NULL;
+  username[strcspn (username, "\n")] = '\0';
 
   fprintf (stderr, "Enter password: ");
-  fgets (password, sizeof (password), stdin);
-  password[strlen (password) - 1] = '\0';
+  if (fgets (password, sizeof (password), stdin) == NULL)
+    return NULL;
+  password[strcspn (password, "\n")] = '\0';
 
   /* Create AUTH value of "USERPASS <username> <password>" */
-  printed = snprintf (auth_buffer, sizeof (auth_buffer),
-                      "USERPASS %s %s",
-                      username, password);
+  printed = snprintf (auth_buffer, sizeof (auth_buffer), "USERPASS %s %s", username, password);
 
   if (printed >= sizeof (auth_buffer))
   {
@@ -399,13 +409,12 @@ auth_value_token (const char *server, void *data)
   int printed;
 
   fprintf (stderr, "Enter token for [%s]: ", server);
-  fgets (token, sizeof (token), stdin);
-  token[strlen (token) - 1] = '\0';
+  if (fgets (token, sizeof (token), stdin) == NULL)
+    return NULL;
+  token[strcspn (token, "\n")] = '\0';
 
   /* Create AUTH value of "JWT <token>" */
-  printed = snprintf (auth_buffer, sizeof (auth_buffer),
-                      "JWT %s",
-                      token);
+  printed = snprintf (auth_buffer, sizeof (auth_buffer), "JWT %s", token);
 
   if (printed >= sizeof (auth_buffer))
   {
@@ -444,32 +453,31 @@ static void
 usage (void)
 {
   fprintf (stderr, "\nUsage: %s [options] [host][:port]\n\n", PACKAGE);
-  fprintf (stderr,
-           " ## General program options ##\n"
-           " -V             report program version\n"
-           " -h             show this usage message\n"
-           " -v             be more verbose, multiple flags can be used\n"
-           " -p             print details of data packets\n"
-           " -Ap            prompt for authentication user/password (v4 only)\n"
-           " -At            prompt for authentication token (v4 only)\n"
-           " -3 or -4       use SeedLink 3.x or 4.0 protocol explicitly\n"
-           "\n"
-           " -nd delay      network re-connect delay (seconds), default 30\n"
-           " -nt timeout    network timeout (seconds), re-establish connection if no\n"
-           "                  data/keepalives are received in this time, default 600\n"
-           " -k interval    send keepalive packets this often (seconds)\n"
-           " -x statefile   save/restore stream state information to this file\n"
-           "\n"
-           " ## Data stream selection ##\n"
-           " -l listfile    read a stream list from this file for multi-station mode\n"
-           " -s selectors   selectors for all-station or default for multi-station\n"
-           " -S streams     select streams for multi-station\n"
-           "   'streams' = 'stream1[:selectors1],stream2[:selectors2],...'\n"
-           "        'stream' is in NET_STA format, for example:\n"
-           "        -S \"IU_COLA:BHE BHN,GE_WLF,MN_AQU:HH?\"\n"
-           "\n"
-           " [host][:port]  Address of the SeedLink server in host:port format\n"
-           "                  if host is omitted (i.e. ':18000'), localhost is assumed\n"
-           "                  if :port is omitted (i.e. 'localhost'), 18000 is assumed\n"
-           "\n");
+  fprintf (stderr, " ## General program options ##\n"
+                   " -V             report program version\n"
+                   " -h             show this usage message\n"
+                   " -v             be more verbose, multiple flags can be used\n"
+                   " -p             print details of data packets\n"
+                   " -Ap            prompt for authentication user/password (v4 only)\n"
+                   " -At            prompt for authentication token (v4 only)\n"
+                   " -3 or -4       use SeedLink 3.x or 4.0 protocol explicitly\n"
+                   "\n"
+                   " -nd delay      network re-connect delay (seconds), default 30\n"
+                   " -nt timeout    network timeout (seconds), re-establish connection if no\n"
+                   "                  data/keepalives are received in this time, default 600\n"
+                   " -k interval    send keepalive packets this often (seconds)\n"
+                   " -x statefile   save/restore stream state information to this file\n"
+                   "\n"
+                   " ## Data stream selection ##\n"
+                   " -l listfile    read a stream list from this file for multi-station mode\n"
+                   " -s selectors   selectors for all-station or default for multi-station\n"
+                   " -S streams     select streams for multi-station\n"
+                   "   'streams' = 'stream1[:selectors1],stream2[:selectors2],...'\n"
+                   "        'stream' is in NET_STA format, for example:\n"
+                   "        -S \"IU_COLA:BHE BHN,GE_WLF,MN_AQU:HH?\"\n"
+                   "\n"
+                   " [host][:port]  Address of the SeedLink server in host:port format\n"
+                   "                  if host is omitted (i.e. ':18000'), localhost is assumed\n"
+                   "                  if :port is omitted (i.e. 'localhost'), 18000 is assumed\n"
+                   "\n");
 } /* End of usage() */

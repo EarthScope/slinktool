@@ -704,7 +704,7 @@ HO8f (double value, int swapflag)
  * If you are using this in 2056 to determine the byte order of miniSEED 2
  * you have my deepest sympathies.
  */
-#define MS_ISVALIDYEARDAY(Y,D) (Y >= 1900 && Y <= 2100 && D >= 1 && D <= 366)
+#define MS_ISVALIDYEARDAY(Y,D) ((Y) >= 1900 && (Y) <= 2100 && (D) >= 1 && (D) <= 366)
 
 #ifdef __cplusplus
 }

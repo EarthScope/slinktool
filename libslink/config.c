@@ -57,8 +57,7 @@
  * @sa sl_add_streamlist(), sl_add_stream()
  ***************************************************************************/
 int
-sl_add_streamlist_file (SLCD *slconn, const char *streamfile,
-                        const char *defselect)
+sl_add_streamlist_file (SLCD *slconn, const char *streamfile, const char *defselect)
 {
   FILE *fp;
   char *cp;
@@ -67,6 +66,9 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile,
   char line[200];
   int fields = 0;
   int streamcount = 0;
+
+  if (!slconn || !streamfile)
+    return -1;
 
   /* Open the stream list file */
   if ((fp = fopen (streamfile, "rb")) == NULL)
@@ -87,30 +89,35 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile,
 
   while (fgets (line, sizeof (line), fp))
   {
-    memset (stationid, 0, sizeof(stationid));
-    memset (selectors, 0, sizeof(selectors));
+    memset (stationid, 0, sizeof (stationid));
+    memset (selectors, 0, sizeof (selectors));
 
     /* Terminate string at first carriage return or newline */
     if ((cp = strchr (line, '\r')) != NULL || (cp = strchr (line, '\n')) != NULL)
       *cp = '\0';
 
-    fields = sscanf (line, "%63s %199c", stationid, selectors);
+    /* Parse a station ID followed by optional, space-separated selectors */
+    fields = sscanf (line, "%63s %199[^\n]", stationid, selectors);
 
     /* Skip blank or comment lines */
     if (fields <= 0 || stationid[0] == '#')
       continue;
 
+    /* Trim trailing whitespace from the selectors */
+    cp = selectors + strlen (selectors);
+    while (cp > selectors && isspace ((unsigned char)cp[-1]))
+      *--cp = '\0';
+
     /* Add this stream to the stream list */
-    if (fields == 2)
+    if (sl_add_stream (slconn, stationid, (selectors[0]) ? selectors : defselect, SL_UNSETSEQUENCE,
+                       NULL))
     {
-      sl_add_stream (slconn, stationid, selectors, SL_UNSETSEQUENCE, NULL);
-      streamcount++;
+      sl_log_r (slconn, 2, 0, "cannot add stream %s from %s\n", stationid, streamfile);
+      fclose (fp);
+      return -1;
     }
-    else
-    {
-      sl_add_stream (slconn, stationid, defselect, SL_UNSETSEQUENCE, NULL);
-      streamcount++;
-    }
+
+    streamcount++;
   }
 
   if (ferror (fp))
@@ -148,7 +155,6 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile,
  * For example:
  * "IU_COLA:*_B_H_? *_L_H_?"
  * "IU_KONO:B_H_E B_H_N,GE_WLF,MN_AQU:H_H_?"
- * "IU_KONO:B_H_?:3,GE_WLF:*:3"
  *
  * @param slconn The ::SLCD to which to add streams
  * @param streamlist A string bufffer containing the stream list
@@ -159,8 +165,7 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile,
  * @sa sl_add_streamlist_file(), sl_add_stream()
  ***************************************************************************/
 int
-sl_add_streamlist (SLCD *slconn, const char *streamlist,
-                   const char *defselect)
+sl_add_streamlist (SLCD *slconn, const char *streamlist, const char *defselect)
 {
   char *parselist;
   char *stream;
@@ -198,9 +203,14 @@ sl_add_streamlist (SLCD *slconn, const char *streamlist,
     /* Add non-empty streams to list, using default selectors if none parsed */
     if (strlen (stream) > 0)
     {
-      sl_add_stream (slconn, stream,
-                     (selectors) ? selectors : defselect,
-                     SL_UNSETSEQUENCE, NULL);
+      if (sl_add_stream (slconn, stream, (selectors && selectors[0]) ? selectors : defselect,
+                         SL_UNSETSEQUENCE, NULL))
+      {
+        sl_log_r (slconn, 2, 0, "cannot add stream %s\n", stream);
+        free (parselist);
+        return -1;
+      }
+
       streamcount++;
     }
 

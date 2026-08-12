@@ -29,7 +29,6 @@
 #include "libslink.h"
 #include "mseedformat.h"
 
-
 /** ************************************************************************
  * @brief Generate a summary string for a specified packet
  *
@@ -47,9 +46,8 @@
  * string if the size were unlimited on success, -1 on error.
  ***************************************************************************/
 int
-sl_payload_summary (const SLlog *log, const SLpacketinfo *packetinfo,
-                    const char *plbuffer, uint32_t plbuffer_size,
-                    char *summary, size_t summary_size)
+sl_payload_summary (const SLlog *log, const SLpacketinfo *packetinfo, const char *plbuffer,
+                    uint32_t plbuffer_size, char *summary, size_t summary_size)
 {
   char sourceid[64] = {0};
   char starttimestr[32] = {0};
@@ -62,17 +60,15 @@ sl_payload_summary (const SLlog *log, const SLpacketinfo *packetinfo,
     return -1;
   }
 
-  if (sl_payload_info (log, packetinfo, plbuffer, plbuffer_size,
-                       sourceid, sizeof(sourceid),
-                       starttimestr, sizeof(starttimestr),
-                       &samplerate, &samplecount) != 0)
+  if (sl_payload_info (log, packetinfo, plbuffer, plbuffer_size, sourceid, sizeof (sourceid),
+                       starttimestr, sizeof (starttimestr), &samplerate, &samplecount) != 0)
   {
     sl_log_rl (log, 2, 1, "%s(): unable to extract payload information\n", __func__);
     return -1;
   }
 
-  return snprintf (summary, summary_size, "%s, %d samples, %g sps, %s ",
-                   sourceid, samplecount, samplerate, starttimestr);
+  return snprintf (summary, summary_size, "%s, %d samples, %g sps, %s ", sourceid, samplecount,
+                   samplerate, starttimestr);
 } /* End of sl_payload_summary() */
 
 /** ************************************************************************
@@ -102,11 +98,9 @@ sl_payload_summary (const SLlog *log, const SLpacketinfo *packetinfo,
  * @returns 0 on sucess, -1 on error.
  ***************************************************************************/
 int
-sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
-                 const char *plbuffer, uint32_t plbuffer_size,
-                 char *sourceid, size_t sourceid_size,
-                 char *starttimestr, size_t starttimestr_size,
-                 double *samplerate,  uint32_t *samplecount)
+sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *plbuffer,
+                 uint32_t plbuffer_size, char *sourceid, size_t sourceid_size, char *starttimestr,
+                 size_t starttimestr_size, double *samplerate, uint32_t *samplecount)
 {
   uint8_t swapflag = 0; /* byte swapping flag */
 
@@ -119,7 +113,7 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
   /* Parse requested details from miniSEED v2 */
   if (packetinfo->payloadformat == SLPAYLOAD_MSEED2)
   {
-    if (packetinfo->payloadlength < 48)
+    if (packetinfo->payloadlength < 48 || plbuffer_size < 48)
     {
       sl_log_rl (log, 2, 1, "%s(): payload too short for miniSEEDv2\n", __func__);
       return -1;
@@ -127,9 +121,9 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
 
     if (sourceid)
     {
-      char net[3]  = {0};
-      char sta[6]  = {0};
-      char loc[3]  = {0};
+      char net[3] = {0};
+      char sta[6] = {0};
+      char loc[3] = {0};
       char chan[6] = {0};
 
       sl_strncpclean (net, pMS2FSDH_NETWORK (plbuffer), 2);
@@ -144,8 +138,7 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
       chan[4] = *(pMS2FSDH_CHANNEL (plbuffer) + 2);
 
       /* Construct FDSN Source Identifier from extracted SEED codes */
-      snprintf (sourceid, sourceid_size, "FDSN:%s_%s_%s_%s",
-                net, sta, loc, chan);
+      snprintf (sourceid, sourceid_size, "FDSN:%s_%s_%s_%s", net, sta, loc, chan);
     }
 
     /* Check to see if byte swapping is needed by checking for sane year and day */
@@ -166,18 +159,18 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
       int month = 0;
       int mday = 0;
 
-      year = HO2u(*pMS2FSDH_YEAR (plbuffer), swapflag);
-      yday = HO2u(*pMS2FSDH_DAY (plbuffer), swapflag);
+      year = HO2u (*pMS2FSDH_YEAR (plbuffer), swapflag);
+      yday = HO2u (*pMS2FSDH_DAY (plbuffer), swapflag);
       hour = *pMS2FSDH_HOUR (plbuffer);
-      min  = *pMS2FSDH_MIN (plbuffer);
-      sec  = *pMS2FSDH_SEC (plbuffer);
-      fsec = HO2u(*pMS2FSDH_FSEC (plbuffer), swapflag);
+      min = *pMS2FSDH_MIN (plbuffer);
+      sec = *pMS2FSDH_SEC (plbuffer);
+      fsec = HO2u (*pMS2FSDH_FSEC (plbuffer), swapflag);
 
       sl_doy2md (year, yday, &month, &mday);
 
       /* Construct time string */
-      snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%04dZ",
-                year, month, mday, hour, min, sec, fsec);
+      snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%04dZ", year, month,
+                mday, hour, min, sec, fsec);
     }
 
     if (samplerate)
@@ -203,14 +196,23 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
 
     if (samplecount)
     {
-      *samplecount = HO2u(*pMS2FSDH_NUMSAMPLES (plbuffer), swapflag);
+      *samplecount = HO2u (*pMS2FSDH_NUMSAMPLES (plbuffer), swapflag);
     }
   }
   /* Parse requested details from miniSEED v3 */
   else if (packetinfo->payloadformat == SLPAYLOAD_MSEED3)
   {
-    if (packetinfo->payloadlength < MS3FSDH_LENGTH ||
-        packetinfo->payloadlength < MS3FSDH_LENGTH + *pMS3FSDH_SIDLENGTH(plbuffer))
+    /* Checked separately from the source-identifier-length bound below since
+     * that bound requires reading a byte at a fixed offset within the fixed
+     * header, which is only safe once the buffer is known to hold it. */
+    if (packetinfo->payloadlength < MS3FSDH_LENGTH || plbuffer_size < MS3FSDH_LENGTH)
+    {
+      sl_log_rl (log, 2, 1, "%s(): payload too short for miniSEEDv3\n", __func__);
+      return -1;
+    }
+
+    if (packetinfo->payloadlength < MS3FSDH_LENGTH + *pMS3FSDH_SIDLENGTH (plbuffer) ||
+        plbuffer_size < MS3FSDH_LENGTH + *pMS3FSDH_SIDLENGTH (plbuffer))
     {
       sl_log_rl (log, 2, 1, "%s(): payload too short for miniSEEDv3\n", __func__);
       return -1;
@@ -218,8 +220,7 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
 
     if (sourceid)
     {
-      snprintf (sourceid, sourceid_size, "%.*s",
-                (int)*pMS3FSDH_SIDLENGTH (plbuffer),
+      snprintf (sourceid, sourceid_size, "%.*s", (int)*pMS3FSDH_SIDLENGTH (plbuffer),
                 pMS3FSDH_SID (plbuffer));
     }
 
@@ -239,34 +240,34 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo,
       int month = 0;
       int mday = 0;
 
-      year = HO2u(*pMS3FSDH_YEAR (plbuffer), swapflag);
-      yday = HO2u(*pMS3FSDH_DAY (plbuffer), swapflag);
+      year = HO2u (*pMS3FSDH_YEAR (plbuffer), swapflag);
+      yday = HO2u (*pMS3FSDH_DAY (plbuffer), swapflag);
       hour = *pMS3FSDH_HOUR (plbuffer);
-      min  = *pMS3FSDH_MIN (plbuffer);
-      sec  = *pMS3FSDH_SEC (plbuffer);
-      nsec = HO4u(*pMS3FSDH_NSEC (plbuffer), swapflag);
+      min = *pMS3FSDH_MIN (plbuffer);
+      sec = *pMS3FSDH_SEC (plbuffer);
+      nsec = HO4u (*pMS3FSDH_NSEC (plbuffer), swapflag);
 
       sl_doy2md (year, yday, &month, &mday);
 
       /* Construct time string */
-      snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%09dZ",
-                year, month, mday, hour, min, sec, nsec);
+      snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%09dZ", year, month,
+                mday, hour, min, sec, nsec);
     }
 
     if (samplerate)
     {
-      *samplerate = HO8f(*pMS3FSDH_SAMPLERATE (plbuffer), swapflag);
+      *samplerate = HO8f (*pMS3FSDH_SAMPLERATE (plbuffer), swapflag);
     }
 
     if (samplecount)
     {
-      *samplecount = HO4u(*pMS3FSDH_NUMSAMPLES (plbuffer), swapflag);
+      *samplecount = HO4u (*pMS3FSDH_NUMSAMPLES (plbuffer), swapflag);
     }
   }
   else
   {
-    sl_log_rl (log, 2, 1, "%s(): unsupported payload format: %c\n",
-               __func__, packetinfo->payloadformat);
+    sl_log_rl (log, 2, 1, "%s(): unsupported payload format: %c\n", __func__,
+               packetinfo->payloadformat);
     return -1;
   }
 

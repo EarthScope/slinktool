@@ -1,0 +1,36 @@
+#
+# Nmake file for libslink test harness - Windows version
+# Use 'nmake -f Makefile.win'
+#
+# Builds slharness.exe only: the fork()/POSIX-socket-based C unit test
+# binaries (test_netprims, test_slcd, ...) have no Windows port, but
+# slharness.c is a plain stdio client and can drive the Python
+# protocol/spec/TLS test suite here just as it does under make.
+
+NODEBUG=1
+
+INCS = /I..
+OPTS = /O2 /D_CRT_SECURE_NO_WARNINGS
+LIBS = ../libslink.lib ws2_32.lib bcrypt.lib
+BIN = slharness.exe
+
+OBJS = slharness.obj
+
+all: slharness
+
+slharness: $(OBJS)
+	link.exe /nologo /out:$(BIN) $(LIBS) $(OBJS)
+
+.c.obj:
+	$(CC) /nologo $(CFLAGS) $(INCS) $(OPTS) /c $<
+
+# Runs the same Python protocol/spec/TLS/exports suite the Windows CI job
+# runs directly (.github/workflows/test.yml); the C unit test binaries
+# have no Windows port (see the header comment), so there is no C-binary
+# side to this the way tests/Makefile's `test` target has.
+test check: all
+	python -m unittest test_protocol test_spec_v3 test_spec_v4 test_tls test_exports -v
+
+# Clean-up directives
+clean:
+	-del a.out core *.o *.obj *~ $(BIN)

@@ -1,3 +1,22 @@
+2026.224: v4.3.0
+	- Send all bytes in sl_senddata(), retrying on partial and blocked writes.
+	- Fix miniSEED payload length detection in detect().
+	- Return SLTERMINATE instead of reconnecting forever after END is
+	received outside dial-up mode.
+	- Stop freeing process-global PSA crypto state when a connection is
+	disconnected.
+	- Bound the TLS handshake with a deadline and honor connection
+	termination during it.
+	- Treat a zero-length v4 payload as complete and report it to the
+	caller, rather than waiting on bytes that will never arrive.
+	- Reset negotiated protocol state and HELLO capabilities on each
+	connection, unless the caller forced a protocol with sl_set_protocol().
+	- Parenthesize the SL_EPOCH2SLTIME and SL_SLTIME2EPOCH macros.
+	- Numerous correctness, memory-safety, and hardening fixes.
+	- Sync libslink.def with the public functions declared in libslink.h.
+	- Add a test suite for the public API, wire protocol, and TLS handshake.
+	- Update Mbed-TLS to v3.6.6.
+
 2025.340: v4.2.0
 	- Fix re-connection logic in sl_collect().  The function will now
 	reconnect on most connection errors with a few exceptions such as

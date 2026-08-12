@@ -29,7 +29,6 @@
 
 #include "libslink.h"
 
-
 /** ************************************************************************
  * @brief Return true if the byte order of the host is little endian
  *
@@ -84,7 +83,7 @@ sl_doy2md (int year, int jday, int *month, int *mday)
     if (jday <= 0)
     {
       *month = idx + 1;
-      *mday  = days[idx] + jday;
+      *mday = days[idx] + jday;
       break;
     }
   }
@@ -213,14 +212,13 @@ sl_nstime (void)
   uint64_t rv;
   FILETIME FileTime;
 
-  GetSystemTimeAsFileTime(&FileTime);
+  GetSystemTimeAsFileTime (&FileTime);
 
   /* Full win32 epoch value, in 100ns */
-  rv = (((LONGLONG)FileTime.dwHighDateTime << 32) +
-        (LONGLONG)FileTime.dwLowDateTime);
+  rv = (((LONGLONG)FileTime.dwHighDateTime << 32) + (LONGLONG)FileTime.dwLowDateTime);
 
   rv -= 116444736000000000LL; /* Convert from FileTime to UNIX epoch time */
-  rv *= 100; /* Convert from 100ns to ns */
+  rv *= 100;                  /* Convert from 100ns to ns */
 
   return rv;
 
@@ -229,8 +227,7 @@ sl_nstime (void)
   struct timeval tv;
 
   gettimeofday (&tv, NULL);
-  return ((int64_t)tv.tv_sec * 1000000000 +
-          (int64_t)tv.tv_usec * 1000);
+  return ((int64_t)tv.tv_sec * 1000000000 + (int64_t)tv.tv_usec * 1000);
 
 #endif
 } /* End of sl_nstime() */
@@ -276,16 +273,13 @@ sl_isodatetime (char *isodatetime, const char *datetime)
   for (idx = 0, delims = 0; datetime[idx] != '\0'; idx++)
   {
     /* Pass through digits */
-    if (isdigit (datetime[idx]))
+    if (isdigit ((unsigned char)datetime[idx]))
     {
       newchar = 0;
     }
     /* Pass through acceptable delimiters */
-    else if (datetime[idx] == '-' ||
-             datetime[idx] == 'T' ||
-             datetime[idx] == ':' ||
-             datetime[idx] == '.' ||
-             datetime[idx] == 'Z')
+    else if (datetime[idx] == '-' || datetime[idx] == 'T' || datetime[idx] == ':' ||
+             datetime[idx] == '.' || datetime[idx] == 'Z')
     {
       delims++;
       newchar = 0;
@@ -382,7 +376,7 @@ sl_commadatetime (char *commadatetime, const char *datetime)
   for (idx = 0, delims = 0; datetime[idx] != '\0'; idx++)
   {
     /* Pass through digits */
-    if (isdigit (datetime[idx]))
+    if (isdigit ((unsigned char)datetime[idx]))
     {
       newchar = 0;
     }
@@ -393,16 +387,14 @@ sl_commadatetime (char *commadatetime, const char *datetime)
       newchar = 0;
     }
     /* Convert recognized delimiters to commas */
-    else if (datetime[idx] == '-' ||
-             datetime[idx] == 'T' ||
-             datetime[idx] == ':' ||
+    else if (datetime[idx] == '-' || datetime[idx] == 'T' || datetime[idx] == ':' ||
              datetime[idx] == '.')
     {
       delims++;
       newchar = ',';
     }
     /* Terminating 'Z' is skipped */
-    else if (datetime[idx] == 'Z' && datetime[idx+1] == '\0')
+    else if (datetime[idx] == 'Z' && datetime[idx + 1] == '\0')
     {
       break;
     }
@@ -493,9 +485,7 @@ sl_v3to4selector (char *v4selector, int v4selectorlength, const char *selector)
   /* Check for valid v4 stream ID characters */
   for (size_t idx = 0; idx < streamidlength; idx++)
   {
-    if (isalnum ((int)selector[idx]) == 0 &&
-        selector[idx] != '?' &&
-        selector[idx] != '*')
+    if (isalnum ((unsigned char)selector[idx]) == 0 && selector[idx] != '?' && selector[idx] != '*')
     {
       return NULL;
     }
@@ -504,10 +494,8 @@ sl_v3to4selector (char *v4selector, int v4selectorlength, const char *selector)
   /* CCC[.T] -> [*]_B_S_SS[.T] */
   if (streamidlength == 3)
   {
-    printed = snprintf (v4selector, v4selectorlength, "%s_%c_%c_%c%s",
-                        (emptylocation) ? "" : "*",
-                        selector[0], selector[1], selector[2],
-                        (type) ? type : "");
+    printed = snprintf (v4selector, v4selectorlength, "%s_%c_%c_%c%s", (emptylocation) ? "" : "*",
+                        selector[0], selector[1], selector[2], (type) ? type : "");
 
     if (printed >= v4selectorlength)
       return NULL;
@@ -517,9 +505,8 @@ sl_v3to4selector (char *v4selector, int v4selectorlength, const char *selector)
   /* LCCC[.T] -> L_B_S_SS[.T] */
   else if (streamidlength == 4)
   {
-    printed = snprintf (v4selector, v4selectorlength, "%c_%c_%c_%c%s",
-                        selector[0], selector[1], selector[2], selector[3],
-                        (type) ? type : "");
+    printed = snprintf (v4selector, v4selectorlength, "%c_%c_%c_%c%s", selector[0], selector[1],
+                        selector[2], selector[3], (type) ? type : "");
 
     if (printed >= v4selectorlength)
       return NULL;
@@ -529,9 +516,8 @@ sl_v3to4selector (char *v4selector, int v4selectorlength, const char *selector)
   /* LLCCC[.T] -> LL_B_S_SS[.T] */
   else if (streamidlength == 5)
   {
-    printed = snprintf (v4selector, v4selectorlength, "%c%c_%c_%c_%c%s",
-                        selector[0], selector[1], selector[2], selector[3], selector[4],
-                        (type) ? type : "");
+    printed = snprintf (v4selector, v4selectorlength, "%c%c_%c_%c_%c%s", selector[0], selector[1],
+                        selector[2], selector[3], selector[4], (type) ? type : "");
 
     if (printed >= v4selectorlength)
       return NULL;
@@ -557,7 +543,7 @@ sl_usleep (unsigned long int useconds)
 
   struct timespec treq, trem;
 
-  treq.tv_sec  = (time_t)(useconds / 1000000);
+  treq.tv_sec = (time_t)(useconds / 1000000);
   treq.tv_nsec = (long)((useconds % 1000000) * 1000);
 
   nanosleep (&treq, &trem);
