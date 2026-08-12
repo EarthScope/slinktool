@@ -1,4 +1,4 @@
-.TH SLINKTOOL 1 2016/10/19
+.TH SLINKTOOL 1 2026/08/12
 .SH NAME
 slinktool \- SeedLink client for data stream inspection, data collection
 and server testing
@@ -10,7 +10,7 @@ slinktool [options] [host][:][port]
 .fi
 .SH DESCRIPTION
 \fBslinktool\fP connects to a \fISeedLink\fR server and queries the
-server for informaion or requests data using uni-station or
+server for information or requests data using uni-station or
 multi-station mode and prints information about the packets received.
 All received packets can optionally be dumped to a single file or
 saved in custom directory and file layouts.
@@ -46,6 +46,26 @@ Print data samples in data packets, implies at least one -p flag.
 By default only 6 lines of samples are printed (36 samples), adding
 more -u flags (e.g. -uu) will print all samples.
 
+.IP "-T         "
+Enable a secure TLS connection.  TLS is also enabled automatically
+when the server port is 18500.
+
+.IP "-Ap        "
+Prompt for username and password authentication details (SeedLink v4
+only).  See also the \fISEEDLINK_USERNAME\fR and
+\fISEEDLINK_PASSWORD\fR environment variables.
+
+.IP "-At        "
+Prompt for a JWT authentication token (SeedLink v4 only).
+
+.IP "-3         "
+Use the SeedLink 3.x protocol explicitly.  By default the protocol is
+negotiated with the server.
+
+.IP "-4         "
+Use the SeedLink 4.0 protocol explicitly.  By default the protocol is
+negotiated with the server.
+
 .IP "-nd \fIdelay\fR"
 The network reconnect delay (in seconds) for the connection to
 the SeedLink server.  If the connection breaks for any reason
@@ -54,7 +74,7 @@ The default value is 30 seconds.
 
 .IP "-nt \fItimeout\fR"
 The network timeout (in seconds) for the connection to the SeedLink
-server.  If no data [or keep alive packets?] are received in this
+server.  If no data or keepalive packets are received in this
 time the connection is closed and re-established (after the
 reconnect delay has expired).  The default value is 600 seconds.
 A value of 0 disables the timeout.
@@ -77,13 +97,14 @@ saved only on normal program termination.
 
 .IP "-d"
 Configure the connection in "dial-up" mode.  The remote server will
-close the connection when it has sent all of the data in it's buffers
+close the connection when it has sent all of the data in its buffers
 for the selected data streams.  This is opposed to the normal behavior
-of waiting indefinately for data.
+of waiting indefinitely for data.
 
 .IP "-b"
-Configure the connection in "batch" mode.  Negotiation with the remote
-server is made faster by minimizing acknowledgement checks.
+Configure the connection in "batch" mode (SeedLink v3).  Negotiation
+with the remote server is made faster by minimizing acknowledgement
+checks.
 
 .IP "-o \fIdumpfile\fR"
 If specified, all packets (miniSEED records) received will be
@@ -111,27 +132,35 @@ NET_STA format and \fIselectors\fR are normal SeedLink selectors, see
 examples and notes below.  If no selectors are provided for a given
 stream, the default selectors, if defined, will be used.
 
-.IP "-ts \fstarttime\fR"
+.IP "-ts \fIstarttime\fR"
 Specify a start time to request from the server.
 Warning: time windowing might be disabled on the remote server.
 
-.IP "-te \fendtime\fR"
+.IP "-te \fIendtime\fR"
 Specify an end time to request from the server.
 Warning: time windowing might be disabled on the remote server.
 
-.IP "-i \fIlevel\fR  (requires SeedLink >= 3)"
-Send an information request (INFO); the returned raw XML response
-is displayed.  Possible levels are: ID, CAPABILITIES, STATIONS,
-STREAMS, GAPS, CONNECTIONS, ALL.
+.IP "-i \fItype\fR  (requires SeedLink >= 3)"
+Send an information request (INFO) and print the raw response.
+Standard info types include: ID, CAPABILITIES, STATIONS, STREAMS,
+CONNECTIONS, FORMATS, GAPS, ALL.
 
-Formatted INFO shortcuts (formats the XML for readability):
+.IP "-F \fItype\fR  (requires SeedLink >= 3)"
+Send an information request (INFO), parse the response, and print a
+formatted form.  Uses the same info types as \fB-i\fR.
+
+.IP "-f         "
+Increase the level of detail included in formatted INFO output.
+This flag can be used multiple times.
+
+Formatted INFO shortcuts:
 
 .nf
--I   print server id/version and exit
--L   print station list and exit
--Q   print stream list and exit
--G   print gap list and exit
--C   print connection list and exit
+-I   equivalent to -F ID
+-L   equivalent to -F STATIONS
+-Q   equivalent to -F STREAMS
+-G   equivalent to -F GAPS
+-C   equivalent to -F CONNECTIONS
 .fi
 
 Warning: informational (INFO) messages might be disabled on the server.
@@ -142,7 +171,8 @@ host:port format.  Either the host, port or both can be omitted.  If
 host is omitted then localhost is assumed, i.e. ':18000'
 implies 'localhost:18000'.  If the port is omitted then 18000 is
 assumed, i.e. 'localhost' implies 'localhost:18000'.  If only ':' is
-specified 'localhost:18000' is assumed.
+specified 'localhost:18000' is assumed.  Port 18500 enables TLS
+automatically.
 
 .SH "EXAMPLES"
 .IP All-station/Uni-station mode example:
@@ -187,7 +217,7 @@ Of course, a variety of different data selections can be made:
   (vertical channels only)
 
 .IP Wildcarding network and station codes
-Some SeedLink implementation support wildcarding of the network and
+Some SeedLink implementations support wildcarding of the network and
 station codes, when this is the case the only two wildcard characters
 recognized are '*' for one or more characters and '?' for any single
 character.
@@ -230,7 +260,7 @@ Network Station [selectors]
 .fi
 
 The selectors are optional.  If default selectors are also specified
-(with the '-s' option), they they will be used when no selectors are
+(with the '-s' option), they will be used when no selectors are
 specified for a given stream.  An example file follows:
 
 .nf
@@ -243,6 +273,13 @@ NL HGN
 MN AQU  BH? HH?
 ----  End example file -----
 .fi
+
+.SH "ENVIRONMENT"
+.IP "SEEDLINK_USERNAME"
+.IP "SEEDLINK_PASSWORD"
+If both are set, they are used for SeedLink v4 USERPASS authentication.
+This is an alternative to prompting with \fB-Ap\fR.  The server must
+support authentication.
 
 .SH "NOTES"
 All diagnostic output from slinktool is printed to standard error

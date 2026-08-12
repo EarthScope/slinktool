@@ -1,157 +1,157 @@
-# <p >slinktool 
-###  SeedLink client for data stream inspection, data collection and server testing</p>
+# slinktool — SeedLink client for data stream inspection, data collection and server testing
 
-1. [Name](#)
 1. [Synopsis](#synopsis)
 1. [Description](#description)
 1. [Options](#options)
 1. [Examples](#examples)
 1. [Seedlink Selectors](#seedlink-selectors)
 1. [Stream List File](#stream-list-file)
+1. [Environment](#environment)
 1. [Notes](#notes)
 1. [Author](#author)
 
-## <a id='synopsis'>Synopsis</a>
+## <a id="synopsis">Synopsis</a>
 
-<pre >
+```
 slinktool [options] [host][:][port]
-</pre>
 
-## <a id='description'>Description</a>
+```
 
-<p ><b>slinktool</b> connects to a <u>SeedLink</u> server and queries the server for informaion or requests data using uni-station or multi-station mode and prints information about the packets received. All received packets can optionally be dumped to a single file or saved in custom directory and file layouts.</p>
+## <a id="description">Description</a>
 
-## <a id='options'>Options</a>
+<b>slinktool</b> connects to a <em>SeedLink</em> server and queries the server for information or requests data using uni-station or multi-station mode and prints information about the packets received. All received packets can optionally be dumped to a single file or saved in custom directory and file layouts.
 
-<b>-V</b>
+## <a id="options">Options</a>
 
-<p style="padding-left: 30px;">Report program version and exit.</p>
+- <b>-V</b>
+  Report program version and exit.
 
-<b>-h</b>
+- <b>-h</b>
+  Print program usage and exit.
 
-<p style="padding-left: 30px;">Print program usage and exit.</p>
+- <b>-v</b>
+  Be more verbose.  This flag can be used multiple times ("-v -v" or "-vv") for more verbosity.  One flag: report basic handshaking (link configuration) details and briefly report each packet received.  Two flags: report the details of the handshaking, each packet received and detailed connection diagnostics.
 
-<b>-v</b>
+- <b>-P</b>
+  Ping the server: connect, print out the server ID and exit.  If the server was successfully contacted the return code will be 0, if errors were encountered the return code will be 1.
 
-<p style="padding-left: 30px;">Be more verbose.  This flag can be used multiple times ("-v -v" or "-vv") for more verbosity.  One flag: report basic handshaking (link configuration) details and briefly report each packet received.  Two flags: report the details of the handshaking, each packet received and detailed connection diagnostics.</p>
+- <b>-p</b>
+  Print details of received miniSEED data records. This flag can be used multiple times ("-p -p" or "-pp") for more detail.  One flag: a single summary line for each data packet received.  Two+ flags: more details of the payload received.
 
-<b>-P</b>
+- <b>-u</b>
+  Print data samples in data packets, implies at least one -p flag. By default only 6 lines of samples are printed (36 samples), adding more -u flags (e.g. -uu) will print all samples.
 
-<p style="padding-left: 30px;">Ping the server: connect, print out the server ID and exit.  If the server was successfully contacted the return code will be 0, if errors were encountered the return code will be 1.</p>
+- <b>-T</b>
+  Enable a secure TLS connection.  TLS is also enabled automatically when the server port is 18500.
 
-<b>-p</b>
+- <b>-Ap</b>
+  Prompt for username and password authentication details (SeedLink v4 only).  See also the <em>SEEDLINK_USERNAME</em> and <em>SEEDLINK_PASSWORD</em> environment variables.
 
-<p style="padding-left: 30px;">Print details of received miniSEED data records. This flag can be used multiple times ("-p -p" or "-pp") for more detail.  One flag: a single summary line for each data packet received.  Two flags: details of the miniSEED data records received, including information from fixed header and 100/1000/1001 blockettes.</p>
+- <b>-At</b>
+  Prompt for a JWT authentication token (SeedLink v4 only).
 
-<b>-u</b>
+- <b>-3</b>
+  Use the SeedLink 3.x protocol explicitly.  By default the protocol is negotiated with the server.
 
-<p style="padding-left: 30px;">Print data samples in data packets, implies at least one -p flag.</p>
+- <b>-4</b>
+  Use the SeedLink 4.0 protocol explicitly.  By default the protocol is negotiated with the server.
 
-<b>-nd </b><u>delay</u>
+- -nd <em>delay</em>
+  The network reconnect delay (in seconds) for the connection to the SeedLink server.  If the connection breaks for any reason this will govern how soon a reconnection should be attempted. The default value is 30 seconds.
 
-<p style="padding-left: 30px;">The network reconnect delay (in seconds) for the connection to the SeedLink server.  If the connection breaks for any reason this will govern how soon a reconnection should be attempted. The default value is 30 seconds.</p>
+- -nt <em>timeout</em>
+  The network timeout (in seconds) for the connection to the SeedLink server.  If no data or keepalive packets are received in this time the connection is closed and re-established (after the reconnect delay has expired).  The default value is 600 seconds. A value of 0 disables the timeout.
 
-<b>-nt </b><u>timeout</u>
+- -k <em>keepalive</em>  (requires SeedLink &gt;= 3)
+  Keepalive packet interval (in seconds) at which keepalive (heartbeat) packets are sent to the server.  Keepalive packets are only sent if nothing is received within the interval.
 
-<p style="padding-left: 30px;">The network timeout (in seconds) for the connection to the SeedLink server.  If no data [or keep alive packets?] are received in this time the connection is closed and re-established (after the reconnect delay has expired).  The default value is 600 seconds. A value of 0 disables the timeout.</p>
+- -x <em>statefile</em>[:<em>interval</em>]
+  During client shutdown the last received sequence numbers and time stamps (start times) for each data stream will be saved in this file. If this file exists upon startup the information will be used to resume the data streams from the point at which they were stopped.  In this way the client can be stopped and started without data loss, assuming the data are still available on the server.  If <em>interval</em> is specified the state will be saved every <em>interval</em> packets that are received.  Otherwise the state will be saved only on normal program termination.
 
-<b>-k </b><u>keepalive</u>  (requires SeedLink >= 3)
+- <b>-d</b>
+  Configure the connection in "dial-up" mode.  The remote server will close the connection when it has sent all of the data in its buffers for the selected data streams.  This is opposed to the normal behavior of waiting indefinitely for data.
 
-<p style="padding-left: 30px;">Keepalive packet interval (in seconds) at which keepalive (heartbeat) packets are sent to the server.  Keepalive packets are only sent if nothing is received within the interval.</p>
+- <b>-b</b>
+  Configure the connection in "batch" mode (SeedLink v3).  Negotiation with the remote server is made faster by minimizing acknowledgement checks.
 
-<b>-x </b><u>statefile</u>[:<u>interval</u>]
+- -o <em>dumpfile</em>
+  If specified, all packets (miniSEED records) received will be appended to this file.  The file is created if it does not exist.  A special mode for this option is to send all received packets to standard output when the dumpfile is specified as '-'.  In this case all output besides these records will be redirected to standard error.
 
-<p style="padding-left: 30px;">During client shutdown the last received sequence numbers and time stamps (start times) for each data stream will be saved in this file. If this file exists upon startup the information will be used to resume the data streams from the point at which they were stopped.  In this way the client can be stopped and started without data loss, assuming the data are still available on the server.  If <u>interval</u> is specified the state will be saved every <u>interval</u> packets that are received.  Otherwise the state will be saved only on normal program termination.</p>
+- -s <em>selectors</em>
+  This defines default selectors.  If no multi-station data streams are configured these selectors will be used for uni-station mode. Otherwise these selectors will be used when no selectors are specified for a given stream using the '-S' or '-l' options.
 
-<b>-d</b>
+- -l <em>streamfile</em>
+  A list of streams will be read from the given file.  This option implies multi-station mode.  The format of the stream list file is given below in the section <em>Stream list file</em>.
 
-<p style="padding-left: 30px;">Configure the connection in "dial-up" mode.  The remote server will close the connection when it has sent all of the data in it's buffers for the selected data streams.  This is opposed to the normal behavior of waiting indefinately for data.</p>
+- -S <em>stream[:selectors],...</em>  (requires SeedLink &gt;= 2.5)
+  A list of streams is given as an argument.  This option implies multi-station mode.  The stream list is composed of multiple streams (stations) and optional selectors.  <em>stream</em> should be provided in NET_STA format and <em>selectors</em> are normal SeedLink selectors, see examples and notes below.  If no selectors are provided for a given stream, the default selectors, if defined, will be used.
 
-<b>-b</b>
+- -ts <em>starttime</em>
+  Specify a start time to request from the server. Warning: time windowing might be disabled on the remote server.
 
-<p style="padding-left: 30px;">Configure the connection in "batch" mode.  Negotiation with the remote server is made faster by minimizing acknowledgement checks.</p>
+- -te <em>endtime</em>
+  Specify an end time to request from the server. Warning: time windowing might be disabled on the remote server.
 
-<b>-o </b><u>dumpfile</u>
+- -i <em>type</em>  (requires SeedLink &gt;= 3)
+  Send an information request (INFO) and print the raw response. Standard info types include: ID, CAPABILITIES, STATIONS, STREAMS, CONNECTIONS, FORMATS, GAPS, ALL.
 
-<p style="padding-left: 30px;">If specified, all packets (miniSEED records) received will be appended to this file.  The file is created if it does not exist.  A special mode for this option is to send all received packets to standard output when the dumpfile is specified as '-'.  In this case all output besides these records will be redirected to standard error.</p>
+- -F <em>type</em>  (requires SeedLink &gt;= 3)
+  Send an information request (INFO), parse the response, and print a formatted form.  Uses the same info types as \fB-i\fR.
 
-<b>-s </b><u>selectors</u>
+- <b>-f</b>
+  Increase the level of detail included in formatted INFO output. This flag can be used multiple times.
 
-<p style="padding-left: 30px;">This defines default selectors.  If no multi-station data streams are configured these selectors will be used for uni-station mode. Otherwise these selectors will be used when no selectors are specified for a given stream using the '-S' or '-l' options.</p>
+  Formatted INFO shortcuts:
 
-<b>-l </b><u>streamfile</u>
+  ```
+  -I   equivalent to -F ID
+  -L   equivalent to -F STATIONS
+  -Q   equivalent to -F STREAMS
+  -G   equivalent to -F GAPS
+  -C   equivalent to -F CONNECTIONS
+  ```
 
-<p style="padding-left: 30px;">A list of streams will be read from the given file.  This option implies multi-station mode.  The format of the stream list file is given below in the section <u>Stream list file</u>.</p>
+  Warning: informational (INFO) messages might be disabled on the server.
 
-<b>-S </b><u>stream[:selectors],...</u>  (requires SeedLink >= 2.5)
+- <b>[host][:][port]</b>
+  A required argument, specifies the address of the SeedLink server in host:port format.  Either the host, port or both can be omitted.  If host is omitted then localhost is assumed, i.e. ':18000' implies 'localhost:18000'.  If the port is omitted then 18000 is assumed, i.e. 'localhost' implies 'localhost:18000'.  If only ':' is specified 'localhost:18000' is assumed.  Port 18500 enables TLS automatically.
 
-<p style="padding-left: 30px;">A list of streams is given as an argument.  This option implies multi-station mode.  The stream list is composed of multiple streams (stations) and optional selectors.  <u>stream</u> should be provided in NET_STA format and <u>selectors</u> are normal SeedLink selectors, see examples and notes below.  If no selectors are provided for a given stream, the default selectors, if defined, will be used.</p>
+## <a id="examples">Examples</a>
 
-<b>-tw </b><u>start:[end]</u>  (requires SeedLink >= 3)
+- <b>All-station/Uni-station mode example:</b>
+  The following would connect to a SeedLink server at slink.host.com port 18000 and configure the link in all-station/uni-station mode, exactly which data are received depends on the data being served by the SeedLink server on that particular port.  Additionally, all of the received packets are appended to the file 'data.mseed' and each packet received is reported on the standard output.
 
-<p style="padding-left: 30px;">Specifies a time window applied, by the server, to data streams. The format for both times is year,month,day,hour,min,sec; for example: "2002,08,05,14,00:2002,08,05,14,15,00". The end time is optional but the colon must be present.  If no end time is specified the server will send data indefinately.  This option will override any saved state information.</p>
+  <b>&gt; slinktool -v -o data.mseed slink.host.com:18000</b>
 
-<p style="padding-left: 30px;">Warning: time windowing might be disabled on the remote server.</p>
+  The '-s' argument could be used to indicate selectors to limit the type of packets sent by the SeedLink server (without selectors all packet types are sent).  The following would limit this connection to BHZ channel waveform data with a location code of 10 (see an explanation of SeedLink selectors below).  Additionally another verbose flag is given, causing slinktool to report detailed header information from data records.
 
-<b>-i </b><u>level</u>  (requires SeedLink >= 3)
+  <b>&gt; slinktool -vv -s 10BHZ.D -o data.mseed slink.host.com:18000</b>
 
-<p style="padding-left: 30px;">Send an information request (INFO); the returned raw XML response is displayed.  Possible levels are: ID, CAPABILITIES, STATIONS, STREAMS, GAPS, CONNECTIONS, ALL.</p>
+- <b>Multi-station mode example:</b>
+  The following example would connect to a SeedLink server on localhost port 18010 and configure the link in multi-station mode.  Each station specified with the '-S' argument will be requested, optionally specifying selectors for each station.
 
-<p style="padding-left: 30px;">Formatted INFO shortcuts (formats the XML for readability):</p>
+  <b>&gt; slinktool -v -S GE_WLF,MN_AQU:00???,IU_KONO:BHZ.D :18010</b>
 
-<pre style="padding-left: 30px;">
--I   print server id/version and exit
--L   print station list and exit
--Q   print stream list and exit
--G   print gap list and exit
--C   print connection list and exit
-</pre>
+  This would request GEOFON station WLF (all data as no selectors were indicated), MedNet station AQU with location code 00 (all channels) and IU network station KONO (only waveform data) from channel BHZ.
 
-<p >Warning: informational (INFO) messages might be disabled on the server.</p>
+  Of course, a variety of different data selections can be made:
 
-<b>[host][:][port]</b>
+  <b>-s 'BHE.D BHN.D' -S 'GE_STU,GE_MALT,GE_WLF'</b>   (horizontal BH channels, data only)
 
-<p style="padding-left: 30px;">A required argument, specifies the address of the SeedLink server in host:port format.  Either the host, port or both can be omitted.  If host is omitted then localhost is assumed, i.e. ':18000' implies 'localhost:18000'.  If the port is omitted then 18000 is assumed, i.e. 'localhost' implies 'localhost:18000'.  If only ':' is specified 'localhost:18000' is assumed.</p>
+  <b>-s BHZ -S GE_STU,GE_WLF,GE_RUE,GE_EIL</b>   (vertical channels only)
 
-## <a id='examples'>Examples</a>
+- <b>Wildcarding network and station codes</b>
+  Some SeedLink implementations support wildcarding of the network and station codes, when this is the case the only two wildcard characters recognized are '*' for one or more characters and '?' for any single character.
 
-<b>All-station/Uni-station mode example:</b>
+  As an example, all US network data can be requested using the following syntax:
 
-<p style="padding-left: 30px;">The following would connect to a SeedLink server at slink.host.com port 18000 and configure the link in all-station/uni-station mode, exactly which data are received depends on the data being served by the SeedLink server on that particular port.  Additionally, all of the received packets are appended to the file 'data.mseed' and each packet received is reported on the standard output.</p>
+  <b>-S 'US_*'</b>
 
-<p style="padding-left: 30px;"><b>> slinktool -v -o data.mseed slink.host.com:18000</b></p>
+## <a id="seedlink-selectors">Seedlink Selectors</a>
 
-<p style="padding-left: 30px;">The '-s' argument could be used to indicate selectors to limit the type of packets sent by the SeedLink server (without selectors all packet types are sent).  The following would limit this connection to BHZ channel waveform data with a location code of 10 (see an explanation of SeedLink selectors below).  Additionally another verbose flag is given, causing slinktool to report detailed header information from data records.</p>
+SeedLink selectors are used to request specific types of data within a given data stream, in effect limiting the default action of sending all data types.  A data packet is sent to the client if it matches any positive selector (without leading "!") and doesn't match any negative selectors (with a leading "!").  The general format of selectors is LLSSS.T, where LL is location, SSS is channel and T is type (one of [DECOTL] for Data, Event, Calibration, Blockette, Timing, and Log records).  "LL", ".T", and "LLSSS." can be omitted, implying anything in that field.  It is also possible to use "?" in place of L and S as a single character wildcard.  Multiple selectors are separated by space(s).
 
-<p style="padding-left: 30px;"><b>> slinktool -vv -s 10BHZ.D -o data.mseed slink.host.com:18000</b></p>
-
-<b>Multi-station mode example:</b>
-
-<p style="padding-left: 30px;">The following example would connect to a SeedLink server on localhost port 18010 and configure the link in multi-station mode.  Each station specified with the '-S' argument will be requested, optionally specifying selectors for each station.</p>
-
-<p style="padding-left: 30px;"><b>> slinktool -v -S GE_WLF,MN_AQU:00???,IU_KONO:BHZ.D :18010</b></p>
-
-<p style="padding-left: 30px;">This would request GEOFON station WLF (all data as no selectors were indicated), MedNet station AQU with location code 00 (all channels) and IU network station KONO (only waveform data) from channel BHZ.</p>
-
-<p style="padding-left: 30px;">Of course, a variety of different data selections can be made:</p>
-
-<p style="padding-left: 30px;"><b>-s 'BHE.D BHN.D' -S 'GE_STU,GE_MALT,GE_WLF'</b>   (horizontal BH channels, data only)</p>
-
-<p style="padding-left: 30px;"><b>-s BHZ -S GE_STU,GE_WLF,GE_RUE,GE_EIL</b>   (vertical channels only)</p>
-
-<b>Wildcarding network and station codes</b>
-
-<p style="padding-left: 30px;">Some SeedLink implementation support wildcarding of the network and station codes, when this is the case the only two wildcard characters recognized are '*' for one or more characters and '?' for any single character.</p>
-
-<p style="padding-left: 30px;">As an example, all US network data can be requested using the following syntax:</p>
-
-<p style="padding-left: 30px;"><b>-S 'US_*'</b></p>
-
-## <a id='seedlink-selectors'>Seedlink Selectors</a>
-
-<p >SeedLink selectors are used to request specific types of data within a given data stream, in effect limiting the default action of sending all data types.  A data packet is sent to the client if it matches any positive selector (without leading "!") and doesn't match any negative selectors (with a leading "!").  The general format of selectors is LLSSS.T, where LL is location, SSS is channel and T is type (one of [DECOTL] for Data, Event, Calibration, Blockette, Timing, and Log records).  "LL", ".T", and "LLSSS." can be omitted, implying anything in that field.  It is also possible to use "?" in place of L and S as a single character wildcard.  Multiple selectors are separated by space(s).</p>
-
-<pre >
+```
 Some examples:
 BH?          - BHZ, BHN, BHE (all record types)
 00BH?.D      - BHZ, BHN, BHE with location code '00' (data records)
@@ -159,19 +159,19 @@ BH? !E       - BHZ, BHN, BHE (excluding detection records)
 BH? E        - BHZ, BHN, BHE & detection records of all channels
 !LCQ !LEP    - exclude LCQ and LEP channels
 !L !T        - exclude log and timing records
-</pre>
+```
 
-## <a id='stream-list-file'>Stream List File</a>
+## <a id="stream-list-file">Stream List File</a>
 
-<p >The stream list file used with the '-l' option is expected to define a data stream on each line.  The format of each line is:</p>
+The stream list file used with the '-l' option is expected to define a data stream on each line.  The format of each line is:
 
-<pre >
+```
 Network Station [selectors]
-</pre>
+```
 
-<p >The selectors are optional.  If default selectors are also specified (with the '-s' option), they they will be used when no selectors are specified for a given stream.  An example file follows:</p>
+The selectors are optional.  If default selectors are also specified (with the '-s' option), they will be used when no selectors are specified for a given stream.  An example file follows:
 
-<pre >
+```
 ----  Begin example file -----
 # Comment lines begin with a '#' or '*'
 # Example stream list file for use with the -l argument of slclient or
@@ -180,20 +180,28 @@ GE ISP  BH?.D
 NL HGN
 MN AQU  BH? HH?
 ----  End example file -----
-</pre>
+```
 
-## <a id='notes'>Notes</a>
+## <a id="environment">Environment</a>
 
-<p >All diagnostic output from slinktool is printed to standard error (stderr), exceptions are when printing miniSEED packet details (the -p flag), when printing unpacked samples (the -u flag) and when printing the raw or formatted responses to INFO requests.</p>
+- <b>SEEDLINK_USERNAME</b>
 
-## <a id='author'>Author</a>
+- <b>SEEDLINK_PASSWORD</b>
+  If both are set, they are used for SeedLink v4 USERPASS authentication. This is an alternative to prompting with \fB-Ap\fR.  The server must support authentication.
 
-<pre >
+## <a id="notes">Notes</a>
+
+All diagnostic output from slinktool is printed to standard error (stderr), exceptions are when printing miniSEED packet details (the -p flag), when printing unpacked samples (the -u flag) and when printing the raw or formatted responses to INFO requests.
+
+## <a id="author">Author</a>
+
+```
 Chad Trabant
 previously ORFEUS Data Center/EC-Project MEREDIAN
 previously IRIS Data Management Center
 EarthScope Data Services
-</pre>
+```
 
+---
 
-(man page 2016/10/19)
+*Generated from man page dated 2026/08/12.*
