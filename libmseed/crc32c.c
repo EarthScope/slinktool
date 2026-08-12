@@ -328,7 +328,7 @@ static inline uint32_t s_crc_generic_align(
     size_t leading = (4 - input_alignment) & 0x3;
 
     /* Determine what's left without the leading input bytes (might be negative)*/
-    size_t remaining = *length - leading;
+    int remaining = *length - (int)leading;
 
     /* Process unaligned leading input bytes one at a time*/
     if (leading && remaining > 0) {

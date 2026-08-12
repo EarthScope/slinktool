@@ -48,7 +48,7 @@ msr_decode_int16 (int16_t *input, uint64_t samplecount, int32_t *output, uint64_
                   int swapflag)
 {
   int16_t sample;
-  uint32_t idx;
+  uint64_t idx;
 
   if (samplecount == 0)
     return 0;
@@ -84,7 +84,7 @@ msr_decode_int32 (int32_t *input, uint64_t samplecount, int32_t *output, uint64_
                   int swapflag)
 {
   int32_t sample;
-  uint32_t idx;
+  uint64_t idx;
 
   if (samplecount == 0)
     return 0;
@@ -120,7 +120,7 @@ msr_decode_float32 (float *input, uint64_t samplecount, float *output, uint64_t 
                     int swapflag)
 {
   float sample;
-  uint32_t idx;
+  uint64_t idx;
 
   if (samplecount == 0)
     return 0;
@@ -156,7 +156,7 @@ msr_decode_float64 (double *input, uint64_t samplecount, double *output, uint64_
                     int swapflag)
 {
   double sample;
-  uint32_t idx;
+  uint64_t idx;
 
   if (samplecount == 0)
     return 0;
@@ -210,14 +210,14 @@ msr_decode_steim1 (int32_t *input, uint64_t inputlength, uint64_t samplecount, i
     int32_t d32;
   } *word;
 
-  if (maxframes == 0)
+  if (maxframes == 0 || samplecount == 0)
     return 0;
 
   if (!input || !output || outputlength == 0)
     return -1;
 
   /* Make sure output buffer is sufficient for all output samples */
-  if (outputlength < (samplecount * sizeof (int32_t)))
+  if (samplecount > outputlength / sizeof (int32_t))
   {
     ms_log (2, "%s(%s) Output buffer not large enough for decoded samples\n", __func__, srcname);
     return -1;
@@ -330,7 +330,8 @@ msr_decode_steim1 (int32_t *input, uint64_t inputlength, uint64_t samplecount, i
     for (idx = (frameidx == 0) ? 1 : 0; idx < diffidx && outputidx < samplecount;
          idx++, outputidx++)
     {
-      output[outputidx] = output[outputidx - 1] + diff[idx];
+      /* Sum in unsigned to avoid signed overflow UB */
+      output[outputidx] = (int32_t) ((uint32_t) output[outputidx - 1] + (uint32_t) diff[idx]);
     }
   } /* Done looping over frames */
 
@@ -401,14 +402,14 @@ msr_decode_steim2 (int32_t *input, uint64_t inputlength, uint64_t samplecount, i
     signed int x : 30;
   } s30;
 
-  if (maxframes == 0)
+  if (maxframes == 0 || samplecount == 0)
     return 0;
 
   if (!input || !output || outputlength == 0)
     return -1;
 
   /* Make sure output buffer is sufficient for all output samples */
-  if (outputlength < (samplecount * sizeof (int32_t)))
+  if (samplecount > outputlength / sizeof (int32_t))
   {
     ms_log (2, "%s(%s) Output buffer not large enough for decoded samples\n", __func__, srcname);
     return -1;
@@ -592,7 +593,8 @@ msr_decode_steim2 (int32_t *input, uint64_t inputlength, uint64_t samplecount, i
     for (idx = (frameidx == 0) ? 1 : 0; idx < diffidx && outputidx < samplecount;
          idx++, outputidx++)
     {
-      output[outputidx] = output[outputidx - 1] + diff[idx];
+      /* Sum in unsigned to avoid signed overflow UB */
+      output[outputidx] = (int32_t) ((uint32_t) output[outputidx - 1] + (uint32_t) diff[idx]);
     }
   } /* Done looping over frames */
 
@@ -626,20 +628,13 @@ int64_t
 msr_decode_geoscope (char *input, uint64_t samplecount, float *output, uint64_t outputlength,
                      int encoding, const char *srcname, int swapflag)
 {
-  uint32_t idx = 0;
+  uint64_t idx = 0;
   int32_t mantissa;  /* mantissa from SEED data */
   int32_t gainrange; /* gain range factor */
   int32_t exponent;  /* total exponent */
-  int32_t k;
   uint64_t exp2val;
   int16_t sint;
   double dsample = 0.0;
-
-  union
-  {
-    uint8_t b[4];
-    uint32_t i;
-  } sample32;
 
   if (samplecount == 0)
     return 0;
@@ -659,15 +654,14 @@ msr_decode_geoscope (char *input, uint64_t samplecount, float *output, uint64_t 
     switch (encoding)
     {
     case DE_GEOSCOPE24:
-      sample32.i = 0;
-      if (swapflag)
-        for (k = 0; k < 3; k++)
-          sample32.b[2 - k] = input[k];
+      /* Assemble the 24-bit sample explicitly by byte position, independent
+       * of host byte order, using the record's actual byte order */
+      if (ms_bigendianhost () ^ (swapflag != 0))
+        mantissa = ((uint32_t)(uint8_t)input[0] << 16) | ((uint32_t)(uint8_t)input[1] << 8) |
+                   (uint32_t)(uint8_t)input[2];
       else
-        for (k = 0; k < 3; k++)
-          sample32.b[1 + k] = input[k];
-
-      mantissa = sample32.i;
+        mantissa = ((uint32_t)(uint8_t)input[2] << 16) | ((uint32_t)(uint8_t)input[1] << 8) |
+                   (uint32_t)(uint8_t)input[0];
 
       /* Take 2's complement for mantissa for overflow */
       if ((unsigned long)mantissa > MAX24)
@@ -779,7 +773,7 @@ int64_t
 msr_decode_cdsn (int16_t *input, uint64_t samplecount, int32_t *output, uint64_t outputlength,
                  int swapflag)
 {
-  uint32_t idx = 0;
+  uint64_t idx = 0;
   int32_t mantissa;  /* mantissa */
   int32_t gainrange; /* gain range factor */
   int32_t mult = -1; /* multiplier for gain range */
@@ -868,7 +862,7 @@ int64_t
 msr_decode_sro (int16_t *input, uint64_t samplecount, int32_t *output, uint64_t outputlength,
                 const char *srcname, int swapflag)
 {
-  uint32_t idx = 0;
+  uint64_t idx = 0;
   int32_t mantissa;   /* mantissa */
   int32_t gainrange;  /* gain range factor */
   int32_t add2gr;     /* added to gainrage factor */
@@ -911,8 +905,10 @@ msr_decode_sro (int16_t *input, uint64_t samplecount, int32_t *output, uint64_t 
       return MS_GENERROR;
     }
 
-    /* Calculate sample as mantissa * 2^exponent */
-    sample = mantissa * ((uint64_t)1 << exponent);
+    /* Calculate sample as mantissa * 2^exponent.  Use signed arithmetic so a
+     * negative mantissa is scaled correctly; exponent is bounded to 0..10
+     * above, so (1 << exponent) and the product are well within int64_t. */
+    sample = (int32_t)(mantissa * (int64_t)(1 << exponent));
 
     /* Save sample in output array */
     output[idx] = sample;
@@ -934,7 +930,7 @@ int64_t
 msr_decode_dwwssn (int16_t *input, uint64_t samplecount, int32_t *output, uint64_t outputlength,
                    int swapflag)
 {
-  uint32_t idx = 0;
+  uint64_t idx = 0;
   int32_t sample;
   uint16_t sint;
 

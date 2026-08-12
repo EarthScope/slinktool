@@ -312,7 +312,8 @@ msr_encode_steim1 (int32_t *input, uint64_t samplecount, int32_t *output, uint64
         /* Add new diffs and determine bit width needed to represent */
         for (idx = diffcount; idx < 4 && inputidx < (samplecount - 1); idx++, inputidx++)
         {
-          diffs[idx] = *(input + inputidx + 1) - *(input + inputidx);
+          /* Difference in unsigned to avoid signed overflow UB */
+          diffs[idx] = (int32_t) ((uint32_t) *(input + inputidx + 1) - (uint32_t) *(input + inputidx));
           BITWIDTH (diffs[idx], bitwidth[idx]);
           diffcount++;
         }
@@ -395,9 +396,11 @@ msr_encode_steim1 (int32_t *input, uint64_t samplecount, int32_t *output, uint64
 
   /* Set Xn (reverse integration constant) in first frame to last sample */
   if (Xnp)
+  {
     *Xnp = *(input + outputsamples - 1);
-  if (swapflag)
-    ms_gswap4 (Xnp);
+    if (swapflag)
+      ms_gswap4 (Xnp);
+  }
 
   if (byteswritten)
     *byteswritten = (uint32_t)(frameidx * 64);
@@ -512,7 +515,8 @@ msr_encode_steim2 (int32_t *input, uint64_t samplecount, int32_t *output, uint64
         /* Add new diffs and determine bit width needed to represent */
         for (idx = diffcount; idx < 7 && inputidx < (samplecount - 1); idx++, inputidx++)
         {
-          diffs[idx] = *(input + inputidx + 1) - *(input + inputidx);
+          /* Difference in unsigned to avoid signed overflow UB */
+          diffs[idx] = (int32_t) ((uint32_t) *(input + inputidx + 1) - (uint32_t) *(input + inputidx));
           BITWIDTH (diffs[idx], bitwidth[idx]);
           diffcount++;
         }
@@ -702,9 +706,11 @@ msr_encode_steim2 (int32_t *input, uint64_t samplecount, int32_t *output, uint64
 
   /* Set Xn (reverse integration constant) in first frame to last sample */
   if (Xnp)
+  {
     *Xnp = *(input + outputsamples - 1);
-  if (swapflag)
-    ms_gswap4 (Xnp);
+    if (swapflag)
+      ms_gswap4 (Xnp);
+  }
 
   if (byteswritten)
     *byteswritten = (uint32_t)(frameidx * 64);

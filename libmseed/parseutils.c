@@ -216,10 +216,10 @@ ms3_detect (const char *record, uint64_t recbuflen, uint8_t *formatversion)
       ms_gswap4 (&datalength);
     }
 
-    reclen = MS3FSDH_LENGTH /* Length of fixed portion of header */
-             + sidlength    /* Length of source identifier */
-             + extralength  /* Length of extra headers */
-             + datalength;  /* Length of data payload */
+    reclen = (int64_t)MS3FSDH_LENGTH /* Length of fixed portion of header */
+             + sidlength             /* Length of source identifier */
+             + extralength           /* Length of extra headers */
+             + datalength;           /* Length of data payload */
 
     foundlen = 1;
   }
@@ -233,8 +233,10 @@ ms3_detect (const char *record, uint64_t recbuflen, uint8_t *formatversion)
 
     blkt_offset = HO2u (*pMS2FSDH_BLOCKETTEOFFSET (record), swapflag);
 
-    /* Loop through blockettes as long as number is non-zero and viable */
-    while (blkt_offset != 0 && blkt_offset > 47 && blkt_offset <= recbuflen)
+    /* Loop through blockettes as long as number is non-zero and the 4-byte
+     * blockette header (type and next offset) is fully within the buffer */
+    while (blkt_offset != 0 && blkt_offset >= MS2FSDH_LENGTH &&
+           (uint64_t)blkt_offset + 4 <= recbuflen)
     {
       memcpy (&blkt_type, record + blkt_offset, 2);
       memcpy (&next_blkt, record + blkt_offset + 2, 2);
@@ -248,13 +250,17 @@ ms3_detect (const char *record, uint64_t recbuflen, uint8_t *formatversion)
       /* Found a 1000 blockette, not truncated */
       if (blkt_type == 1000 && (uint64_t)(blkt_offset + 8) <= recbuflen)
       {
-        foundlen = 1;
-
         /* Field 3 of B1000 is a uint8_t value describing the record
-         * length as 2^(value).  Calculate 2-raised with a shift. */
-        reclen = (uint64_t)1 << *pMS2B1000_RECLEN (record + blkt_offset);
-
-        break;
+         * length as 2^(value).  Calculate 2-raised with a shift.  Reject
+         * out-of-range exponents (a record length of 2^31 already far
+         * exceeds MAXRECLEN) to avoid an undefined shift; leave the length
+         * undetermined so the buffer scan below can search for the record. */
+        if (*pMS2B1000_RECLEN (record + blkt_offset) < 31)
+        {
+          foundlen = 1;
+          reclen = (uint64_t)1 << *pMS2B1000_RECLEN (record + blkt_offset);
+          break;
+        }
       }
 
       /* Safety check for invalid offset */
@@ -324,7 +330,7 @@ ms3_detect (const char *record, uint64_t recbuflen, uint8_t *formatversion)
 int
 ms_parse_raw3 (const char *record, int maxreclen, int8_t details)
 {
-  MS3Record msr;
+  MS3Record msr = MS3Record_INITIALIZER;
   const char *X;
   uint8_t b;
 
@@ -571,8 +577,8 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
   X = record; /* Pointer of convenience */
 
   /* Check record sequence number, 6 ASCII digits */
-  if (!isdigit ((int)*(X)) || !isdigit ((int)*(X + 1)) || !isdigit ((int)*(X + 2)) ||
-      !isdigit ((int)*(X + 3)) || !isdigit ((int)*(X + 4)) || !isdigit ((int)*(X + 5)))
+  if (!isdigit ((unsigned char)*(X)) || !isdigit ((unsigned char)*(X + 1)) || !isdigit ((unsigned char)*(X + 2)) ||
+      !isdigit ((unsigned char)*(X + 3)) || !isdigit ((unsigned char)*(X + 4)) || !isdigit ((unsigned char)*(X + 5)))
   {
     ms_log (2, "%s: Invalid sequence number: '%c%c%c%c%c%c'\n", sid, *X, *(X + 1), *(X + 2),
             *(X + 3), *(X + 4), *(X + 5));
@@ -810,8 +816,8 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
     uint16_t next_blkt;
     const char *blkt_desc;
 
-    /* Traverse blockette chain */
-    while (blkt_offset != 0 && blkt_offset < maxreclen)
+    /* Traverse blockette chain, requiring the 4-byte header to fully fit */
+    while (blkt_offset != 0 && (uint64_t)blkt_offset + 4 <= maxreclen)
     {
       /* Every blockette has a similar 4 byte header: type and next */
       memcpy (&blkt_type, record + blkt_offset, 2);
@@ -832,18 +838,27 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
         ms_log (0, "              next blockette: %u\n", next_blkt);
       }
 
+      /* Ensure that Blockette 2000 length field is within buffer before ms2_blktlen() call */
+      if (blkt_type == 2000 && (uint64_t)blkt_offset + 6 > maxreclen)
+      {
+        ms_log (2, "%s: Blockette 2000 length field extends beyond record size, truncated?\n", sid);
+        retval++;
+        break;
+      }
+
       blkt_length = ms2_blktlen (blkt_type, record + blkt_offset, swapflag);
       if (blkt_length == 0)
       {
         ms_log (2, "%s: Unknown blockette length for type %d\n", sid, blkt_type);
         retval++;
+        break;
       }
 
       /* Track end of blockette chain */
       endofblockettes = blkt_offset + blkt_length - 1;
 
       /* Sanity check that the blockette is contained in the record */
-      if (endofblockettes > maxreclen)
+      if (endofblockettes >= maxreclen)
       {
         ms_log (2,
                 "%s: Blockette type %d at offset %d with length %d does not fit in record (%d)\n",
@@ -1222,8 +1237,12 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
       {
         char order[40];
 
-        /* Calculate record size in bytes as 2^(blkt_1000->rec_len) */
-        b1000reclen = (uint32_t)1 << *pMS2B1000_RECLEN (record + blkt_offset);
+        /* Calculate record size in bytes as 2^(blkt_1000->rec_len).  Reject an
+         * out-of-range exponent (an undefined shift that also exceeds
+         * MAXRECLEN); 0 marks the length as undetermined for the checks below. */
+        b1000reclen = (*pMS2B1000_RECLEN (record + blkt_offset) < 31)
+                          ? (int)((uint32_t)1 << *pMS2B1000_RECLEN (record + blkt_offset))
+                          : 0;
 
         /* Big or little endian? */
         if (*pMS2B1000_BYTEORDER (record + blkt_offset) == 0)
@@ -1293,6 +1312,16 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
       {
         char order[40];
 
+        /* The fixed B2000 header (through the number-of-headers field) spans 15
+         * bytes; a declared blockette length shorter than this would otherwise
+         * allow the field reads below to run past the buffer */
+        if ((uint64_t)blkt_offset + 15 > maxreclen)
+        {
+          ms_log (2, "%s: Blockette 2000 header extends beyond record size, truncated?\n", sid);
+          retval++;
+          break;
+        }
+
         /* Big or little endian? */
         if (*pMS2B2000_BYTEORDER (record + blkt_offset) == 0)
           strncpy (order, "Little endian", sizeof (order) - 1);
@@ -1350,9 +1379,16 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
 
           /* Crude display of the opaque data headers, hopefully printable */
           if (details > 1)
-            ms_log (0, "                     headers: %.*s\n",
-                    (HO2u (*pMS2B2000_DATAOFFSET (record + blkt_offset), swapflag) - 15),
-                    pMS2B2000_PAYLOAD (record + blkt_offset));
+          {
+            int b2000_dataoffset = HO2u (*pMS2B2000_DATAOFFSET (record + blkt_offset), swapflag);
+
+            /* Headers occupy bytes 15..DATAOFFSET; validate the offset is
+             * within the blockette before using it as a print length */
+            if (b2000_dataoffset >= 15 && b2000_dataoffset <= blkt_length)
+              ms_log (0, "                     headers: %.*s\n",
+                      (b2000_dataoffset - 15),
+                      pMS2B2000_PAYLOAD (record + blkt_offset));
+          }
         }
       }
 
@@ -1363,7 +1399,7 @@ ms_parse_raw2 (const char *record, int maxreclen, int8_t details, int8_t swapfla
       }
 
       /* Sanity check the next blockette offset */
-      if (next_blkt && next_blkt <= endofblockettes)
+      if (next_blkt && (next_blkt == blkt_offset || next_blkt <= endofblockettes))
       {
         ms_log (2, "%s: Next blockette offset (%d) is within current blockette ending at byte %d\n",
                 sid, next_blkt, endofblockettes);

@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2025:
+ * Copyright (C) 2026:
  * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
@@ -29,8 +29,8 @@ extern "C"
 {
 #endif
 
-#define LIBMSEED_VERSION "3.2.0"   //!< Library version
-#define LIBMSEED_RELEASE "2025.315" //!< Library release date
+#define LIBMSEED_VERSION "3.5.4"    //!< Library version
+#define LIBMSEED_RELEASE "2026.217" //!< Library release date
 
 /** @defgroup io-functions File and URL I/O */
 /** @defgroup miniseed-record Record Handling */
@@ -79,6 +79,7 @@ extern "C"
 #include <sys/timeb.h>
 #include <sys/types.h>
 #include <windows.h>
+#include <io.h>
 
 /* Re-define print conversion for size_t values */
 #undef PRIsize_t
@@ -113,10 +114,11 @@ typedef unsigned __int64 uint64_t;
 
 #define snprintf _snprintf
 #define vsnprintf _vsnprintf
-#define strcasecmp _stricmp
-#define strncasecmp _strnicmp
 #define strtoull _strtoui64
 #define fileno _fileno
+#define dup _dup
+#define dup2 _dup2
+#define close _close
 #define fdopen _fdopen
 #endif
 
@@ -134,6 +136,7 @@ typedef unsigned __int64 uint64_t;
 /* All other platforms */
 #include <inttypes.h>
 #include <sys/time.h>
+#include <unistd.h>
 #endif
 
 #define MINRECLEN 40       //!< Minimum miniSEED record length supported
@@ -143,8 +146,8 @@ typedef unsigned __int64 uint64_t;
 #define LM_SIDLEN 64 //!< Length of source ID string
 
 /** @def MS_ISRATETOLERABLE
-    @brief Macro to test default sample rate tolerance: abs(1-sr1/sr2) < 0.0001 */
-#define MS_ISRATETOLERABLE(A, B) (fabs (1.0 - ((A) / (B))) < 0.0001)
+    @brief Macro to test default sample rate tolerance: abs(sr2-sr1) < 0.0001*abs(sr2) */
+#define MS_ISRATETOLERABLE(A, B) (fabs ((B) - (A)) < 0.0001 * fabs (B))
 
 /** @def MS2_ISDATAINDICATOR
     @brief Macro to test a character for miniSEED 2.x data record/quality indicators */
@@ -451,6 +454,7 @@ extern int64_t ms_decode_data (const void *input, uint64_t inputsize, uint8_t en
 extern MS3Record *msr3_init (MS3Record *msr);
 extern void msr3_free (MS3Record **ppmsr);
 extern MS3Record *msr3_duplicate (const MS3Record *msr, int8_t datadup);
+extern MS3Record *msr3_duplicate_extra (const MS3Record *msr, int8_t datadup, int8_t extradup);
 extern nstime_t msr3_endtime (const MS3Record *msr);
 extern void msr3_print (const MS3Record *msr, int8_t details);
 extern int msr3_resize_buffer (MS3Record *msr);
@@ -524,8 +528,15 @@ extern void ms3_printselections (const MS3Selections *selections);
  * fileoffset), or the location in a file (\a filename and \a
  * fileoffset).
  *
+ * The filename field is a pointer to the original file name passed to
+ * the library, not a copy.  The caller is responsible for ensuring that
+ * the file name remains valid for the lifetime of the record list.
+ *
  * A ::MS3Record is stored with and contains the bit flags, extra
- * headers, etc. for the record.
+ * headers, etc. for the record.  The raw record pointer (\a
+ * MS3Record.record) is only populated when the record remains
+ * available in a caller-supplied buffer; it is NULL otherwise, for
+ * example for records read from files.
  *
  * The \a dataoffset to the encoded data is stored to enable direct
  * decoding of data samples without re-parsing the header, used by
@@ -540,9 +551,9 @@ typedef struct MS3RecordPtr
 {
   const char *bufferptr; //!< Pointer in buffer to record, NULL if not used
   FILE *fileptr;         //!< Pointer to open FILE containing record, NULL if not used
-  const char *filename;  //!< Pointer to file name containing record, NULL if not used
+  const char *filename;  //!< Pointer (borrowed) to file name containing record, NULL if not used
   int64_t fileoffset;    //!< Offset into file to record for \a fileptr or \a filename
-  MS3Record *msr;        //!< Pointer to ::MS3Record for this record
+  MS3Record *msr;        //!< Pointer to ::MS3Record for this record, \a msr->record is only valid if from a caller-supplied buffer
   nstime_t endtime;      //!< End time of record, time of last sample
   uint32_t dataoffset;   //!< Offset from start of record to encoded data
   void *prvtptr;         //!< Private pointer, will not be populated by library but will be free'd
@@ -650,7 +661,9 @@ typedef struct MS3TraceList
  *
  * The \c samprate(MS3Record) function must return a sampling rate tolerance in Hertz.
  *
- * For any function pointer set to NULL a default tolerance will be used.
+ * For any function pointer set to NULL a default tolerance will be used.  A
+ * returned value of 0.0 requires an exact match.  A negative returned value
+ * is invalid; it is ignored and the default tolerance is used instead.
  *
  * Illustrated usage:
  * @code
@@ -751,6 +764,8 @@ extern void mstl3_printgaplist (const MS3TraceList *mstl, ms_timeformat_t timefo
     - set the User-Agent header with @ref ms3_url_useragent()
     - set username and password for authentication with @ref ms3_url_userpassword()
     - set arbitrary headers with @ref ms3_url_addheader()
+    - set connection and stall timeouts with @ref ms3_url_timeout(), or the stall timeout with
+   the \b LIBMSEED_URL_TIMEOUT environment variable
     - disable TLS/SSL peer and host verficiation by setting \b LIBMSEED_SSL_NOVERIFY environment
    variable
 
@@ -765,7 +780,12 @@ extern void mstl3_printgaplist (const MS3TraceList *mstl, ms_timeformat_t timefo
     \sa mstl3_writemseed()
     @{ */
 
-/** @brief Type definition for data source I/O: file-system versus URL */
+/** @brief Type definition for data source I/O: file-system versus URL
+ *
+ * INTERNAL: Callers should not create, inspect, or modify ::LMIO values;
+ * the layout and members may change without notice.  Use the public reading
+ * interfaces and ::MS3FileParam instead.
+ */
 typedef struct LMIO
 {
   enum
@@ -778,18 +798,21 @@ typedef struct LMIO
   void *handle;      //!< Primary IO handle, either file or URL
   void *handle2;     //!< Secondary IO handle for URL
   int still_running; //!< Fetch status flag for URL transmissions
+  int urlfail;       //!< Transfer failure flag for URL transmissions
 } LMIO;
 
 /** @def LMIO_INITIALIZER
     @brief Initialializer for the internal stream handle ::LMIO */
-#define LMIO_INITIALIZER {.type = LMIO_NULL, .handle = NULL, .handle2 = NULL, .still_running = 0}
+#define LMIO_INITIALIZER {.type = LMIO_NULL, .handle = NULL, .handle2 = NULL, .still_running = 0, .urlfail = 0}
 
 /** @brief State container for reading miniSEED records from files or URLs.
 
-    In general these values should not be directly set or accessed.  It is
-    possible to allocate a structure and set the \c path, \c startoffset,
+    INTERNAL: In general these values should not be directly set or accessed.
+    It is possible to allocate a structure and set the \c path, \c startoffset,
     and \c endoffset values for advanced usage.  Note that file/URL start
     and end offsets can also be parsed from the path name as well.
+
+    The ::LMIO structure is embedded in ::MS3FileParam.
 */
 typedef struct MS3FileParam
 {
@@ -837,6 +860,7 @@ extern int ms3_readtracelist_selection (MS3TraceList **ppmstl, const char *mspat
                                         const MS3Selections *selections, int8_t splitversion,
                                         uint32_t flags, int8_t verbose);
 extern int ms3_url_useragent (const char *program, const char *version);
+extern int ms3_url_timeout (long connecttimeout, long stalltimeout);
 extern int ms3_url_userpassword (const char *userpassword);
 extern int ms3_url_addheader (const char *header);
 extern void ms3_url_freeheaders (void);
@@ -845,7 +869,10 @@ extern int64_t msr3_writemseed (MS3Record *msr, const char *mspath, int8_t overw
 extern int64_t mstl3_writemseed (MS3TraceList *mstl, const char *mspath, int8_t overwrite,
                                  int maxreclen, int8_t encoding, uint32_t flags, int8_t verbose);
 extern int libmseed_url_support (void);
-extern MS3FileParam *ms3_mstl_init_fd (int fd);
+extern MS3FileParam *ms3_msfp_init (int64_t startoffset, int64_t endoffset, int fd);
+extern MS3FileParam *ms3_msfp_init_fd (int fd);
+/** Backwards compatibility alias for misnamed ms3_msfp_init_fd() */
+#define ms3_mstl_init_fd(fd) ms3_msfp_init_fd(fd)
 /** @} */
 
 /** @addtogroup string-functions
@@ -904,6 +931,10 @@ extern int ms_strncpopen (char *dest, const char *source, int length);
  * Actual values are optional, with special values indicating an unset
  * state.
  *
+ * INTERNAL: Callers should not create, inspect, or modify ::MSEHEventDetection values;
+ * the layout and members may change without notice.  Use the public extra header
+ * functions instead.
+ *
  * @see mseh_add_event_detection_r
  */
 typedef struct MSEHEventDetection
@@ -929,6 +960,10 @@ typedef struct MSEHEventDetection
  *
  * Actual values are optional, with special values indicating an unset
  * state.
+ *
+ * INTERNAL: Callers should not create, inspect, or modify ::MSEHCalibration values;
+ * the layout and members may change without notice.  Use the public extra header
+ * functions instead.
  *
  * @see mseh_add_calibration
  */
@@ -962,7 +997,13 @@ typedef struct MSEHCalibration
  * @brief Container for timing exception parameters for use in extra headers
  *
  * Actual values are optional, with special values indicating an unset
- * state.
+ * state.  The @a type and @a clockstatus fields are sized to match the
+ * v2 Blockette 500 fields exactly, so a full-width value need not be
+ * null terminated; trailing spaces are treated as padding and ignored.
+ *
+ * INTERNAL: Callers should not create, inspect, or modify ::MSEHTimingException values;
+ * the layout and members may change without notice.  Use the public extra header
+ * functions instead.
  *
  * @see mseh_add_timing_exception
  */
@@ -973,9 +1014,9 @@ typedef struct MSEHTimingException
   int usec;             /**< [DEPRECATED] microsecond time offset, 0 = not included */
   int receptionquality; /**< Reception quality, 0 to 100% clock accurracy, <0 = not included */
   uint32_t count;       /**< The count thereof, 0 = not included */
-  char type[16];        /**< E.g. "MISSING" or "UNEXPECTED", zero length = not included */
+  char type[16];        /**< E.g. "MISSING" or "UNEXPECTED", all spaces or zero length = not included */
   char
-      clockstatus[128]; /**< Description of clock-specific parameters, zero length = not included */
+      clockstatus[128]; /**< Description of clock-specific parameters, all spaces or zero length = not included */
 } MSEHTimingException;
 
 /**
@@ -983,6 +1024,10 @@ typedef struct MSEHTimingException
  *
  * Actual values are optional, with special values indicating an unset
  * state.
+ *
+ * INTERNAL: Callers should not create, inspect, or modify ::MSEHRecenter values;
+ * the layout and members may change without notice.  Use the public extra header
+ * functions instead.
  *
  * @see mseh_add_recenter
  */
@@ -1001,18 +1046,24 @@ typedef struct MSEHRecenter
  */
 typedef struct LM_PARSED_JSON_s LM_PARSED_JSON;
 
+extern int mseh_get_ptr_type (const MS3Record *msr, const char *ptr, LM_PARSED_JSON **parsestate);
+
 /** @def mseh_get
     @brief A simple wrapper to access any type of extra header */
 #define mseh_get(msr, ptr, valueptr, type, maxlength)                                              \
   mseh_get_ptr_r (msr, ptr, valueptr, type, maxlength, NULL)
 
+/** @def mseh_get_uint64
+    @brief A simple wrapper to access an unsigned integer type extra header */
+#define mseh_get_uint64(msr, ptr, valueptr) mseh_get_ptr_r (msr, ptr, valueptr, 'u', 0, NULL)
+
+/** @def mseh_get_int64
+        @brief A simple wrapper to access an integer type extra header */
+#define mseh_get_int64(msr, ptr, valueptr) mseh_get_ptr_r (msr, ptr, valueptr, 'i', 0, NULL)
+
 /** @def mseh_get_number
     @brief A simple wrapper to access a number type extra header */
 #define mseh_get_number(msr, ptr, valueptr) mseh_get_ptr_r (msr, ptr, valueptr, 'n', 0, NULL)
-
-/** @def mseh_get_int64
-    @brief A simple wrapper to access a number type extra header */
-#define mseh_get_int64(msr, ptr, valueptr) mseh_get_ptr_r (msr, ptr, valueptr, 'i', 0, NULL)
 
 /** @def mseh_get_string
     @brief A simple wrapper to access a string type extra header */
@@ -1034,13 +1085,17 @@ extern int mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, c
     @brief A simple wrapper to set any type of extra header */
 #define mseh_set(msr, ptr, valueptr, type) mseh_set_ptr_r (msr, ptr, valueptr, type, NULL)
 
-/** @def mseh_set_number
-    @brief A simple wrapper to set a number type extra header */
-#define mseh_set_number(msr, ptr, valueptr) mseh_set_ptr_r (msr, ptr, valueptr, 'n', NULL)
+/** @def mseh_set_uint64
+    @brief A simple wrapper to set an unsigned integer type extra header */
+#define mseh_set_uint64(msr, ptr, valueptr) mseh_set_ptr_r (msr, ptr, valueptr, 'u', NULL)
 
 /** @def mseh_set_int64
     @brief A simple wrapper to set a number type extra header */
 #define mseh_set_int64(msr, ptr, valueptr) mseh_set_ptr_r (msr, ptr, valueptr, 'i', NULL)
+
+/** @def mseh_set_number
+    @brief A simple wrapper to set a number type extra header */
+#define mseh_set_number(msr, ptr, valueptr) mseh_set_ptr_r (msr, ptr, valueptr, 'n', NULL)
 
 /** @def mseh_set_string
     @brief A simple wrapper to set a string type extra header */
@@ -1082,6 +1137,8 @@ extern int mseh_print (const MS3Record *msr, int indent);
     the ::MSF_RECORDLIST flag to @ref mstl3_readbuffer() and @ref
     ms3_readtracelist().  Alternatively, a record list can be built by
     adding records to a @ref trace-list using mstl3_addmsr_recordptr().
+    Extra headers are copied into each ::MS3RecordPtr by default; set
+    ::MSF_RECORDLIST_NOEXTRAS to omit them, usually to reduce memory usage.
 
     The main purpose of this functionality is to support an efficient,
     2-pass pattern of first reading a summary of data followed by
@@ -1267,6 +1324,7 @@ extern MSLogParam *ms_rloginit_l (MSLogParam *logp, void (*log_print) (const cha
                                   const char *logprefix, void (*diag_print) (const char *),
                                   const char *errprefix, int maxmessages);
 extern int ms_rlog_emit (MSLogParam *logp, int count, int context);
+extern int ms_rlog_pop (MSLogParam *logp, char *message, size_t size, int context);
 extern int ms_rlog_free (MSLogParam *logp);
 
 /** @} */
@@ -1339,6 +1397,8 @@ extern int lmp_fseek64 (FILE *stream, int64_t offset, int whence);
 extern uint64_t lmp_nanosleep (uint64_t nanoseconds);
 /** Portable function to return the current system time */
 extern nstime_t lmp_systemtime (void);
+/** Portable function for case-insensitive, ASCII-only string comparison */
+extern int lmp_strncasecmp (const char *s1, const char *s2, size_t n);
 
 /** Return CRC32C value of supplied buffer, with optional starting CRC32C value */
 extern uint32_t ms_crc32c (const uint8_t *input, int length, uint32_t previousCRC32C);
@@ -1351,7 +1411,7 @@ ms_gswap2 (void *data2)
 
   memcpy (&dat, data2, 2);
 
-  dat = ((dat & 0xff00) >> 8) | ((dat & 0x00ff) << 8);
+  dat = (uint16_t)(((dat & 0xff00) >> 8) | ((dat & 0x00ff) << 8));
 
   memcpy (data2, &dat, 2);
 }
@@ -1571,16 +1631,14 @@ extern void *libmseed_memory_prealloc (void *ptr, size_t size, size_t *currentsi
 #define MSF_PNAMERANGE 0x0008  //!< [Parsing] Parse and utilize byte range from path name suffix
 #define MSF_ATENDOFFILE 0x0010 //!< [Parsing] Reading routine is at the end of the file
 #define MSF_SEQUENCE 0x0020    //!< [Packing] UNSUPPORTED: Maintain a record-level sequence number
-#define MSF_FLUSHDATA                                                                              \
-  0x0040 //!< [Packing] Pack all available data even if final record would not be filled
+#define MSF_FLUSHDATA 0x0040   //!< [Packing] Pack all available data even if final record would not be filled
 #define MSF_PACKVER2 0x0080     //!< [Packing] Pack as miniSEED version 2 instead of 3
 #define MSF_RECORDLIST 0x0100   //!< [TraceList] Build a ::MS3RecordList for each ::MS3TraceSeg
 #define MSF_MAINTAINMSTL 0x0200 //!< [TraceList] Do not modify a trace list when packing
-#define MSF_PPUPDATETIME                                                                           \
-  0x0400 //!< [TraceList] Store update time (as nstime_t) at ::MS3TraceSeg.prvtptr
-#define MSF_SPLITISVERSION \
-  0x0800 //!< [TraceList] Use the splitversion value as version instead of record version
+#define MSF_PPUPDATETIME 0x0400 //!< [TraceList] Store update time (as nstime_t) at ::MS3TraceSeg.prvtptr
+#define MSF_SPLITISVERSION 0x0800 //!< [TraceList] Use the splitversion value as version instead of record version
 #define MSF_SKIPADJACENTDUPLICATES 0x1000 //!< [TraceList] Skip adjacent duplicate records
+#define MSF_RECORDLIST_NOEXTRAS 0x2000 //!< [TraceList] Do not copy extra headers to the record list
 /** @} */
 
 #ifdef __cplusplus

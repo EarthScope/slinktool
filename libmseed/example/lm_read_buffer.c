@@ -55,6 +55,11 @@ main (int argc, char **argv)
     ms_log (2, "Error stating %s: %s\n", argv[1], strerror (errno));
     return -1;
   }
+  if (sb.st_size == 0)
+  {
+    ms_log (2, "Input file is empty\n");
+    return -1;
+  }
   if (!(buffer = (char *)malloc (sb.st_size)))
   {
     ms_log (2, "Error allocating buffer of %" PRIsize_t " bytes\n",
@@ -89,7 +94,7 @@ main (int argc, char **argv)
 
   if (records < 0)
   {
-    ms_log (2, "Problem reading miniSEED from buffer: %s\n", ms_errorstr (records));
+    ms_log (2, "Problem reading miniSEED from buffer: %s\n", ms_errorstr ((int)records));
   }
 
   /* Print summary */

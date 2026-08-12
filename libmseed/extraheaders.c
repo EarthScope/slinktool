@@ -18,6 +18,8 @@
  * limitations under the License.
  ***************************************************************************/
 
+#include <float.h>
+
 #include "extraheaders.h"
 #include "libmseed.h"
 
@@ -44,6 +46,16 @@ _priv_free (void *ctx, void *ptr)
   libmseed_memory.free (ptr);
 }
 
+/* Mark a real for single-precision serialization, but only when the
+ * value is finite and within the single-precision range so large-magnitude
+ * values keep full precision instead of failing to serialize. */
+static void
+limit_real_precision (yyjson_mut_val *val, double v)
+{
+  if (isfinite (v) && fabs (v) <= (double)FLT_MAX)
+    yyjson_mut_set_fp_to_float (val, true);
+}
+
 /***************************************************************************
  * Internal routine to parse JSON strings into internal state storage.
  *
@@ -64,6 +76,7 @@ parse_json (char *jsonstring, size_t length, LM_PARSED_JSON *parsed)
   yyjson_read_flag flg = YYJSON_READ_NOFLAG;
   yyjson_read_err err;
   yyjson_alc alc = {_priv_malloc, _priv_realloc, _priv_free, NULL};
+  int allocated = 0;
 
   /* Allocate parsed state if needed */
   if (!parsed)
@@ -77,6 +90,7 @@ parse_json (char *jsonstring, size_t length, LM_PARSED_JSON *parsed)
     {
       parsed->doc = NULL;
       parsed->mut_doc = NULL;
+      allocated = 1;
     }
   }
 
@@ -105,6 +119,11 @@ parse_json (char *jsonstring, size_t length, LM_PARSED_JSON *parsed)
   {
     ms_log (2, "%s() Cannot parse extra header JSON: %s\n", __func__,
             (err.msg) ? err.msg : "Unknown error");
+
+    /* Free the parse state only if it was allocated within this call */
+    if (allocated)
+      mseh_free_parsestate (&parsed);
+
     return NULL;
   }
 
@@ -112,17 +131,10 @@ parse_json (char *jsonstring, size_t length, LM_PARSED_JSON *parsed)
 }
 
 /** ************************************************************************
- * @brief Search for and return an extra header value.
+ * @brief Search for and return the type of an extra header value.
  *
  * The extra header value is specified as a JSON Pointer (RFC 6901), e.g.
  * \c '/objectA/objectB/header'.
- *
- * This routine can get used to test for the existence of a value
- * without returning the value by setting @p value to NULL.
- *
- * If the target item is found (and @p value parameter is set) the
- * value will be copied into the memory specified by @p value.  The
- * @p type value specifies the data type expected.
  *
  * If a @p parsestate pointer is supplied, the parsed (deserialized) JSON
  * data are stored here.  This value may be used in subsequent calls to
@@ -132,20 +144,16 @@ parse_json (char *jsonstring, size_t length, LM_PARSED_JSON *parsed)
  *
  * @param[in] msr Parsed miniSEED record to search
  * @param[in] ptr Header value desired, as JSON Pointer
- * @param[out] value Buffer for value, of type @p type
- * @param[in] type Type of value expected, one of:
- * @parblock
- * - @c 'n' - @p value is type @c double
- * - @c 'i' - @p value is type @c int64_t
- * - @c 's' - @p value is type @c char* (maximum length is: @c maxlength - 1)
- * - @c 'b' - @p value of type @c int (boolean value of 0 or 1)
- * @endparblock
- * @param[in] maxlength Maximum length of string value
  * @param[in] parsestate Parsed state for multiple operations, can be NULL
  *
- * @retval 0 on success
- * @retval 1 when the value was not found
- * @retval 2 when the value is of a different type
+ * @retval 'u' (decimal 117) - value is an unsigned integer number, @c uint64_t
+ * @retval 'i' (decimal 105) - value is an integer number, @c int64_t
+ * @retval 'n' (decimal 110) - value is a real number, @c double
+ * @retval 's' (decimal 115) - value is a string, @c char*
+ * @retval 'b' (decimal 98) - value is a boolean, @c int
+ * @retval 'o' (decimal 111) - value is an object
+ * @retval 'a' (decimal 97) - value is an array
+ * @retval 0 - when the value is not found
  * @returns A (negative) libmseed error code on error
  *
  * @ref MessageOnError - this function logs a message on error
@@ -153,16 +161,12 @@ parse_json (char *jsonstring, size_t length, LM_PARSED_JSON *parsed)
  * @see mseh_free_parsestate()
  ***************************************************************************/
 int
-mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, uint32_t maxlength,
-                LM_PARSED_JSON **parsestate)
+mseh_get_ptr_type (const MS3Record *msr, const char *ptr, LM_PARSED_JSON **parsestate)
 {
   LM_PARSED_JSON *parsed = (parsestate) ? *parsestate : NULL;
-
-  yyjson_alc alc = {_priv_malloc, _priv_realloc, _priv_free, NULL};
   yyjson_val *extravalue = NULL;
-  const char *stringvalue = NULL;
-
-  int retval = 0;
+  yyjson_alc alc = {_priv_malloc, _priv_realloc, _priv_free, NULL};
+  char rettype = 0;
 
   if (!msr || !ptr)
   {
@@ -170,22 +174,22 @@ mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, u
     return MS_GENERROR;
   }
 
-  /* Nothing can be found in no headers */
-  if (!msr->extralength)
+  /* Nothing can be found without extra headers or a populated parse state */
+  if (!msr->extralength && (parsed == NULL || (parsed->doc == NULL && parsed->mut_doc == NULL)))
   {
-    return 1;
+    return 0;
   }
 
-  if (!msr->extra)
+  if (!msr->extra && parsed == NULL)
   {
     ms_log (2, "%s() Expected extra headers (msr->extra) are not present\n", __func__);
     return MS_GENERROR;
   }
 
-  /* Detect invalid JSON Pointer, i.e. with no root '/' designation */
-  if (ptr[0] != '/')
+  /* Detect invalid JSON Pointer, i.e. with no root '/' designation and not "" (root object) */
+  if (ptr[0] != '/' && ptr[0] != '\0')
   {
-    ms_log (2, "%s() Unsupported ptr notation: %s\n", __func__, ptr);
+    ms_log (2, "%s() Unsupported JSON Pointer notation: %s\n", __func__, ptr);
     return MS_GENERROR;
   }
 
@@ -228,21 +232,162 @@ mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, u
 
   if (extravalue == NULL)
   {
-    retval = 1;
+    rettype = 0;
+  }
+  /* Integer type detections before the generic number check */
+  else if (yyjson_is_uint (extravalue))
+  {
+    rettype = 'u';
+  }
+  else if (yyjson_is_int (extravalue))
+  {
+    rettype = 'i';
+  }
+  else if (yyjson_is_num (extravalue))
+  {
+    rettype = 'n';
+  }
+  else if (yyjson_is_str (extravalue))
+  {
+    rettype = 's';
+  }
+  else if (yyjson_is_bool (extravalue))
+  {
+    rettype = 'b';
+  }
+  else if (yyjson_is_obj (extravalue))
+  {
+    rettype = 'o';
+  }
+  else if (yyjson_is_arr (extravalue))
+  {
+    rettype = 'a';
+  }
+
+  /* Free parse state if not being retained */
+  if (parsestate == NULL)
+  {
+    mseh_free_parsestate (&parsed);
+  }
+
+  return rettype;
+}
+
+/** ************************************************************************
+ * @brief Search for and return an extra header value.
+ *
+ * The extra header value is specified as a JSON Pointer (RFC 6901), e.g.
+ * \c '/objectA/objectB/header'.
+ *
+ * This routine can get used to test for the existence of a value
+ * without returning the value by setting @p value to NULL.
+ *
+ * If the target item is found (and @p value parameter is set) the
+ * value will be copied into the memory specified by @p value.  The
+ * @p type value specifies the data type expected.
+ *
+ * If a @p parsestate pointer is supplied, the parsed (deserialized) JSON
+ * data are stored here.  This value may be used in subsequent calls to
+ * avoid re-parsing the JSON.  The data must be freed with
+ * mseh_free_parsestate() when done reading the JSON.  If this value
+ * is NULL the parse state will be created and destroyed on each call.
+ *
+ * @param[in] msr Parsed miniSEED record to search
+ * @param[in] ptr Header value desired, as JSON Pointer
+ * @param[out] value Buffer for value, of type @p type
+ * @param[in] type Type of value expected, one of:
+ * @parblock
+ * - @c 'u' - @p value is type @c uint64_t
+ * - @c 'i' - @p value is type @c int64_t
+ * - @c 'n' - @p value is type @c double
+ * - @c 's' - @p value is type @c char* (maximum length is: @c maxlength - 1)
+ * - @c 'b' - @p value of type @c int (boolean value of 0 or 1)
+ * @endparblock
+ * @param[in] maxlength Maximum length of string value
+ * @param[in] parsestate Parsed state for multiple operations, can be NULL
+ *
+ * @retval 0 on success
+ * @retval 1 when the value was not found
+ * @retval 2 when the value is of a different type
+ * @returns A (negative) libmseed error code on error
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see mseh_free_parsestate()
+ ***************************************************************************/
+int
+mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, uint32_t maxlength,
+                LM_PARSED_JSON **parsestate)
+{
+  LM_PARSED_JSON *parsed = NULL;
+  LM_PARSED_JSON *statep = (parsestate) ? *parsestate : NULL;
+  yyjson_val *extravalue = NULL;
+  const char *stringvalue = NULL;
+
+  int retval = 0;
+  int detected_type;
+
+  if (!msr || !ptr)
+  {
+    ms_log (2, "%s() Required input not defined: 'msr' or 'ptr'\n", __func__);
+    return MS_GENERROR;
+  }
+
+  /* Nothing can be found without extra headers or a populated parse state */
+  if (!msr->extralength && (statep == NULL || (statep->doc == NULL && statep->mut_doc == NULL)))
+  {
+    return 1;
+  }
+
+  if (!msr->extra && statep == NULL)
+  {
+    ms_log (2, "%s() Expected extra headers (msr->extra) are not present\n", __func__);
+    return MS_GENERROR;
+  }
+
+  /* Check for existing value at JSON Pointer */
+  detected_type = mseh_get_ptr_type (msr, ptr, (parsestate) ? parsestate : &parsed);
+
+  /* Set parsed state pointer if supplied and populated by mseh_get_ptr_type() */
+  if (parsestate != NULL)
+  {
+    parsed = *parsestate;
+  }
+
+  /* Return error or not found indicator if type is not detected */
+  if (detected_type <= 0)
+  {
+    /* Free parse state if not being retained */
+    if (parsestate == NULL)
+    {
+      mseh_free_parsestate (&parsed);
+    }
+
+    return (detected_type == 0) ? 1 : detected_type;
+  }
+
+  /* Get target value */
+  extravalue = yyjson_doc_ptr_get (parsed->doc, ptr);
+
+  if (type == 'u' && yyjson_is_uint (extravalue))
+  {
+    if (value)
+      *((uint64_t *)value) = unsafe_yyjson_get_uint (extravalue);
+  }
+  else if (type == 'i' && yyjson_is_int (extravalue) &&
+           (yyjson_is_sint (extravalue) || unsafe_yyjson_get_uint (extravalue) <= INT64_MAX))
+  {
+    if (value)
+      *((int64_t *)value) = unsafe_yyjson_get_sint (extravalue);
   }
   else if (type == 'n' && yyjson_is_num (extravalue))
   {
     if (value)
       *((double *)value) = unsafe_yyjson_get_num (extravalue);
   }
-  else if (type == 'i' && yyjson_is_int (extravalue))
-  {
-    if (value)
-      *((int64_t *)value) = unsafe_yyjson_get_int (extravalue);
-  }
   else if (type == 's' && yyjson_is_str (extravalue))
   {
-    if (value)
+    if (value && maxlength > 0)
     {
       stringvalue = unsafe_yyjson_get_str (extravalue);
       strncpy ((char *)value, stringvalue, maxlength - 1);
@@ -278,7 +423,9 @@ mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, u
  * For most value types, if the @p ptr or final header values do not exist
  * they will be created.  If the header value exists it will be replaced.
  * When the value type is 'M', for Merge Patch (RFC 7386), the location
- * indicated by @p ptr must exist.
+ * indicated by @p ptr must exist unless root pointer: `""` (empty string).
+ * Recommended practice is to always use the root pointer (`""`) when
+ * modifying extra headers with a merge patch for consistent behavior.
  *
  * The @p type value specifies the data type expected for @p value.
  *
@@ -296,8 +443,9 @@ mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, u
  * @param[in] value Buffer for value, of type @p type
  * @param[in] type Type of value expected, one of:
  * @parblock
- * - @c 'n' - @p value is type @c double
+ * - @c 'u' - @p value is type @c uint64_t
  * - @c 'i' - @p value is type @c int64_t
+ * - @c 'n' - @p value is type @c double
  * - @c 's' - @p value is type @c char*
  * - @c 'b' - @p value is type @c int (boolean value of 0 or 1)
  * - @c 'M' - @p value is type @c char* and a Merge Patch to apply at @p ptr
@@ -312,6 +460,8 @@ mseh_get_ptr_r (const MS3Record *msr, const char *ptr, void *value, char type, u
  *
  * @see mseh_free_parsestate()
  * @see mseh_serialize()
+ * @see mseh_replace()
+ * @see mseh_print()
  ***************************************************************************/
 int
 mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
@@ -324,6 +474,7 @@ mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
   yyjson_mut_val *merged_val = NULL;
   yyjson_mut_val *target_val = NULL;
   yyjson_mut_val *array_val = NULL;
+  yyjson_mut_val *new_val = NULL;
   bool rv = false;
 
   if (!msr || !ptr || !value)
@@ -333,7 +484,7 @@ mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
   }
 
   /* Detect invalid JSON Pointer, i.e. with no root '/' designation */
-  if (ptr[0] != '/' && type != 'M')
+  if (ptr[0] != '/' && ptr[0] != '\0' && type != 'M')
   {
     ms_log (2, "%s() Unsupported JSON Pointer notation: %s\n", __func__, ptr);
     return MS_GENERROR;
@@ -392,21 +543,33 @@ mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
   /* Set (or replace) header value at ptr */
   switch (type)
   {
-  case 'n':
-    rv = yyjson_mut_doc_ptr_set (parsed->mut_doc, ptr,
-                                 yyjson_mut_real (parsed->mut_doc, *((double *)value)));
-    break;
+  case 'u':
+    new_val = yyjson_mut_uint (parsed->mut_doc, *((uint64_t *)value));
+    goto set_new_val;
   case 'i':
-    rv = yyjson_mut_doc_ptr_set (parsed->mut_doc, ptr,
-                                 yyjson_mut_sint (parsed->mut_doc, *((int64_t *)value)));
-    break;
+    new_val = yyjson_mut_sint (parsed->mut_doc, *((int64_t *)value));
+    goto set_new_val;
+  case 'n':
+    new_val = yyjson_mut_real (parsed->mut_doc, *((double *)value));
+    if (new_val)
+      limit_real_precision (new_val, *((double *)value));
+    goto set_new_val;
   case 's':
-    rv = yyjson_mut_doc_ptr_set (parsed->mut_doc, ptr,
-                                 yyjson_mut_strcpy (parsed->mut_doc, (const char *)value));
-    break;
+    new_val = yyjson_mut_strcpy (parsed->mut_doc, (const char *)value);
+    goto set_new_val;
   case 'b':
-    rv = yyjson_mut_doc_ptr_set (parsed->mut_doc, ptr,
-                                 yyjson_mut_bool (parsed->mut_doc, *((int *)value) ? true : false));
+    new_val = yyjson_mut_bool (parsed->mut_doc, *((int *)value) ? true : false);
+    goto set_new_val;
+  case 'V':
+    new_val = yyjson_mut_val_mut_copy (parsed->mut_doc, (yyjson_mut_val *)value);
+
+  set_new_val:
+    /* Only set the value if it was created successfully, otherwise a NULL
+     * value would be interpreted by yyjson as a request to remove ptr */
+    if (new_val)
+      rv = yyjson_mut_doc_ptr_set (parsed->mut_doc, ptr, new_val);
+    else
+      ms_log (2, "%s() Cannot create JSON value, out of memory?\n", __func__);
     break;
   case 'M':
     /* Parse supplied patch */
@@ -414,15 +577,26 @@ mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
     {
       if ((patch_doc = yyjson_doc_mut_copy (patch_idoc, &alc)))
       {
-        /* Get patch target value */
-        if ((target_val = yyjson_mut_doc_ptr_get (parsed->mut_doc, ptr)))
+        /* Get patch target value, or use root pointer with empty document */
+        target_val = yyjson_mut_doc_ptr_get (parsed->mut_doc, ptr);
+
+        if (target_val || ptr[0] == '\0')
         {
           /* Generate merged value */
           if ((merged_val = yyjson_mut_merge_patch (parsed->mut_doc, target_val,
                                                     yyjson_mut_doc_get_root (patch_doc))))
           {
-            /* Replace value at pointer with merged value */
-            rv = yyjson_mut_doc_ptr_replace (parsed->mut_doc, ptr, merged_val);
+            if (target_val)
+            {
+              /* Replace value at pointer with merged value */
+              rv = yyjson_mut_doc_ptr_replace (parsed->mut_doc, ptr, merged_val);
+            }
+            else
+            {
+              /* No existing target at root, set merged value as document root */
+              yyjson_mut_doc_set_root (parsed->mut_doc, merged_val);
+              rv = true;
+            }
           }
         }
       }
@@ -435,10 +609,6 @@ mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
     yyjson_doc_free (patch_idoc);
     yyjson_mut_doc_free (patch_doc);
 
-    break;
-  case 'V':
-    rv = yyjson_mut_doc_ptr_set (
-        parsed->mut_doc, ptr, yyjson_mut_val_mut_copy (parsed->mut_doc, (yyjson_mut_val *)value));
     break;
   case 'A':
     /* Search for existing array, create if necessary */
@@ -465,7 +635,9 @@ mseh_set_ptr_r (MS3Record *msr, const char *ptr, void *value, char type,
   /* Serialized extra headers and free parse state if not being retained */
   if (parsestate == NULL)
   {
-    mseh_serialize (msr, &parsed);
+    /* Only serialize back into the record if the modification succeeded */
+    if (rv == true && mseh_serialize (msr, &parsed) < 0)
+      rv = false;
     mseh_free_parsestate (&parsed);
   }
   /* If changes were applied, the immutable form of the document is now invalid */
@@ -532,18 +704,21 @@ mseh_add_event_detection_r (MS3Record *msr, const char *ptr, MSEHEventDetection 
   {
     yyjson_mut_set_str (&sigamp_key, "SignalAmplitude");
     yyjson_mut_set_real (&sigamp, eventdetection->signalamplitude);
+    limit_real_precision (&sigamp, eventdetection->signalamplitude);
     yyjson_mut_obj_add (&entry, &sigamp_key, &sigamp);
   }
   if (eventdetection->signalperiod != 0.0)
   {
     yyjson_mut_set_str (&sigper_key, "SignalPeriod");
     yyjson_mut_set_real (&sigper, eventdetection->signalperiod);
+    limit_real_precision (&sigper, eventdetection->signalperiod);
     yyjson_mut_obj_add (&entry, &sigper_key, &sigper);
   }
   if (eventdetection->backgroundestimate != 0.0)
   {
     yyjson_mut_set_str (&bgest_key, "BackgroundEstimate");
     yyjson_mut_set_real (&bgest, eventdetection->backgroundestimate);
+    limit_real_precision (&bgest, eventdetection->backgroundestimate);
     yyjson_mut_obj_add (&entry, &bgest_key, &bgest);
   }
   if (eventdetection->wave[0])
@@ -558,7 +733,7 @@ mseh_add_event_detection_r (MS3Record *msr, const char *ptr, MSEHEventDetection 
     yyjson_mut_set_str (&units, eventdetection->units);
     yyjson_mut_obj_add (&entry, &units_key, &units);
   }
-  if (eventdetection->onsettime != NSTUNSET)
+  if (eventdetection->onsettime != NSTUNSET && eventdetection->onsettime != NSTERROR)
   {
     if (ms_nstime2timestr_n (eventdetection->onsettime, timestring, sizeof (timestring),
                              ISOMONTHDAY_Z, NANO_MICRO_NONE))
@@ -672,7 +847,7 @@ mseh_add_calibration_r (MS3Record *msr, const char *ptr, MSEHCalibration *calibr
     yyjson_mut_set_str (&type, calibration->type);
     yyjson_mut_obj_add (&entry, &type_key, &type);
   }
-  if (calibration->begintime != NSTUNSET)
+  if (calibration->begintime != NSTUNSET && calibration->begintime != NSTERROR)
   {
     if (ms_nstime2timestr_n (calibration->begintime, beginstring, sizeof (beginstring),
                              ISOMONTHDAY_Z, NANO_MICRO_NONE))
@@ -688,7 +863,7 @@ mseh_add_calibration_r (MS3Record *msr, const char *ptr, MSEHCalibration *calibr
       return MS_GENERROR;
     }
   }
-  if (calibration->endtime != NSTUNSET)
+  if (calibration->endtime != NSTUNSET && calibration->endtime != NSTERROR)
   {
     if (ms_nstime2timestr_n (calibration->endtime, endstring, sizeof (endstring), ISOMONTHDAY_Z,
                              NANO_MICRO_NONE))
@@ -738,6 +913,7 @@ mseh_add_calibration_r (MS3Record *msr, const char *ptr, MSEHCalibration *calibr
   {
     yyjson_mut_set_str (&amplitude_key, "Amplitude");
     yyjson_mut_set_real (&amplitude, calibration->amplitude);
+    limit_real_precision (&amplitude, calibration->amplitude);
     yyjson_mut_obj_add (&entry, &amplitude_key, &amplitude);
   }
   if (calibration->inputunits[0])
@@ -756,18 +932,21 @@ mseh_add_calibration_r (MS3Record *msr, const char *ptr, MSEHCalibration *calibr
   {
     yyjson_mut_set_str (&duration_key, "Duration");
     yyjson_mut_set_real (&duration, calibration->duration);
+    limit_real_precision (&duration, calibration->duration);
     yyjson_mut_obj_add (&entry, &duration_key, &duration);
   }
   if (calibration->sineperiod != 0.0)
   {
     yyjson_mut_set_str (&sineperiod_key, "SinePeriod");
     yyjson_mut_set_real (&sineperiod, calibration->sineperiod);
+    limit_real_precision (&sineperiod, calibration->sineperiod);
     yyjson_mut_obj_add (&entry, &sineperiod_key, &sineperiod);
   }
   if (calibration->stepbetween != 0.0)
   {
     yyjson_mut_set_str (&stepbetween_key, "StepBetween");
     yyjson_mut_set_real (&stepbetween, calibration->stepbetween);
+    limit_real_precision (&stepbetween, calibration->stepbetween);
     yyjson_mut_obj_add (&entry, &stepbetween_key, &stepbetween);
   }
   if (calibration->inputchannel[0])
@@ -780,6 +959,7 @@ mseh_add_calibration_r (MS3Record *msr, const char *ptr, MSEHCalibration *calibr
   {
     yyjson_mut_set_str (&refamp_key, "ReferenceAmplitude");
     yyjson_mut_set_real (&refamp, calibration->refamplitude);
+    limit_real_precision (&refamp, calibration->refamplitude);
     yyjson_mut_obj_add (&entry, &refamp_key, &refamp);
     ;
   }
@@ -812,6 +992,33 @@ mseh_add_calibration_r (MS3Record *msr, const char *ptr, MSEHCalibration *calibr
 } /* End of mseh_add_calibration_r() */
 
 /** ************************************************************************
+ * @brief Length of a fixed-width, space-padded field
+ *
+ * Return the length of @p field, a fixed-width buffer of @p size bytes
+ * that may or may not be null terminated, stopping at a terminator if
+ * present and ignoring trailing spaces.
+ *
+ * @param[in] field Fixed-width field, e.g. a decoded SEED text field
+ * @param[in] size Size of @p field in bytes
+ *
+ * @returns The length of the field, excluding any terminator and
+ * trailing spaces.
+ ***************************************************************************/
+static size_t
+field_length (const char *field, size_t size)
+{
+  size_t length = 0;
+
+  while (length < size && field[length] != '\0')
+    length++;
+
+  while (length > 0 && field[length - 1] == ' ')
+    length--;
+
+  return length;
+}
+
+/** ************************************************************************
  * @brief Add timing exception to the extra headers of the given record.
  *
  * If @p ptr is NULL, the default is @c '/FDSN/Time/Exception'.
@@ -838,6 +1045,7 @@ mseh_add_timing_exception_r (MS3Record *msr, const char *ptr, MSEHTimingExceptio
   yyjson_mut_val clockstatus_key, clockstatus;
 
   char timestring[40];
+  size_t length;
 
   if (!msr || !exception)
   {
@@ -848,7 +1056,7 @@ mseh_add_timing_exception_r (MS3Record *msr, const char *ptr, MSEHTimingExceptio
   yyjson_mut_set_obj (&entry);
 
   /* Add elements to new object */
-  if (exception->time != NSTUNSET)
+  if (exception->time != NSTUNSET && exception->time != NSTERROR)
   {
     if (ms_nstime2timestr_n (exception->time, timestring, sizeof (timestring), ISOMONTHDAY_Z,
                              NANO_MICRO_NONE))
@@ -867,6 +1075,7 @@ mseh_add_timing_exception_r (MS3Record *msr, const char *ptr, MSEHTimingExceptio
   {
     yyjson_mut_set_str (&vcocorr_key, "VCOCorrection");
     yyjson_mut_set_real (&vcocorr, exception->vcocorrection);
+    limit_real_precision (&vcocorr, exception->vcocorrection);
     yyjson_mut_obj_add (&entry, &vcocorr_key, &vcocorr);
   }
   if (exception->receptionquality >= 0)
@@ -881,16 +1090,20 @@ mseh_add_timing_exception_r (MS3Record *msr, const char *ptr, MSEHTimingExceptio
     yyjson_mut_set_sint (&count, exception->count);
     yyjson_mut_obj_add (&entry, &count_key, &count);
   }
-  if (exception->type[0])
+
+  length = field_length (exception->type, sizeof (exception->type));
+  if (length > 0)
   {
     yyjson_mut_set_str (&type_key, "Type");
-    yyjson_mut_set_str (&type, exception->type);
+    yyjson_mut_set_strn (&type, exception->type, length);
     yyjson_mut_obj_add (&entry, &type_key, &type);
   }
-  if (exception->clockstatus[0])
+
+  length = field_length (exception->clockstatus, sizeof (exception->clockstatus));
+  if (length > 0)
   {
     yyjson_mut_set_str (&clockstatus_key, "ClockStatus");
-    yyjson_mut_set_str (&clockstatus, exception->clockstatus);
+    yyjson_mut_set_strn (&clockstatus, exception->clockstatus, length);
     yyjson_mut_obj_add (&entry, &clockstatus_key, &clockstatus);
   }
 
@@ -944,7 +1157,7 @@ mseh_add_recenter_r (MS3Record *msr, const char *ptr, MSEHRecenter *recenter,
     yyjson_mut_set_str (&type, recenter->type);
     yyjson_mut_obj_add (&entry, &type_key, &type);
   }
-  if (recenter->begintime != NSTUNSET)
+  if (recenter->begintime != NSTUNSET && recenter->begintime != NSTERROR)
   {
     if (ms_nstime2timestr_n (recenter->begintime, beginstring, sizeof (beginstring), ISOMONTHDAY_Z,
                              NANO_MICRO_NONE))
@@ -959,7 +1172,7 @@ mseh_add_recenter_r (MS3Record *msr, const char *ptr, MSEHRecenter *recenter,
       return MS_GENERROR;
     }
   }
-  if (recenter->endtime != NSTUNSET)
+  if (recenter->endtime != NSTUNSET && recenter->endtime != NSTERROR)
   {
     if (ms_nstime2timestr_n (recenter->endtime, endstring, sizeof (endstring), ISOMONTHDAY_Z,
                              NANO_MICRO_NONE))
@@ -1006,7 +1219,7 @@ mseh_add_recenter_r (MS3Record *msr, const char *ptr, MSEHRecenter *recenter,
 int
 mseh_serialize (MS3Record *msr, LM_PARSED_JSON **parsestate)
 {
-  yyjson_write_flag flg;
+  yyjson_write_flag flg = YYJSON_WRITE_NOFLAG;
   yyjson_write_err err;
   yyjson_alc alc = {_priv_malloc, _priv_realloc, _priv_free, NULL};
 
@@ -1021,10 +1234,6 @@ mseh_serialize (MS3Record *msr, LM_PARSED_JSON **parsestate)
 
   if (!parsed || !parsed->mut_doc)
     return 0;
-
-  /* Limit float point values to single precision to avoid unrealistically
-   * high precision values in the output. */
-  flg = YYJSON_WRITE_FP_TO_FLOAT;
 
   /* Serialize new JSON string */
   serialized = yyjson_mut_write_opts (parsed->mut_doc, flg, &alc, &serialsize, &err);
@@ -1093,13 +1302,16 @@ mseh_free_parsestate (LM_PARSED_JSON **parsestate)
  *
  * To _remove_ all of the extra headers, set @p jsonstring to NULL.
  *
- * This function cannot be used in combination with the routines that use
- * a parsed state, i.e. mseh_get_ptr_r() and mseh_set_ptr_r().
+ * @warning This function cannot be used in combination with the routines
+ * that use a parsed state, i.e. mseh_get_ptr_r() and mseh_set_ptr_r().
  *
  * @param[in] msr ::MS3Record to generate extra headers for
  * @param[in] jsonstring JSON replacment for extra headers of @p msr
  *
  * @returns Length of extra headers on success, otherwise a (negative) libmseed error code
+ *
+ * @see mseh_get_ptr_r()
+ * @see mseh_set_ptr_r()
  ***************************************************************************/
 int
 mseh_replace (MS3Record *msr, char *jsonstring)
@@ -1175,6 +1387,7 @@ mseh_print (const MS3Record *msr, int indent)
   char *extra;
   int idx;
   int instring = 0;
+  int escaped = 0;
 
   if (!msr)
     return MS_GENERROR;
@@ -1195,9 +1408,13 @@ mseh_print (const MS3Record *msr, int indent)
   ms_log (0, "%*s", indent, "");
   for (idx = 1; idx < (msr->extralength - 1); idx++)
   {
-    /* Toggle "in string" flag for double quotes */
-    if (extra[idx] == '"')
+    /* Toggle "in string" flag for unescaped double quotes */
+    if (extra[idx] == '"' && !escaped)
       instring = (instring) ? 0 : 1;
+
+    /* Track backslash escapes within strings so an escaped quote
+     * is not mistaken for a string delimiter */
+    escaped = (instring && !escaped && extra[idx] == '\\') ? 1 : 0;
 
     if (!instring)
     {
@@ -1222,11 +1439,15 @@ mseh_print (const MS3Record *msr, int indent)
       else if (extra[idx] == '}')
       {
         indent -= 2;
+        if (indent < 0)
+          indent = 0;
         ms_log (0, "\n%*s}", indent, "");
       }
       else if (extra[idx] == ']')
       {
         indent -= 2;
+        if (indent < 0)
+          indent = 0;
         ms_log (0, "\n%*s]", indent, "");
       }
       else

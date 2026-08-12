@@ -25,9 +25,9 @@
 #include <time.h>
 
 #include "extraheaders.h"
+#include "internalstate.h"
 #include "libmseed.h"
 #include "mseedformat.h"
-#include "internalstate.h"
 #include "packdata.h"
 
 /* Internal from another source file */
@@ -86,6 +86,9 @@ static nstime_t nstime2fsec_usec_offset (nstime_t nstime, uint16_t *fsec, int8_t
  * Default values are: record length = 4096, encoding = 11 (Steim2).
  * The defaults are triggered when @p msr.reclen and @p msr.encoding
  * are set to -1.
+ *
+ * To create a header-only record with no data payload (i.e., no samples), set
+ * @ref MS3Record.numsamples to 0.
  *
  * @param[in] msr ::MS3Record containing data to pack
  * @param[in] record_handler() Callback function called for each record
@@ -147,11 +150,66 @@ msr3_pack (const MS3Record *msr, void (*record_handler) (char *, int, void *), v
   return (result == 0) ? recordcount : -1;
 } /* End of msr3_pack() */
 
+/***************************************************************************
+ * Maximum samples that fit in maxdatabytes for a given encoding, the same
+ * formula used by lm_pack_state_init() to set packer->maxsamples.
+ ***************************************************************************/
+static uint32_t
+lm_pack_maxsamples (uint32_t maxdatabytes, uint8_t encoding, uint8_t samplesize)
+{
+  if (encoding == DE_STEIM1)
+    return (maxdatabytes / 64) * STEIM1_FRAME_MAX_SAMPLES;
+  else if (encoding == DE_STEIM2)
+    return (maxdatabytes / 64) * STEIM2_FRAME_MAX_SAMPLES;
+  else
+    return (samplesize) ? maxdatabytes / samplesize : 0;
+} /* End of lm_pack_maxsamples() */
+
+/***************************************************************************
+ * Test whether a record with the given geometry cannot hold numsamples,
+ * i.e. whether msr3_pack_next() would return 0 on a fresh packer with this
+ * geometry and without ::MSF_FLUSHDATA set. No allocation, no writing.
+ *
+ * Only miniSEED 3 geometry is pure arithmetic; miniSEED 2 depends on the
+ * blockette layout assembled by msr3_pack_header2_offsets(), so this
+ * always returns 0 (not determined) for miniSEED 2 and callers must fall
+ * back to a full msr3_pack_init() to find out.
+ *
+ * Returns non-zero if the record is short of a full record, and 0 if it
+ * may already be able to fill one or the geometry cannot be determined.
+ ***************************************************************************/
+int
+lm_pack_short_of_record (int8_t formatversion, uint32_t maxreclen, size_t sidlength,
+                         uint16_t extralength, uint8_t encoding, uint8_t samplesize,
+                         int64_t numsamples)
+{
+  uint32_t offset;
+  uint32_t maxdatabytes;
+  uint32_t maxsamples;
+
+  if (formatversion != 3 || !samplesize || numsamples <= 0 || maxreclen < MINRECLEN ||
+      maxreclen > MAXRECLEN)
+    return 0;
+
+  offset = MS3FSDH_LENGTH + (uint32_t)sidlength + extralength;
+
+  if (maxreclen < offset)
+    return 0;
+
+  maxdatabytes = maxreclen - offset;
+  maxsamples = lm_pack_maxsamples (maxdatabytes, encoding, samplesize);
+
+  return (uint64_t)numsamples < maxsamples;
+} /* End of lm_pack_short_of_record() */
+
 /** ************************************************************************
  * @brief Initialize a packer for generator-style record creation
  *
  * Create and initialize an opaque ::MS3RecordPacker context for generating
  * miniSEED records one at a time from an ::MS3Record.
+ *
+ * To create a header-only record with no data payload (i.e., no samples), set
+ * @ref MS3Record.numsamples to 0.
  *
  * The packer should be freed with msr3_pack_free() when done.
  *
@@ -181,12 +239,6 @@ msr3_pack_init (const MS3Record *msr, uint32_t flags, int8_t verbose)
     return NULL;
   }
 
-  if ((msr->reclen != -1) && (msr->reclen < MINRECLEN || msr->reclen > MAXRECLEN))
-  {
-    ms_log (2, "%s: Record length is out of range: %d\n", msr->sid, msr->reclen);
-    return NULL;
-  }
-
   /* Allocate pack state context */
   packer = (MS3RecordPacker *)libmseed_memory.malloc (sizeof (MS3RecordPacker));
   if (!packer)
@@ -197,7 +249,64 @@ msr3_pack_init (const MS3Record *msr, uint32_t flags, int8_t verbose)
 
   memset (packer, 0, sizeof (MS3RecordPacker));
 
-  /* Store parameters */
+  if (lm_pack_state_init (packer, msr, flags, verbose))
+  {
+    lm_pack_state_free (packer);
+    libmseed_memory.free (packer);
+    return NULL;
+  }
+
+  return packer;
+} /* End of msr3_pack_init() */
+
+/***************************************************************************
+ * Start (or restart) a packing session in a caller-allocated packer,
+ * reusing its rawrec/encoded buffers when they are already large enough.
+ *
+ * This is everything msr3_pack_init() does beyond allocating the
+ * ::MS3RecordPacker itself, factored out so a packer embedded in a
+ * longer-lived context (e.g. ::MS3TraceListPacker) can be re-initialized
+ * for each segment without a malloc/free cycle.
+ *
+ * Returns 0 on success and -1 on error.
+ ***************************************************************************/
+int
+lm_pack_state_init (MS3RecordPacker *packer, const MS3Record *msr, uint32_t flags, int8_t verbose)
+{
+  if (!packer || !msr)
+  {
+    ms_log (2, "%s(): Required input not defined: 'packer' or 'msr'\n", __func__);
+    return -1;
+  }
+
+  if ((msr->reclen != -1) && (msr->reclen < MINRECLEN || msr->reclen > MAXRECLEN))
+  {
+    ms_log (2, "%s: Record length is out of range: %d\n", msr->sid, msr->reclen);
+    return -1;
+  }
+
+  if (msr->starttime == NSTUNSET || msr->starttime == NSTERROR)
+  {
+    ms_log (2, "%s: Record start time is unset\n", msr->sid);
+    return -1;
+  }
+
+  /* Reset per-session state, retaining rawrec/encoded and their allocated
+   * sizes for reuse regardless of what else this struct grows to hold */
+  {
+    char *rawrec = packer->rawrec;
+    uint32_t rawrec_size = packer->rawrec_size;
+    char *encoded = packer->encoded;
+    uint32_t encoded_size = packer->encoded_size;
+
+    memset (packer, 0, sizeof (*packer));
+
+    packer->rawrec = rawrec;
+    packer->rawrec_size = rawrec_size;
+    packer->encoded = encoded;
+    packer->encoded_size = encoded_size;
+  }
+
   packer->msr = msr;
   packer->flags = flags;
   packer->verbose = verbose;
@@ -230,90 +339,106 @@ msr3_pack_init (const MS3Record *msr, uint32_t flags, int8_t verbose)
               "%s: Record length (%u) is not large enough for header (%u), SID (%" PRIsize_t
               "), and extra (%d)\n",
               msr->sid, packer->maxreclen, MS3FSDH_LENGTH, strlen (msr->sid), msr->extralength);
-      libmseed_memory.free (packer);
-      return NULL;
+      return -1;
     }
   }
 
-  /* Allocate space for generated record */
-  packer->rawrec = (char *)libmseed_memory.malloc (packer->maxreclen);
-  if (!packer->rawrec)
+  /* Allocate space for generated record, reusing the existing buffer if
+   * already large enough */
+  if (packer->rawrec_size < packer->maxreclen)
   {
-    ms_log (2, "%s: Cannot allocate memory for record buffer\n", msr->sid);
-    libmseed_memory.free (packer);
-    return NULL;
+    char *rawrec = (char *)libmseed_memory.realloc (packer->rawrec, packer->maxreclen);
+    if (!rawrec)
+    {
+      ms_log (2, "%s: Cannot allocate memory for record buffer\n", msr->sid);
+      return -1;
+    }
+
+    packer->rawrec = rawrec;
+    packer->rawrec_size = packer->maxreclen;
   }
 
   memset (packer->rawrec, 0, packer->maxreclen);
 
-  /* For records with samples, set up encoding buffers and parameters */
+  /* For records with samples, validate sample type before packing */
   if (msr->numsamples > 0)
   {
     packer->samplesize = ms_samplesize (msr->sampletype);
     if (!packer->samplesize)
     {
       ms_log (2, "%s: Unknown sample type '%c'\n", msr->sid, msr->sampletype);
-      libmseed_memory.free (packer->rawrec);
-      libmseed_memory.free (packer);
-      return NULL;
+      return -1;
     }
+  }
 
-    /* Pack header to determine data offset */
-    if (packer->formatversion == 3)
-    {
-      packer->dataoffset = msr3_pack_header3 (msr, packer->rawrec, packer->maxreclen, verbose);
-    }
-    else
-    {
-      packer->dataoffset = msr3_pack_header2_offsets (msr, packer->rawrec, packer->maxreclen,
-                                                      &packer->blockette_1000_offset,
-                                                      &packer->blockette_1001_offset, verbose);
+  /* Pack header (required for header-only and data-containing records) */
+  if (packer->formatversion == 3)
+  {
+    packer->dataoffset = msr3_pack_header3 (msr, packer->rawrec, packer->maxreclen, verbose);
+  }
+  else
+  {
+    packer->dataoffset = msr3_pack_header2_offsets (msr, packer->rawrec, packer->maxreclen,
+                                                    &packer->blockette_1000_offset,
+                                                    &packer->blockette_1001_offset, verbose);
 
-      if (packer->dataoffset > 0)
+    if (packer->dataoffset > 0 && msr->numsamples > 0)
+    {
+      /* For Steim encodings, align data offset to 64-byte boundary */
+      if (packer->encoding == DE_STEIM1 || packer->encoding == DE_STEIM2)
       {
-        /* For Steim encodings, align data offset to 64-byte boundary */
-        if (packer->encoding == DE_STEIM1 || packer->encoding == DE_STEIM2)
-        {
-          packer->dataoffset = ((packer->dataoffset + 63) / 64) * 64;
-        }
-
-        /* Set data offset in header */
-        *pMS2FSDH_DATAOFFSET (packer->rawrec) = HO2u (packer->dataoffset, packer->swapflag);
+        packer->dataoffset = ((packer->dataoffset + 63) / 64) * 64;
       }
-    }
 
-    if (packer->dataoffset < 0)
-    {
-      ms_log (2, "%s: Cannot pack miniSEED header\n", msr->sid);
-      libmseed_memory.free (packer->rawrec);
-      libmseed_memory.free (packer);
-      return NULL;
-    }
+      /* The (possibly aligned) data offset must still leave room for data
+       * within the record and fit the 16-bit v2 data-offset field. */
+      if ((uint32_t)packer->dataoffset >= packer->maxreclen || packer->dataoffset > UINT16_MAX)
+      {
+        ms_log (2, "%s: Data offset (%d) does not fit within record length (%u)\n", msr->sid,
+                packer->dataoffset, packer->maxreclen);
+        return -1;
+      }
 
+      /* Set data offset in header */
+      *pMS2FSDH_DATAOFFSET (packer->rawrec) = HO2u (packer->dataoffset, packer->swapflag);
+    }
+  }
+
+  if (packer->dataoffset < 0)
+  {
+    ms_log (2, "%s: Cannot pack miniSEED header\n", msr->sid);
+    return -1;
+  }
+
+  /* For records with samples, set up encoding buffers and parameters */
+  if (msr->numsamples > 0)
+  {
     /* Determine the max data bytes and sample count */
     packer->maxdatabytes = packer->maxreclen - packer->dataoffset;
+    packer->maxsamples =
+        lm_pack_maxsamples (packer->maxdatabytes, packer->encoding, packer->samplesize);
 
-    if (packer->encoding == DE_STEIM1)
+    /* The miniSEED 2 FSDH sample count is a 16-bit field, so a single
+     * record cannot represent more than UINT16_MAX samples regardless of
+     * the record length. */
+    if (packer->formatversion == 2 && packer->maxsamples > UINT16_MAX)
     {
-      packer->maxsamples = (uint32_t)(packer->maxdatabytes / 64) * STEIM1_FRAME_MAX_SAMPLES;
-    }
-    else if (packer->encoding == DE_STEIM2)
-    {
-      packer->maxsamples = (uint32_t)(packer->maxdatabytes / 64) * STEIM2_FRAME_MAX_SAMPLES;
-    }
-    else
-    {
-      packer->maxsamples = packer->maxdatabytes / packer->samplesize;
+      packer->maxsamples = UINT16_MAX;
     }
 
-    /* Allocate space for encoded data separately for alignment */
-    packer->encoded = (char *)libmseed_memory.malloc (packer->maxdatabytes);
-    if (!packer->encoded)
+    /* Allocate space for encoded data separately for alignment, reusing
+     * the existing buffer if already large enough */
+    if (packer->encoded_size < packer->maxdatabytes)
     {
-      ms_log (2, "%s: Cannot allocate memory for encoded data buffer\n", msr->sid);
-      libmseed_memory.free (packer->rawrec);
-      libmseed_memory.free (packer);
-      return NULL;
+      char *encoded = (char *)libmseed_memory.realloc (packer->encoded, packer->maxdatabytes);
+      if (!encoded)
+      {
+        ms_log (2, "%s: Cannot allocate memory for encoded data buffer\n", msr->sid);
+        return -1;
+      }
+
+      packer->encoded = encoded;
+      packer->encoded_size = packer->maxdatabytes;
     }
   }
 
@@ -323,8 +448,8 @@ msr3_pack_init (const MS3Record *msr, uint32_t flags, int8_t verbose)
     ms_log (0, "%s: Initialized packing state for %s records\n", msr->sid,
             (packer->formatversion == 3) ? "miniSEED 3" : "miniSEED 2");
 
-  return packer;
-} /* End of msr3_pack_init() */
+  return 0;
+} /* End of lm_pack_state_init() */
 
 /** ************************************************************************
  * @brief Generate next miniSEED record.
@@ -383,6 +508,9 @@ msr3_pack_next (MS3RecordPacker *packer, char **record, int32_t *reclen)
       /* Set encoding to text (value of 0) for consistency */
       *pMS3FSDH_ENCODING (packer->rawrec) = DE_TEXT;
 
+      *pMS3FSDH_NUMSAMPLES (packer->rawrec) = HO4u (0, packer->swapflag);
+      *pMS3FSDH_DATALENGTH (packer->rawrec) = HO4u (0, packer->swapflag);
+
       /* Calculate CRC and set */
       memset (pMS3FSDH_CRC (packer->rawrec), 0, sizeof (uint32_t));
       crc = ms_crc32c ((const uint8_t *)packer->rawrec, packer->dataoffset, 0);
@@ -402,6 +530,11 @@ msr3_pack_next (MS3RecordPacker *packer, char **record, int32_t *reclen)
       {
         *pMS2B1000_ENCODING (packer->rawrec + packer->blockette_1000_offset) = DE_TEXT;
       }
+
+      /* Data segment is not used; clear it */
+      if (packer->dataoffset > 0 && (uint32_t)packer->dataoffset < packer->maxreclen)
+        memset (packer->rawrec + packer->dataoffset, 0,
+                (size_t)(packer->maxreclen - (uint32_t)packer->dataoffset));
 
       if (packer->verbose >= 1)
         ms_log (0, "%s: Packed %u byte record with no payload\n", packer->msr->sid,
@@ -430,8 +563,13 @@ msr3_pack_next (MS3RecordPacker *packer, char **record, int32_t *reclen)
   /* Pack data samples */
   packoffset_bytes = packer->packed_samples * packer->samplesize;
 
+  /* miniSEED 2 FSDH sample count is 16-bit; cap so excess spills to next records */
+  uint64_t samples_to_pack = remaining_samples;
+  if (packer->formatversion == 2 && samples_to_pack > UINT16_MAX)
+    samples_to_pack = UINT16_MAX;
+
   samples_packed = msr_pack_data (
-      packer->encoded, (uint8_t *)packer->msr->datasamples + packoffset_bytes, remaining_samples,
+      packer->encoded, (uint8_t *)packer->msr->datasamples + packoffset_bytes, samples_to_pack,
       packer->maxdatabytes, packer->msr->sampletype, packer->encoding, packer->swapflag,
       &datalength, packer->msr->sid, packer->verbose);
 
@@ -500,9 +638,12 @@ msr3_pack_next (MS3RecordPacker *packer, char **record, int32_t *reclen)
     /* Update start time if not first record */
     if (packer->recordcount > 0)
     {
-      nstime2fsec_usec_offset (packer->nextstarttime, &fsec, &usec_offset);
+      nstime_t second_nstime = nstime2fsec_usec_offset (packer->nextstarttime, &fsec, &usec_offset);
 
-      if (ms_nstime2time (packer->nextstarttime, &year, &day, &hour, &min, &sec, &nsec))
+      /* Use the (possibly carried) second-resolution time so Y/D/H/M/S stay
+       * consistent with fsec/usec_offset when rounding carries into the next second */
+      if (second_nstime == NSTERROR ||
+          ms_nstime2time (second_nstime, &year, &day, &hour, &min, &sec, NULL))
       {
         ms_log (2, "%s: Cannot convert record starttime: %" PRId64 "\n", packer->msr->sid,
                 packer->nextstarttime);
@@ -565,18 +706,51 @@ msr3_pack_free (MS3RecordPacker **packer, int64_t *packedsamples)
   if (!packer || !*packer)
     return;
 
-  if (packedsamples)
-    *packedsamples = (*packer)->packed_samples;
-
-  if ((*packer)->rawrec)
-    libmseed_memory.free ((*packer)->rawrec);
-
-  if ((*packer)->encoded)
-    libmseed_memory.free ((*packer)->encoded);
+  lm_pack_state_finish (*packer, packedsamples);
+  lm_pack_state_free (*packer);
 
   libmseed_memory.free (*packer);
   *packer = NULL;
 } /* End of msr3_pack_free() */
+
+/***************************************************************************
+ * Report the total samples packed by a session and end it.  The packer's
+ * rawrec/encoded buffers are retained for reuse by a later
+ * lm_pack_state_init() call.
+ ***************************************************************************/
+void
+lm_pack_state_finish (MS3RecordPacker *packer, int64_t *packedsamples)
+{
+  if (!packer)
+    return;
+
+  if (packedsamples)
+    *packedsamples = packer->packed_samples;
+
+  packer->finished = 1;
+  packer->msr = NULL;
+} /* End of lm_pack_state_finish() */
+
+/***************************************************************************
+ * Release a packer's rawrec/encoded buffers.
+ ***************************************************************************/
+void
+lm_pack_state_free (MS3RecordPacker *packer)
+{
+  if (!packer)
+    return;
+
+  if (packer->rawrec)
+    libmseed_memory.free (packer->rawrec);
+
+  if (packer->encoded)
+    libmseed_memory.free (packer->encoded);
+
+  packer->rawrec = NULL;
+  packer->rawrec_size = 0;
+  packer->encoded = NULL;
+  packer->encoded_size = 0;
+} /* End of lm_pack_state_free() */
 
 /** ************************************************************************
  * @brief Repack a parsed miniSEED record into a version 3 record.
@@ -645,10 +819,10 @@ msr3_repack_mseed3 (const MS3Record *msr, char *record, uint32_t recbuflen, int8
     return -1;
   }
 
-  if (recbuflen < (uint32_t)(MS3FSDH_LENGTH + msr->extralength + origdatasize))
+  if (recbuflen < ((uint32_t)dataoffset + origdatasize))
   {
-    ms_log (2, "%s: Destination record buffer length (%u) is not large enough for record (%d)\n",
-            msr->sid, recbuflen, (MS3FSDH_LENGTH + msr->extralength + origdatasize));
+    ms_log (2, "%s: Destination record buffer length (%u) is not large enough for record (%u)\n",
+            msr->sid, recbuflen, ((uint32_t)dataoffset + origdatasize));
     return -1;
   }
 
@@ -757,6 +931,9 @@ msr3_pack_header3 (const MS3Record *msr, char *record, uint32_t recbuflen, int8_
 
   extraoffset = MS3FSDH_LENGTH + (int)sidlength;
 
+  /* A NULL extra pointer means no extra headers regardless of extralength */
+  uint16_t extralength = (msr->extra) ? msr->extralength : 0;
+
   /* Build fixed header */
   record[0] = 'M';
   record[1] = 'S';
@@ -778,13 +955,13 @@ msr3_pack_header3 (const MS3Record *msr, char *record, uint32_t recbuflen, int8_
 
   *pMS3FSDH_PUBVERSION (record) = msr->pubversion;
   *pMS3FSDH_SIDLENGTH (record) = (uint8_t)sidlength;
-  *pMS3FSDH_EXTRALENGTH (record) = HO2u (msr->extralength, swapflag);
+  *pMS3FSDH_EXTRALENGTH (record) = HO2u (extralength, swapflag);
   memcpy (pMS3FSDH_SID (record), msr->sid, sidlength);
 
-  if (msr->extralength > 0)
-    memcpy (record + extraoffset, msr->extra, msr->extralength);
+  if (extralength > 0)
+    memcpy (record + extraoffset, msr->extra, extralength);
 
-  return (MS3FSDH_LENGTH + (int)sidlength + msr->extralength);
+  return (MS3FSDH_LENGTH + (int)sidlength + extralength);
 } /* End of msr3_pack_header3() */
 
 /** ************************************************************************
@@ -815,7 +992,7 @@ int
 msr3_repack_mseed2 (const MS3Record *msr, char *record, uint32_t recbuflen, int8_t verbose)
 {
   int headerlen;
-  uint16_t dataoffset;
+  uint32_t dataoffset;
   uint32_t origdataoffset;
   uint32_t origdatasize;
   uint32_t totalsize;
@@ -824,6 +1001,12 @@ msr3_repack_mseed2 (const MS3Record *msr, char *record, uint32_t recbuflen, int8
   if (!msr || !msr->record || !record)
   {
     ms_log (2, "%s(): Required input not defined: 'msr', 'msr->record', or 'record'\n", __func__);
+    return -1;
+  }
+
+  if (msr->reclen <= 0)
+  {
+    ms_log (2, "%s: Record length (%d) is not set to a valid value\n", msr->sid, msr->reclen);
     return -1;
   }
 
@@ -858,31 +1041,32 @@ msr3_repack_mseed2 (const MS3Record *msr, char *record, uint32_t recbuflen, int8
     return -1;
   }
 
-  /* Determine offset to encoded data */
+  /* Determine offset to encoded data, rounded up to a 64-byte boundary for
+   * Steim encodings, and confirm it fits the 16-bit v2 data-offset field */
   if (msr->encoding == DE_STEIM1 || msr->encoding == DE_STEIM2)
-  {
-    dataoffset = 64;
-    while (dataoffset < headerlen)
-      dataoffset += 64;
-
-    /* Zero memory between blockettes and data if any */
-    memset (record + headerlen, 0, dataoffset - headerlen);
-  }
+    dataoffset = ((uint32_t)headerlen + 63) / 64 * 64;
   else
+    dataoffset = (uint32_t)headerlen;
+
+  if (dataoffset > UINT16_MAX || dataoffset >= recbuflen)
   {
-    dataoffset = headerlen;
+    ms_log (2, "%s: Repacked data offset (%u) does not fit within record length (%u)\n", msr->sid,
+            dataoffset, recbuflen);
+    return -1;
   }
 
   totalsize = dataoffset + origdatasize;
 
-  if (recbuflen < totalsize)
+  if (totalsize > (uint32_t)msr->reclen)
   {
-    ms_log (
-        2,
-        "%s: Repacked minimum record length (%u) is larger than destination record buffer (%u)\n",
-        msr->sid, totalsize, recbuflen);
+    ms_log (2, "%s: Repacked record length (%u) is larger than the original record length (%d)\n",
+            msr->sid, totalsize, msr->reclen);
     return -1;
   }
+
+  /* Zero memory between blockettes and data if any */
+  if (dataoffset > (uint32_t)headerlen)
+    memset (record + headerlen, 0, dataoffset - headerlen);
 
   /* Copy encoded data into record */
   memcpy (record + dataoffset, msr->record + origdataoffset, origdatasize);
@@ -892,12 +1076,12 @@ msr3_repack_mseed2 (const MS3Record *msr, char *record, uint32_t recbuflen, int8
 
   /* Update number of samples and data offset */
   *pMS2FSDH_NUMSAMPLES (record) = HO2u ((uint16_t)msr->samplecnt, swapflag);
-  *pMS2FSDH_DATAOFFSET (record) = HO2u (dataoffset, swapflag);
+  *pMS2FSDH_DATAOFFSET (record) = HO2u ((uint16_t)dataoffset, swapflag);
 
-  /* Zero any space between encoded data and end of record */
-  int32_t content = dataoffset + origdatasize;
-  if (content < msr->reclen)
-    memset (record + content, 0, msr->reclen - content);
+  /* Zero any space between encoded data and end of record.  totalsize is the
+   * end of the encoded data (dataoffset + origdatasize), computed above. */
+  if (totalsize < (uint32_t)msr->reclen)
+    memset (record + totalsize, 0, (uint32_t)msr->reclen - totalsize);
 
   if (verbose >= 1)
     ms_log (0, "%s: Repacked %" PRId64 " samples into a %u byte record\n", msr->sid, msr->samplecnt,
@@ -1024,6 +1208,15 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
     return -1;
   }
 
+  /* Ensure the supplied buffer can hold the fixed header and mandatory
+   * Blockette 1000 that are written unconditionally below */
+  if (recbuflen < (uint32_t)(MS2FSDH_LENGTH + 8))
+  {
+    ms_log (2, "%s: Buffer length (%u) is not large enough for fixed header and Blockette 1000\n",
+            msr->sid, recbuflen);
+    return -1;
+  }
+
   /* Calculate the record length as an exponent of 2 */
   for (reclenfind = 1, reclenexp = 1; reclenfind <= MAXRECLEN; reclenexp++)
   {
@@ -1064,6 +1257,10 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
     ms_log (2, "%s: Cannot convert starttime: %" PRId64 "\n", msr->sid, msr->starttime);
     return -1;
   }
+
+  /* Warn if outside the conventional year range assumed by many readers */
+  if (year < 1900 || year > 2100)
+    ms_log (1, "%s: Unlikely start year for miniSEED 2 (1900-2100): %d\n", msr->sid, year);
 
   /* Generate factor & multipler representation of sample rate */
   if (ms_genfactmult (msr3_sampratehz (msr), &factor, &multiplier))
@@ -1225,7 +1422,20 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
 
   if (yyjson_ptr_get_num (ehroot, "/FDSN/Time/Correction", &header_number))
   {
-    *pMS2FSDH_TIMECORRECT (record) = HO4d ((int32_t)(header_number * 10000 + 0.5), swapflag);
+    /* Time correction is stored in 0.0001 second units, round-to-nearest w/ ties away from zero */
+    double correction = header_number * 10000.0;
+
+    correction += (correction < 0.0) ? -0.5 : 0.5;
+
+    if (!isfinite (correction) || correction <= (double)INT32_MIN - 1.0 ||
+        correction >= (double)INT32_MAX + 1.0)
+    {
+      ms_log (2, "%s: Time correction is not representable: %g\n", msr->sid, header_number);
+      yyjson_doc_free (ehdoc);
+      return -1;
+    }
+
+    *pMS2FSDH_TIMECORRECT (record) = HO4d ((int32_t)correction, swapflag);
 
     /* Set time correction applied bit in activity flags.
        Rationale: V3 records do not allow unapplied time corrections and unapplied
@@ -1258,9 +1468,36 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
 
   written += 8;
 
-  /* Add Blockette 1001 if microsecond offset or timing quality is present */
-  if (yyjson_ptr_get_uint (ehroot, "/FDSN/Time/Quality", &header_uint) || usec_offset)
+  /* Add Blockette 1001 if microsecond offset or timing quality is present on this
+   * record, or if the sample period is not an integer number of 100 usec units,
+   * in which case continuation records may need a microsecond offset even
+   * though this record does not. */
+  double sampratehz = msr3_sampratehz (msr);
+  int8_t offgrid_possible = 0;
+
+  if (sampratehz > 0.0)
   {
+    double units = 10000.0 / sampratehz; /* 100 usec units per sample */
+
+    /* Test for a fractional part, values of 2^53 and larger are always integers */
+    if (units < 9.0e15)
+    {
+      double fraction = units - (double)(int64_t)units;
+
+      offgrid_possible = (fraction > 1.0e-6 && fraction < (1.0 - 1.0e-6));
+    }
+  }
+
+  if (yyjson_ptr_get_uint (ehroot, "/FDSN/Time/Quality", &header_uint) || usec_offset ||
+      offgrid_possible)
+  {
+    if (written > UINT16_MAX || (uint64_t)written + 8 > recbuflen)
+    {
+      ms_log (2, "%s: Record length not large enough for B1001\n", msr->sid);
+      yyjson_doc_free (ehdoc);
+      return -1;
+    }
+
     *next_blockette = HO2u ((uint16_t)written, swapflag);
     next_blockette = pMS2B1001_NEXT (record + written);
     *pMS2FSDH_NUMBLOCKETTES (record) += 1;
@@ -1287,13 +1524,20 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
   /* Add Blockette 100 if sample rate is not well represented by factor/multiplier */
   if (fabs (msr3_sampratehz (msr) - ms_nomsamprate (factor, multiplier)) > 0.0001)
   {
+    if (written > UINT16_MAX || (uint64_t)written + 12 > recbuflen)
+    {
+      ms_log (2, "%s: Record length not large enough for B100\n", msr->sid);
+      yyjson_doc_free (ehdoc);
+      return -1;
+    }
+
     *next_blockette = HO2u ((uint16_t)written, swapflag);
     next_blockette = pMS2B100_NEXT (record + written);
     *pMS2FSDH_NUMBLOCKETTES (record) += 1;
 
     *pMS2B100_TYPE (record + written) = HO2u (100, swapflag);
     *pMS2B100_NEXT (record + written) = 0;
-    *pMS2B100_SAMPRATE (record + written) = HO4f ((float)msr->samprate, swapflag);
+    *pMS2B100_SAMPRATE (record + written) = HO4f ((float)sampratehz, swapflag);
     *pMS2B100_FLAGS (record + written) = 0;
     memset (pMS2B100_RESERVED (record + written), 0, 3);
 
@@ -1312,7 +1556,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
 
       blockette_length = 200;
 
-      if ((recbuflen - written) < blockette_length)
+      if (written > UINT16_MAX || (uint64_t)written + blockette_length > recbuflen)
       {
         ms_log (2, "%s: Record length not large enough for B500\n", msr->sid);
         yyjson_doc_free (ehdoc);
@@ -1379,7 +1623,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
 
       /* Determine which detection type: MURDOCK versus the generic type */
       if (yyjson_ptr_get_str (ehiterval, "/Type", &header_string) &&
-          strncasecmp (header_string, "MURDOCK", 7) == 0)
+          lmp_strncasecmp (header_string, "MURDOCK", 7) == 0)
       {
         blockette_type = 201;
         blockette_length = 60;
@@ -1390,7 +1634,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         blockette_length = 52;
       }
 
-      if ((recbuflen - written) < blockette_length)
+      if (written > UINT16_MAX || (uint64_t)written + blockette_length > recbuflen)
       {
         ms_log (2, "%s: Record length not large enough for B%u\n", msr->sid, blockette_type);
         yyjson_doc_free (ehdoc);
@@ -1418,7 +1662,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
       /* Determine which wave: DILATATION versus (assumed) COMPRESSION */
       if (yyjson_ptr_get_str (ehiterval, "/Wave", &header_string))
       {
-        if (strncasecmp (header_string, "DILATATION", 10) == 0)
+        if (lmp_strncasecmp (header_string, "DILATATION", 10) == 0)
           *pMS2B200_FLAGS (record + written) |= 0x01;
       }
       else if (blockette_type == 200)
@@ -1427,7 +1671,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
       }
 
       if (blockette_type == 200 && yyjson_ptr_get_str (ehiterval, "/Units", &header_string) &&
-          strncasecmp (header_string, "COUNT", 5) != 0)
+          lmp_strncasecmp (header_string, "COUNT", 5) != 0)
         *pMS2B200_FLAGS (record + written) |= 0x02;
 
       if (yyjson_ptr_get_str (ehiterval, "/OnsetTime", &header_string))
@@ -1457,7 +1701,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         {
           yyjson_arr_iter_init (ehsubarr, &ehsubiter);
 
-          while ((ehsubiterval = yyjson_arr_iter_next (&ehsubiter)))
+          while ((ehsubiterval = yyjson_arr_iter_next (&ehsubiter)) && idx < 6)
           {
             if (!yyjson_is_num (ehsubiterval))
               continue;
@@ -1467,11 +1711,11 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         }
 
         if (yyjson_ptr_get_uint (ehiterval, "/MEDLookback", &header_uint) &&
-            header_uint < UINT8_MAX)
+            header_uint <= UINT8_MAX)
           *pMS2B201_LOOPBACK (record + written) = (uint8_t)header_uint;
 
         if (yyjson_ptr_get_uint (ehiterval, "/MEDPickAlgorithm", &header_uint) &&
-            header_uint < UINT8_MAX)
+            header_uint <= UINT8_MAX)
           *pMS2B201_PICKALGORITHM (record + written) = (uint8_t)header_uint;
 
         if (yyjson_ptr_get_str (ehiterval, "/Detector", &header_string))
@@ -1493,32 +1737,38 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
       if (!yyjson_is_obj (ehiterval))
         continue;
 
-      /* Determine which calibration type: STEP, SINE, PSEUDORANDOM, GENERIC */
+      /* Determine which calibration type: STEP, SINE, PSEUDORANDOM, GENERIC, ABORT */
       blockette_type = 0;
       blockette_length = 0;
       if (yyjson_ptr_get_str (ehiterval, "/Type", &header_string))
       {
-        if (strncasecmp (header_string, "STEP", 4) == 0)
+        if (lmp_strncasecmp (header_string, "STEP", 4) == 0)
         {
           blockette_type = 300;
           blockette_length = 60;
         }
-        else if (strncasecmp (header_string, "SINE", 4) == 0)
+        else if (lmp_strncasecmp (header_string, "SINE", 4) == 0)
         {
           blockette_type = 310;
           blockette_length = 60;
         }
-        else if (strncasecmp (header_string, "PSEUDORANDOM", 12) == 0)
+        else if (lmp_strncasecmp (header_string, "PSEUDORANDOM", 12) == 0)
         {
           blockette_type = 320;
           blockette_length = 64;
         }
-        else if (strncasecmp (header_string, "GENERIC", 7) == 0)
+        else if (lmp_strncasecmp (header_string, "GENERIC", 7) == 0)
         {
           blockette_type = 390;
           blockette_length = 28;
         }
+        else if (lmp_strncasecmp (header_string, "ABORT", 5) == 0)
+        {
+          blockette_type = 395;
+          blockette_length = 16;
+        }
       }
+      /* A sequence with only an end time is a Blockette 395 alone */
       else if (yyjson_ptr_get (ehiterval, "/EndTime"))
       {
         blockette_type = 395;
@@ -1532,7 +1782,16 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         return -1;
       }
 
-      if ((recbuflen - written) < blockette_length)
+      /* An end time is the only content of a B395 */
+      if (blockette_type == 395 && !yyjson_ptr_get_str (ehiterval, "/EndTime", &header_string))
+      {
+        ms_log (2, "%s: Missing or non-string /FDSN/Calibration/Sequence/EndTime for B395\n",
+                msr->sid);
+        yyjson_doc_free (ehdoc);
+        return -1;
+      }
+
+      if (written > UINT16_MAX || (uint64_t)written + blockette_length > recbuflen)
       {
         ms_log (2, "%s: Record length not large enough for B%u\n", msr->sid, blockette_type);
         yyjson_doc_free (ehdoc);
@@ -1577,7 +1836,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
             *pMS2B300_FLAGS (record + written) |= 0x02;
 
           if (yyjson_ptr_get_str (ehiterval, "/Trigger", &header_string) &&
-              strncasecmp (header_string, "AUTOMATIC", 9) == 0)
+              lmp_strncasecmp (header_string, "AUTOMATIC", 9) == 0)
             *pMS2B300_FLAGS (record + written) |= 0x04;
 
           if (yyjson_ptr_get_bool (ehiterval, "/Continued", &header_boolean) && header_boolean)
@@ -1610,7 +1869,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         else if (blockette_type == 310)
         {
           if (yyjson_ptr_get_str (ehiterval, "/Trigger", &header_string) &&
-              strncasecmp (header_string, "AUTOMATIC", 9) == 0)
+              lmp_strncasecmp (header_string, "AUTOMATIC", 9) == 0)
             *pMS2B310_FLAGS (record + written) |= 0x04;
 
           if (yyjson_ptr_get_bool (ehiterval, "/Continued", &header_boolean) && header_boolean)
@@ -1618,11 +1877,11 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
 
           if (yyjson_ptr_get_str (ehiterval, "/AmplitudeRange", &header_string))
           {
-            if (strncasecmp (header_string, "PEAKTOPEAK", 10) == 0)
+            if (lmp_strncasecmp (header_string, "PEAKTOPEAK", 10) == 0)
               *pMS2B310_FLAGS (record + written) |= 0x10;
-            if (strncasecmp (header_string, "ZEROTOPEAK", 10) == 0)
+            if (lmp_strncasecmp (header_string, "ZEROTOPEAK", 10) == 0)
               *pMS2B310_FLAGS (record + written) |= 0x20;
-            if (strncasecmp (header_string, "RMS", 3) == 0)
+            if (lmp_strncasecmp (header_string, "RMS", 3) == 0)
               *pMS2B310_FLAGS (record + written) |= 0x40;
           }
 
@@ -1652,14 +1911,14 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         else if (blockette_type == 320)
         {
           if (yyjson_ptr_get_str (ehiterval, "/Trigger", &header_string) &&
-              strncasecmp (header_string, "AUTOMATIC", 9) == 0)
+              lmp_strncasecmp (header_string, "AUTOMATIC", 9) == 0)
             *pMS2B320_FLAGS (record + written) |= 0x04;
 
           if (yyjson_ptr_get_bool (ehiterval, "/Continued", &header_boolean) && header_boolean)
             *pMS2B320_FLAGS (record + written) |= 0x08;
 
           if (yyjson_ptr_get_str (ehiterval, "/AmplitudeRange", &header_string) &&
-              strncasecmp (header_string, "RANDOM", 6) == 0)
+              lmp_strncasecmp (header_string, "RANDOM", 6) == 0)
             *pMS2B320_FLAGS (record + written) |= 0x10;
 
           if (yyjson_ptr_get_num (ehiterval, "/Duration", &header_number))
@@ -1688,7 +1947,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         else if (blockette_type == 390)
         {
           if (yyjson_ptr_get_str (ehiterval, "/Trigger", &header_string) &&
-              strncasecmp (header_string, "AUTOMATIC", 9) == 0)
+              lmp_strncasecmp (header_string, "AUTOMATIC", 9) == 0)
             *pMS2B390_FLAGS (record + written) |= 0x04;
 
           if (yyjson_ptr_get_bool (ehiterval, "/Continued", &header_boolean) && header_boolean)
@@ -1714,7 +1973,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         blockette_type = 395;
         blockette_length = 16;
 
-        if ((recbuflen - written) < blockette_length)
+        if (written > UINT16_MAX || (uint64_t)written + blockette_length > recbuflen)
         {
           ms_log (2, "%s: Record length not large enough for B%u\n", msr->sid, blockette_type);
           yyjson_doc_free (ehdoc);
@@ -1740,7 +1999,7 @@ msr3_pack_header2_offsets (const MS3Record *msr, char *record, uint32_t recbufle
         written += blockette_length;
       }
     }
-  } /* End if /FDSN/Event/Detection */
+  } /* End if /FDSN/Calibration/Sequence */
 
   if (ehdoc)
   {
@@ -2101,13 +2360,22 @@ ms_reduce_rate (double samprate, int16_t *factor1, int16_t *factor2)
 {
   int num;
   int den;
-  int32_t intsamprate = (int32_t)(samprate + 0.5);
+  int32_t intsamprate;
 
   int32_t searchfactor1;
   int32_t searchfactor2;
   int32_t closestfactor;
   int32_t closestdiff;
   int32_t diff;
+
+  /* Reject a rate that cannot be represented before converting to an integer,
+   * where an out-of-range value would be undefined.  The maximum representable
+   * nominal rate is 32767 * 32767, higher rates are rejected below in any case.
+   * Written as a positive range test so NaN, which compares false, is rejected. */
+  if (!(samprate > 0.0 && samprate <= (double)(32767 * 32767)))
+    return -1;
+
+  intsamprate = (int32_t)(samprate + 0.5);
 
   /* Handle case of integer sample values. */
   if (fabs (samprate - intsamprate) < 0.0000001)
@@ -2276,12 +2544,14 @@ ms_timestr2btime (const char *timestr, uint8_t *btime, int8_t *usec_offset, cons
   if ((nstime = ms_timestr2nstime (timestr)) == NSTERROR)
     return NSTERROR;
 
-  if (ms_nstime2time (nstime, &year, &day, &hour, &min, &sec, NULL))
-    return NSTERROR;
-
   second_nstime = nstime2fsec_usec_offset (nstime, &fsec, &l_usec_offset);
 
   if (second_nstime == NSTERROR)
+    return NSTERROR;
+
+  /* Break down the (possibly carried) second-resolution time so Y/D/H/M/S stay
+   * consistent with fsec/usec_offset when rounding carries into the next second */
+  if (ms_nstime2time (second_nstime, &year, &day, &hour, &min, &sec, NULL))
     return NSTERROR;
 
   *((uint16_t *)(btime)) = HO2u (year, swapflag);

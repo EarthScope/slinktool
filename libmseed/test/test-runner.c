@@ -8,9 +8,7 @@
 #include <libmseed.h>
 #include <tau/tau.h>
 
-
-TAU_MAIN() // sets up Tau
-
+TAU_MAIN () // sets up Tau
 
 /* Function to compare contents of two files.
  *********************************************************************/
@@ -52,7 +50,8 @@ cmpfiles (char *fileA, char *fileB)
   }
   else if (statA.st_size > MAX_FILE_COMPARE_BYTES) /* Refuse to compare large files */
   {
-    fprintf (stderr, "%s() Files are too large to compare, max %d bytes\n", __func__, MAX_FILE_COMPARE_BYTES);
+    fprintf (stderr, "%s() Files are too large to compare, max %d bytes\n", __func__,
+             MAX_FILE_COMPARE_BYTES);
   }
   else if ((bufferA = (uint8_t *)malloc (statA.st_size)) == NULL) /* Allocate file A buffer */
   {
@@ -64,11 +63,13 @@ cmpfiles (char *fileA, char *fileB)
   }
   else if (fread (bufferA, statA.st_size, 1, fhA) != 1) /* Read file A into buffer */
   {
-    fprintf (stderr, "%s() Error reading (%lld bytes) file: %s\n", __func__, (long long int) statA.st_size, fileA);
+    fprintf (stderr, "%s() Error reading (%lld bytes) file: %s\n", __func__,
+             (long long int)statA.st_size, fileA);
   }
   else if (fread (bufferB, statA.st_size, 1, fhB) != 1) /* Read file B into buffer */
   {
-    fprintf (stderr, "%s() Error reading (%lld bytes) file: %s\n", __func__, (long long int) statB.st_size, fileB);
+    fprintf (stderr, "%s() Error reading (%lld bytes) file: %s\n", __func__,
+             (long long int)statB.st_size, fileB);
   }
   else /* Compare file contents */
   {
@@ -136,6 +137,7 @@ cmpdoubles (double *arrayA, double *arrayB, size_t length)
   {
     if (arrayA[idx] != arrayB[idx])
     {
+      printf ("arrayA[%zu] = %f, arrayB[%zu] = %f\n", idx, arrayA[idx], idx, arrayB[idx]);
       return 1;
     }
   }

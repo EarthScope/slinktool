@@ -80,7 +80,7 @@ main (int argc, char **argv)
     if (printdata && msr->numsamples > 0)
     {
       int line, col, cnt, samplesize;
-      int lines = (msr->numsamples / 6) + 1;
+      int lines = (int)((msr->numsamples / 6) + 1);
       void *sptr;
 
       if ((samplesize = ms_samplesize (msr->sampletype)) == 0)
@@ -156,11 +156,11 @@ parameter_proc (int argcount, char **argvec)
     }
     else if (strncmp (argvec[optind], "-v", 2) == 0)
     {
-      verbose += strspn (&argvec[optind][1], "v");
+      verbose += (int8_t)strspn (&argvec[optind][1], "v");
     }
     else if (strncmp (argvec[optind], "-p", 2) == 0)
     {
-      ppackets += strspn (&argvec[optind][1], "p");
+      ppackets += (int8_t)strspn (&argvec[optind][1], "p");
     }
     else if (strncmp (argvec[optind], "-d", 2) == 0)
     {

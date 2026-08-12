@@ -16,9 +16,12 @@ doc/gh-pages/
 test/testdata-*
 Testing
 
-TODO
-TODO.txt
-
-# CMake directories 
+# CMake directories
 build
 install
+
+.vscode/
+
+TODO
+TODO.txt
+CLAUDE.md

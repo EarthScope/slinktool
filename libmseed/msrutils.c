@@ -43,7 +43,7 @@
 MS3Record *
 msr3_init (MS3Record *msr)
 {
-  MS3Record msr_initialized = MS3Record_INITIALIZER;
+  static const MS3Record msr_initialized = MS3Record_INITIALIZER;
   void *datasamples = NULL;
   size_t datasize = 0;
 
@@ -102,20 +102,22 @@ msr3_free (MS3Record **ppmsr)
 /** ************************************************************************
  * @brief Duplicate a ::MS3Record
  *
- * Extra headers are duplicated as well.
- *
  * If the @p datadup flag is true (non-zero) and the source
  * ::MS3Record has associated data samples copy them as well.
  *
+ * If the @p extradup flag is true (non-zero) and the source ::MS3Record has
+ * associated extra headers, copy them as well.
+ *
  * @param[in] msr ::MS3Record to duplicate
  * @param[in] datadup Flag to control duplication of data samples
+ * @param[in] extradup Flag to control duplication of extra headers
  *
  * @returns Pointer to a new ::MS3Record on success and NULL on error
  *
  * @ref MessageOnError - this function logs a message on error
  ***************************************************************************/
 MS3Record *
-msr3_duplicate (const MS3Record *msr, int8_t datadup)
+msr3_duplicate_extra (const MS3Record *msr, int8_t datadup, int8_t extradup)
 {
   MS3Record *dupmsr = NULL;
 
@@ -140,9 +142,9 @@ msr3_duplicate (const MS3Record *msr, int8_t datadup)
   dupmsr->numsamples = 0;
 
   /* Copy extra headers */
-  if (msr->extralength > 0 && msr->extra)
+  if (extradup && msr->extralength > 0 && msr->extra)
   {
-    /* Allocate memory for new FSDH structure */
+    /* Allocate memory for new extra headers */
     if ((dupmsr->extra = (char *)libmseed_memory.malloc (msr->extralength + 1)) == NULL)
     {
       ms_log (2, "Error allocating memory\n");
@@ -178,6 +180,27 @@ msr3_duplicate (const MS3Record *msr, int8_t datadup)
   }
 
   return dupmsr;
+} /* End of msr3_duplicate_extra() */
+
+/** ************************************************************************
+ * @brief Duplicate a ::MS3Record
+ *
+ * Extra headers are duplicated as well.
+ *
+ * If the @p datadup flag is true (non-zero) and the source
+ * ::MS3Record has associated data samples copy them as well.
+ *
+ * @param[in] msr ::MS3Record to duplicate
+ * @param[in] datadup Flag to control duplication of data samples
+ *
+ * @returns Pointer to a new ::MS3Record on success and NULL on error
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+MS3Record *
+msr3_duplicate (const MS3Record *msr, int8_t datadup)
+{
+  return msr3_duplicate_extra (msr, datadup, 1);
 } /* End of msr3_duplicate() */
 
 /** ************************************************************************
@@ -317,14 +340,15 @@ msr3_resize_buffer (MS3Record *msr)
 
     if (msr->datasize > datasize)
     {
-      msr->datasamples = libmseed_memory.realloc (msr->datasamples, datasize);
+      void *resized = libmseed_memory.realloc (msr->datasamples, datasize);
 
-      if (msr->datasamples == NULL)
+      if (resized == NULL)
       {
         ms_log (2, "%s: Cannot (re)allocate memory\n", msr->sid);
         return MS_GENERROR;
       }
 
+      msr->datasamples = resized;
       msr->datasize = datasize;
     }
   }

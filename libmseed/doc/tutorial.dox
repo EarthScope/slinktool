@@ -36,7 +36,7 @@ int main ()
 {
   char *filename = "datafile.mseed";
   MS3Record *msr = NULL;
-  uint32_t flags = MSF_SKIPNOTDATA & MSF_UNPACKDATA;
+  uint32_t flags = MSF_SKIPNOTDATA | MSF_UNPACKDATA;
   int verbose    = 0;
   int retcode;
 
@@ -68,7 +68,7 @@ data-selections to efficiently return only selected data.
 @subsubsection reading-tracelists Reading miniSEED from files into traces lists
 
 Another option is to read all miniSEED into a @ref trace-list without
-any handling of records.  This is done with ms3_readtraces(), which is
+any handling of records.  This is done with ms3_readtracelist(), which is
 very useful for quickly reading data for processing.  The data are
 returned in ordered, continuous segments ready for processing.
 
@@ -83,7 +83,7 @@ int main ()
   char *filename2    = "datafile2.mseed";
   MS3TraceList *mstl = NULL;
   MS3Tolerance tol   = MS3Tolerance_INITIALIZER;
-  uint32_t flags     = MSF_SKIPNOTDATA & MSF_UNPACKDATA;
+  uint32_t flags     = MSF_SKIPNOTDATA | MSF_UNPACKDATA;
   int verbose        = 0;
   int retcode;
 
@@ -99,7 +99,7 @@ int main ()
 
   if (!mstl)
   {
-    fprintf (stderr, "Error reading file\\n");
+    fprintf (stderr, "Error reading file\n");
     return -1;
   }
 
@@ -166,7 +166,7 @@ int main()
   msr = msr3_init (NULL);
 
   /* Populate MS3Record values */
-  strcpy (msr->sid, "FDSN:XX_TEXT__B_H_E");
+  strcpy (msr->sid, "FDSN:XX_TEST__B_H_E");
   msr->reclen = 512;
   msr->pubversion = 1;
   msr->starttime = ms_timestr2nstime ("2018-12-01T00:00:00.000000000");
@@ -186,12 +186,14 @@ int main()
   msr->datasamples = NULL;
 
   msr3_free (&msr);
+
+  return 0;
 }
 @endcode
 
 @subsubsection creating-records Creating miniSEED records
 
 Records can be generated from data in either MS3Record or MS3TraceList
-containers using, respectively, msr3_pack() or and mstl3_pack().
+containers using, respectively, msr3_pack() and mstl3_pack().
 
 */

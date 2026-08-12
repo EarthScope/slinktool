@@ -3,7 +3,7 @@
  *
  * This file is part of the miniSEED Library.
  *
- * Copyright (c) 2024 Chad Trabant, EarthScope Data Services
+ * Copyright (c) 2026 Chad Trabant, EarthScope Data Services
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,9 @@ struct MS3RecordPacker
   int8_t verbose;              /* Logging level */
 
   char *rawrec;                /* Allocated record buffer */
+  uint32_t rawrec_size;        /* Allocated size of rawrec, may exceed maxreclen */
   char *encoded;               /* Encoded data buffer */
+  uint32_t encoded_size;       /* Allocated size of encoded, may exceed maxdatabytes */
   uint32_t maxreclen;          /* Max record length */
   int64_t packed_samples;      /* Total samples packed so far */
   uint32_t recordcount;        /* Records generated so far */
@@ -65,13 +67,78 @@ struct MS3TraceListPacker
 
   MS3TraceID *current_id;      /* Current trace ID */
   MS3TraceSeg *current_seg;    /* Current segment */
-  MS3RecordPacker *seg_packing_state; /* Current segment packing state */
+  MS3TraceID *last_id;         /* Trace ID of last completed segment (MSF_MAINTAINMSTL) */
+  MS3TraceSeg *last_seg;       /* Last completed segment (MSF_MAINTAINMSTL) */
+  MS3RecordPacker *seg_packing_state; /* Current segment packing state, NULL when idle */
+  MS3RecordPacker seg_packer;  /* Storage for seg_packing_state, reused across segments */
   MS3Record msr_template;      /* Template MS3Record for current segment */
   int64_t segpackedsamples;    /* Samples packed from current segment */
   int64_t totalpackedsamples;  /* Total samples packed */
   int64_t totalpackedrecords;  /* Total records packed */
-  uint8_t finished;            /* Packing complete flag */
+
+  char resume_sid[LM_SIDLEN];  /* SID of last completed segment, scan resumes at or after it */
+  uint8_t resume_pubversion;   /* Publication version of resume_sid, used as a tie-breaker */
+  int8_t resume_valid;         /* Set once resume_sid/resume_pubversion hold a usable hint */
 };
+
+/* Test whether a record with the given geometry cannot hold numsamples,
+ * without allocating or writing anything; always returns 0 (not
+ * determined) for miniSEED 2, whose data offset depends on the blockette
+ * layout built by msr3_pack_header2_offsets() */
+extern int lm_pack_short_of_record (int8_t formatversion, uint32_t maxreclen, size_t sidlength,
+                                    uint16_t extralength, uint8_t encoding, uint8_t samplesize,
+                                    int64_t numsamples);
+
+/* Start (or restart) a packing session in a caller-allocated ::MS3RecordPacker,
+ * reusing its rawrec/encoded buffers when already large enough; returns 0 on
+ * success and -1 on error */
+extern int lm_pack_state_init (MS3RecordPacker *packer, const MS3Record *msr, uint32_t flags,
+                               int8_t verbose);
+
+/* Report the total samples packed by a session and end it, retaining the
+ * packer's buffers for reuse by a later lm_pack_state_init() */
+extern void lm_pack_state_finish (MS3RecordPacker *packer, int64_t *packedsamples);
+
+/* Release a packer's rawrec/encoded buffers */
+extern void lm_pack_state_free (MS3RecordPacker *packer);
+
+/* Number of most-recently-active segments tracked per MS3TraceID, used to
+ * bound the segment-list search in _mstl3_addmsr_impl() */
+#define LM_RECENTSEGS 4
+
+/* Maximum hops walked when resolving list order among recent segments or
+ * falling back to a direct list walk, beyond which the fast path is
+ * refused in favor of a full scan */
+#define LM_RECENTSEGS_MAXWALK 8
+
+/* Private extension of MS3TraceList (opaque in public header).
+ *
+ * The public struct is the first member so public pointers, sizeof, and
+ * field offsets are unaffected by the extension. */
+typedef struct
+{
+  MS3TraceList mstl;
+  int8_t foreignid; /* Set if an MS3TraceID not allocated by this library may be present */
+} LMTraceListNode;
+
+/* Private extension of MS3TraceID (opaque in public header).
+ *
+ * Tracks the most-recently-active segments of a trace ID (the "recent set")
+ * and nonrecentendbound, an upper bound on the end time of every segment
+ * NOT in the recent set.  The bound may overestimate, which only costs
+ * search performance, but must never underestimate, which would cause a
+ * match to be missed.  It starts at INT64_MIN and only ever rises, folding
+ * in the end time of segments as they are evicted from the recent set or
+ * removed from the trace list.
+ *
+ * The public struct is the first member so public pointers, sizeof, and
+ * field offsets are unaffected by the extension. */
+typedef struct
+{
+  MS3TraceID id;
+  MS3TraceSeg *recentseg[LM_RECENTSEGS];
+  nstime_t nonrecentendbound;
+} LMTraceIDNode;
 
 #ifdef __cplusplus
 }

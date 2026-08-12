@@ -1,3 +1,312 @@
+2026.217: v3.5.4
+  - Trace list packing optimization and improvement:
+    * Reuse the record packer and its buffers across trace-list segments.
+    * Skip speculative allocation when not enough samples for a v3 record.
+    * Resume the trace-list pack scan where it left off.
+    * Reduce system time calls.
+  - Resolve year and month in ms_gmtime64_r() with closed-form arithmetic.
+  - Return MS_ENDOFFILE instead of MS_NOTSEED when selections skip every record
+    in a stream.
+
+2026.211: v3.5.3
+  - Optimize segment searches by tracking recently-active segments per trace ID,
+    a significant improvement for creating trace lists from near time ordered
+    input data.
+  - End the segment search early once a segment starts beyond the record
+    end plus tolerance, as no later segment can match in the sorted list.
+  - Search backward from the last segment for zero sample rate records,
+    which can only match a following segment, avoiding a full list scan.
+  - Avoid FP division in sample rate comparisons: short-circuit identical
+    rates and use a multiplicative form of MS_ISRATETOLERABLE().
+
+2026.208: v3.5.2
+  - Add MSF_RECORDLIST_NOEXTRAS to skip copying extra headers into
+    MS3RecordList entries when building a record list.
+  - Reject a blockette offset within the fixed header as fatal.
+  - Break ms_parse_raw2() blockette walk on unknown length, treat a
+    self-referential next offset as fatal, add Blockette 405 length.
+  - Reject sample count that would overflow size_t when converting to
+    doubles in mstl3_convertsamples(), avoiding undersized malloc on 32-bit.
+  - Reject size_t overflow in libmseed_memory_prealloc() growth loop,
+    avoiding an infinite hang on huge allocation requests.
+  - Free duplicated MS3Record when record-list entry allocation fails.
+  - Reject out-of-range leap-second epochs in ms_readleapsecondfile().
+
+  2026.206: v3.5.1
+  - Set MS3RecordPtr.msr->record to NULL when the raw record is not available,
+    instead of leaving it dangling to a source buffer that may be freed or
+    reused.
+  - Accept a /FDSN/Calibration/Sequence/Type of ABORT when packing miniSEED v2,
+    so a Blockette 395 read from a v2 record can be written back out.
+  - Reject a /FDSN/Calibration/Sequence with a missing or non-string /EndTime
+    when a Blockette 395 is the only representation, instead of silently
+    writing no blockette.
+  - Add msr3_duplicate_extra() to allow independent control of extra header
+    duplication, with msr3_duplicate() now a thin wrapper that preserves its
+    original always-copy behavior.
+  - Export ms3_msfp_init(), msr3_duplicate_extra(), ms_rlog_pop() and
+    libmseed_memory_prealloc() in libmseed.def, so they are available from
+    Windows DLL builds as they already are elsewhere.
+
+2026.205: v3.5.0
+  Important fixes and changes:
+  - Fix v2 miniSEED time encoding to use the carried second when 100 µs rounding
+    rolls over, so continuation records and BTIME-encoded blockette times are no
+    longer written one second early.
+  - Fix cumulative start-time rounding drift when repeatedly packing partial
+    trace segments by projecting new start times using the apparent rate
+    implied by segment start and end times.
+  - Add Blockette 1001 to v2 records whenever the sample period is not an
+    integer number of 100 µs units.
+  - Write Blockette 100 sample rate as Hz via msr3_sampratehz() instead of raw
+    msr->samprate, so period-notation rates are not stored as negative Hz.
+  - Fix msr3_repack_mseed2() fit check to use the original record length
+    instead of the destination buffer length, avoiding silent truncation of
+    encoded data when the destination buffer is larger than the record.
+  - Fix out-of-bounds write in msr3_repack_mseed2() by checking the destination
+    buffer size before zero-filling padding ahead of Steim-encoded data.
+  - Fix invalid free of a caller-owned extra-headers buffer when packing
+    multiple trace list segments with mstl3_pack_next().
+  - Fix mstl3_pack_next() silently dropping the sample remainder of a
+    MSF_MAINTAINMSTL segment that could not fill a full record; each
+    segment is now packed completely (MSF_FLUSHDATA implied) the first
+    time it is visited, since the trace list is not trimmed and a partial
+    record cannot be completed on a later call.
+  - A field was added to the LMIO struct, ABI-compatible, documented as internal.
+
+  Minor fixes, hardening, cleanup:
+
+  Reading and I/O:
+  - Fix possible infinite loop in msio_fread() by clearing the curl pause flag
+    before unpausing, since curl_easy_pause() may synchronously invoke the
+    write callback and re-pause before the flag is cleared.
+  - Fix msio_fopen() to reset CURLOPT_HEADERFUNCTION along with CURLOPT_HEADERDATA
+    after reading response headers, so a later header callback invoked for HTTP
+    trailers cannot abort the transfer or dereference a stale pointer.
+  - Add connection and stall timeouts for URL transfers, configurable with
+    ms3_url_timeout() or the LIBMSEED_URL_TIMEOUT environment variable, so a
+    server that stops responding mid-transfer no longer hangs indefinitely.
+  - Detect failed URL transfers instead of reporting them as end-of-file.
+  - Fail when an HTTP server ignores a requested byte Range and returns the
+    full body, instead of silently relabeling the start offset and returning
+    records outside the requested range.
+  - Enforce the end offset of a byte range on local file reads so a record
+    extending past the end offset is reported as truncated (MS_ENDOFFILE),
+    matching the existing behavior for URL byte-range reads.
+  - Reject byte range values above INT64_MAX in path name suffixes and HTTP
+    Content-Range headers, and reject a negative start or end offset when
+    opening a stream, instead of silently wrapping to a negative offset.
+  - Reject a path or URL longer than the internal buffer in ms3_readmsr()
+    instead of silently truncating it and opening the wrong resource.
+
+  Record parsing and decoding:
+  - Fix out-of-bounds reads on truncated Blockette 2000 in ms_parse_raw2().
+  - Fix one-byte stack overflow when decoding the Blockette 500 timing
+    exception type and clock status, and serialize them by bounded length
+    so full-width values are neither truncated nor concatenated.
+  - Fix msr3_resize_buffer() and msr3_unpack_data() to use a temporary pointer
+    for realloc(), avoiding a leak of the original data buffer and a NULL
+    datasamples pointer left with a non-zero sample count on allocation
+    failure.
+  - Fix msr3_data_bounds() Steim trailing-empty-frame scan to inspect the
+    payload's actual final frame instead of bytes offset by the header size.
+  - Fix Blockette 500 microsecond precision from being added to an unset or
+    invalid decoded time, which fabricated a timing-exception time. Also stop
+    invalid blockette times from being written to extra headers as the
+    literal string "ERROR".
+  - Fix GEOSCOPE 24-bit decoding to assemble the 3-byte sample using the
+    record's actual byte order instead of a host-order union read-back, which
+    corrupted amplitudes for little-endian-declared GEOSCOPE24 payloads.
+    This is only for completeness, such data may not exist.
+  - Reject v2 records with an unset (year 0) start time instead of applying
+    time corrections to the sentinel and producing a fabricated ~1901 time.
+  - Reject miniSEED v3 records with a non-finite fixed-header sample rate,
+    and ignore an invalid Blockette 100 sample rate instead of applying it.
+  - Fix leak of the extra-headers JSON parse state on error returns from the
+    v2 blockette loop in msr3_unpack_mseed2(), and avoid orphaning the first
+    allocation when a record contains two Blockette 1001s.
+
+  Trace lists:
+  - Fix NULL dereference in mstl3_free() when the trace list pointer is NULL.
+  - Reject a decoded sample buffer size that overflows size_t in
+    mstl3_unpack_recordlist(), avoiding a heap overflow on 32-bit hosts
+    when a segment holds close to 4 GiB of samples.
+  - Fix mstl3_addmsr() to honor a sample rate tolerance callback returning 0.0
+    as an exact match instead of falling back to the default tolerance, and warn
+    and use the default when a time or sample rate tolerance callback returns a
+    negative value.
+  - Update MS3TraceID.earliest/latest after packing consumes or removes trace
+    segment data so they no longer report stale extents.
+  - Reject unrecognized target sample types in mstl3_convertsamples() instead of
+    returning success with the data left unconverted.
+  - Fix mstl3_convertsamples() silently converting NaN and out-of-range float
+    and double samples to garbage integer values, and leaving the samples
+    partially converted when a value is rejected.
+
+  Packing and writing:
+  - Fix mstl3_pack_next() to re-sync its segment data pointer before packing,
+    avoiding a stale pointer when mstl3_addmsr() reallocates the buffer
+    between calls, and reject a segment prepend during active packing.
+  - Reject a non-positive record length in msr3_repack_mseed2(), avoiding a
+    large out-of-bounds write when repacking a record with an unset reclen.
+  - Fix data-offset overflow in msr3_repack_mseed2() that could hang on
+    Steim-encoded input or corrupt non-Steim output when an oversized header
+    pushed the data offset past 65535.
+  - Prevent overflow on sample-count when writing miniSEED v2.
+  - Fix mstl3_writemseed() to detect output write, flush, and close
+    failures and return -1 instead of reporting a false success count
+    on a full or read-only filesystem.
+  - Fix negative /FDSN/Time/Correction values rounding toward zero instead of
+    to the nearest 100 µs unit when written to miniSEED v2.
+  - Fix mstl3_pack_free() to include samples from an active segment packing
+    session in the returned packed sample count instead of discarding them,
+    and to not under-report packed samples when mstl3_pack_next() aborts
+    because the actively-packed segment was merged or removed.
+  - Reject an unset or error start time in msr3_pack_init() instead of
+    silently packing v2/v3 records dated 1902-001T00:00:00.
+  - Warn when packing miniSEED 2 with a start year outside 1900-2100.
+  - Reject a sample rate beyond the representable miniSEED 2 nominal rate,
+    and NaN, before converting it to an integer when reducing the rate to a
+    factor and multiplier, instead of converting it out of range.
+
+  Extra headers:
+  - Fix mseh_set_ptr_r() to avoid deleting the existing header value at a JSON
+    Pointer and reporting success when a value allocation fails (e.g. OOM).
+  - Fix mseh_get_ptr_type() and mseh_get_ptr_r() to consult a supplied
+    parsestate before reporting "not found" on a record with no serialized
+    extra headers, so a set-then-get through the same parsestate works on a
+    fresh record.
+  - Fix mseh_get_ptr_r() returning a bit-reinterpreted negative value for type
+    'i' requests on extra header integers that are unsigned and out of range
+    for int64_t, instead of the wrong-type indicator.
+  - Limit extra-header float precision per-value instead of document-wide, so
+    large or pre-existing values are not lost or rejected.
+
+  Time handling:
+  - Fix ms_sampletime() to adjust for every leap second contained in a span
+    instead of only the first.
+  - Parse fractional seconds in time strings locale-independently so
+    period-decimal fractions are not silently dropped under comma-decimal
+    locales (LC_NUMERIC).
+  - Fix sign loss for negative sub-second epoch times (e.g. -0.5) when printing
+    and parsing UNIXEPOCH/NANOSECONDEPOCH time strings.
+  - Fix ms_mdtimestr2nstime() and ms_seedtimestr2nstime() to carry a fractional
+    second that rounds up to 1.0 into the next second instead of rejecting the
+    time string as invalid.
+  - Fix ms_nstime2timestr_n() detection of a truncated output buffer.
+  - Fix ms_sampletime() to reject a non-finite or out-of-range time span
+    instead of casting it to an nstime_t and returning a garbage time.
+  - Fix ms_sampletime() to reject a negative sample offset instead of
+    silently returning the input time unchanged.
+  - Reject epoch-time strings beyond the representable nstime range.
+  - Reject epoch-time strings whose fractional seconds overflow the nstime
+    range even though the integer seconds are in range.
+  - Fix FILE* leak on error paths in ms_readleapsecondfile().
+  - Fix ms_timestr2nstime() to include the input string, instead of an
+    empty string, in the epoch conversion error message.
+
+  Selections:
+  - Fix selection file parsing to reject invalid start/end times instead of
+    silently treating them as open-ended selections.
+  - Reject a "Network Station Location Channel" selection line with a date in
+    the Pubversion field instead of silently dropping it and misreading the
+    following Starttime/Endtime fields.
+  - Fix ms3_readselectionsfile() to reject a 4-field SourceID selection line
+    with a non-integer publication version instead of silently misparsing it
+    as a network/station/location/channel selection.
+  - Reject over-long lines in ms3_readselectionsfile() instead of silently
+    parsing the truncated tail as a new selection line.
+  - Reject selection time windows whose start is later than end in
+    ms3_addselect().
+  - Fix off-by-one in selection file reading that rejected a selection line of
+    the documented maximum length as too long.
+  - Fix ms3_readselectionsfile() to count only selections actually added,
+    instead of also counting skipped/unrecognized lines.
+  - Fix FILE* leak in ms3_readselectionsfile() on error returns from the
+    parse loop.
+
+  Documentation:
+  - Document that ISO month-day time strings conform to the RFC 3339 profile.
+
+  Build:
+  - Discover test and example programs with globbing in the CMake test suite,
+    matching the Makefile, so added programs are built without editing lists.
+
+2026.167: v3.4.1
+  - Improve correctness of internal glob matching routines.
+  - Fix inverted sample rate comparison with custom tolerance for trace lists.
+  - Fix selection matching for open-ended query time windows.
+  - Always return error from msr3_writemseed() on write or packing failure.
+  - Fix ms3_msfp_init() to seek the dup'd descriptor to startoffset and
+    set streampos accordingly.
+  - Avoid spurious read error when record buffer is full.
+  - Detect precision loss for negative samples in mstl3_convertsamples().
+  - Fix buffer overflow in B201 MEDSNR packing.
+  - Fix out-of-bounds access on long or failed log messages.
+  - Fix out-of-bounds read in v2 blockette chain traversal.
+  - Fix out-of-bounds write truncating long path with byte range suffix.
+  - Fix NULL dereference in msio_fopen() byte range handling.
+  - Use libmseed_memory.free for log registry entries.
+  - Fix data size truncation for large fixed-length-encoded records.
+  - Fix integer overflow computing v3 record length in ms3_detect().
+  - Fix out-of-bounds read in msr3_data_bounds() from unvalidated v2 data offset.
+  - Fix dangling stack pointer retained by libcurl header callback.
+  - Fix resource leaks on msio_fopen() error paths.
+  - Fix lookup for v2 Blockette lengths for uncommon blockettes for bounds checks.
+  - Validate input payload size against sample count in ms_decode_data().
+  - Propagate extra-header serialization failures in mseh_set_ptr_r().
+  - Fix size_t underflow in ms_sid2nslc_n() on zero-size buffers.
+  - Limit samples per record to 16-bit limit when packing miniSEED 2.
+  - Accept value 255 for B201 MEDLookback and MEDPickAlgorithm.
+  - Avoid undefined shift from Blockette 1000 record length exponent.
+  - Reject Blockette 1000 record length larger than supplied buffer.
+  - Guard NULL Xnp pointer in Steim byte-swap.
+  - Reject day-of-month 0 in VALIDMONTHDAY check.
+  - Fix memory leaks on error paths in extraheaders.c and tracelist.c.
+  - Pass unsigned char to ctype functions.
+  - Fix buffer overflow in msr3_repack_mseed3() from undersized buffer check.
+  - Limit indent in mseh_print() to avoid negative field width.
+  - Build: force "lib" prefix on Windows CMake library output for consistency.
+  - Fix tutorial example code, thanks to P. Schmidt for reporting.
+
+2026.094: v3.4.0
+  - Support writing header-only records and add tests for header-only records.
+
+2026.088: v3.3.0
+  - Add `ms3_msfp_init()` to initialized MS3FileParam with start/end offsets.
+  - Avoid closing I/O streams not opened by the library when reading or
+  writing miniSEED, specifically stdin and stdout or a provided descriptor.
+  - Update GitHub Actions dependencies for Node 24 changes.
+
+NOTE Behavior change: I/O streams provided by the caller, such as stdin
+and stdout, are no longer closed by the library.
+
+2026.024: v3.2.4
+  - Add ms_rlog_pop() to return messages from the error/warning log registry
+  - Fix return value from ms_rlog_emit()
+  - Fix tracking of message count in log registry.
+  - Add tests for logging facility.
+  - Add example/lm_extraheaders.c to demonstrate extra header functionality.
+
+2026.001: v3.2.3
+  - Add mseh_get_ptr_type() to determine type of an extra header.
+  - Add unsigned integer (uint64_t) support to `mseh_set_ptr_r()` and `mseh_get_ptr_r()`.
+
+2025.369: v3.2.2
+  - Allow mseh_set_ptr_r() to create extra headers when none exist for a merge patch
+  using the root pointer ("").  Pointers to non-root locations still must exist.
+
+2025.354: v3.2.1
+  - Rename ms3_mstl_init_fd() to ms3_msfp_init_fd() and add backward compatibility.
+  - Add -fPIC to the build options for the static library target.
+  - Update internal selection matching to support `!` in addition to `^` for
+  character class negation and handle edge cases more robustly.
+  - Avoid modifying record buffer during v3 CRC check and add CRC validation to testing.
+  - Add v3 parsing test for ensuring header-indicated lengths are sane.
+  - Small fixes of logic errors and increased portability.
+  - Add GitHub action to build and test on multiple platforms.
+  - Fix Windows symbol issues and CMake configuration.
+
 2025.315: v3.2.0
   - Add generator-style packing interfaces for MS3Record and MS3TraceList.
   Specifically msr3_pack_init(), msr_pack_next(), msr_pack_free() and

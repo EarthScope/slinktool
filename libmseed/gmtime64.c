@@ -3,6 +3,9 @@
  * gmtime_r() and was derived from the y2038 project:
  * https://github.com/evalEmpire/y2038/
  *
+ * It has been modified to use closed-form arithmetic (Howard Hinnant's
+ * era/day-of-era algorithm) instead of a linear search loop.
+ *
  * Original copyright and license are included.
  ***************************************************************************/
 
@@ -38,29 +41,10 @@ THE SOFTWARE.
 #include <stdlib.h>
 #include <time.h>
 
-static const char days_in_month[2][12] = {
-    {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-    {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-};
-
 static const short julian_days_by_month[2][12] = {
     {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334},
     {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335},
 };
-
-static const short length_of_year[2] = {365, 366};
-
-/* Some numbers relating to the gregorian cycle */
-static const int64_t years_in_gregorian_cycle = 400;
-#define days_in_gregorian_cycle ((365 * 400) + 100 - 4 + 1)
-
-/* Let's assume people are going to be looking for dates in the future.
-   Let's provide some cheats so you can skip ahead.
-   This has a 4x speed boost when near 2008.
-*/
-/* Number of days since epoch on Jan 1st, 2008 GMT */
-#define CHEAT_DAYS (1199145600 / 24 / 60 / 60)
-#define CHEAT_YEARS 108
 
 /* IS_LEAP is used all over the place to index on arrays, so make sure it always returns 0 or 1. */
 #define IS_LEAP(n) \
@@ -77,8 +61,7 @@ ms_gmtime64_r (const int64_t *in_time, struct tm *p)
   int leap;
   int64_t m;
   int64_t time;
-  int64_t year = 70;
-  int64_t cycles = 0;
+  int64_t year;
 
   if (!in_time || !p)
     return NULL;
@@ -100,71 +83,26 @@ ms_gmtime64_r (const int64_t *in_time, struct tm *p)
   v_tm_wday = (int)((v_tm_tday + 4) % 7);
   if (v_tm_wday < 0)
     v_tm_wday += 7;
-  m = v_tm_tday;
 
-  if (m >= CHEAT_DAYS)
-  {
-    year = CHEAT_YEARS;
-    m -= CHEAT_DAYS;
-  }
+  /* Days-to-civil conversion (Howard Hinnant's era/day-of-era algorithm,
+   * http://howardhinnant.github.io/date_algorithms.html): shift the epoch
+   * to 0000-03-01 so leap days fall at the end of the internal year, then
+   * resolve the 400-year Gregorian cycle and its century/4-year/1-year
+   * sub-cycles by division, and the month by one more division. Closed
+   * form, no loop, no static state. */
+  int64_t z = v_tm_tday + 719468;
+  int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+  int64_t doe = z - era * 146097;                                      /* [0, 146096] */
+  int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; /* [0, 399] */
+  int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);               /* [0, 365] */
+  int64_t mp = (5 * doy + 2) / 153;         /* [0, 11], month from March */
+  int64_t mon1 = mp + ((mp < 10) ? 3 : -9); /* [1, 12], month from January */
 
-  if (m >= 0)
-  {
-    /* Gregorian cycles, this is huge optimization for distant times */
-    cycles = m / (int64_t)days_in_gregorian_cycle;
-    if (cycles)
-    {
-      m -= cycles * (int64_t)days_in_gregorian_cycle;
-      year += cycles * years_in_gregorian_cycle;
-    }
+  m = doy - (153 * mp + 2) / 5; /* [0, 30], day of month, 0-based */
+  v_tm_mon = (int)(mon1 - 1);
+  year = yoe + era * 400 + ((mon1 <= 2) ? 1 : 0) - 1900;
 
-    /* Years */
-    leap = IS_LEAP (year);
-    while (m >= (int64_t)length_of_year[leap])
-    {
-      m -= (int64_t)length_of_year[leap];
-      year++;
-      leap = IS_LEAP (year);
-    }
-
-    /* Months */
-    v_tm_mon = 0;
-    while (m >= (int64_t)days_in_month[leap][v_tm_mon])
-    {
-      m -= (int64_t)days_in_month[leap][v_tm_mon];
-      v_tm_mon++;
-    }
-  }
-  else
-  {
-    year--;
-
-    /* Gregorian cycles */
-    cycles = (m / (int64_t)days_in_gregorian_cycle) + 1;
-    if (cycles)
-    {
-      m -= cycles * (int64_t)days_in_gregorian_cycle;
-      year += cycles * years_in_gregorian_cycle;
-    }
-
-    /* Years */
-    leap = IS_LEAP (year);
-    while (m < (int64_t)-length_of_year[leap])
-    {
-      m += (int64_t)length_of_year[leap];
-      year--;
-      leap = IS_LEAP (year);
-    }
-
-    /* Months */
-    v_tm_mon = 11;
-    while (m < (int64_t)-days_in_month[leap][v_tm_mon])
-    {
-      m += (int64_t)days_in_month[leap][v_tm_mon];
-      v_tm_mon--;
-    }
-    m += (int64_t)days_in_month[leap][v_tm_mon];
-  }
+  leap = IS_LEAP (year);
 
   p->tm_year = (int)year;
 

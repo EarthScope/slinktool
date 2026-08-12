@@ -65,7 +65,7 @@ main (int argc, char **argv)
   for (idx = 2; (int)idx < argc; idx++)
   {
     if (strncmp (argv[idx], "-v", 2) == 0)
-      verbose += strspn (&argv[idx][1], "v");
+      verbose += (int8_t)strspn (&argv[idx][1], "v");
     else if (strncmp (argv[idx], "-d", 2) == 0)
       printdata = 'd';
     else if (strncmp (argv[idx], "-D", 2) == 0)
@@ -139,7 +139,7 @@ main (int argc, char **argv)
       if (printdata && seg->recordlist && seg->recordlist->first)
       {
         /* Determine sample size and type based on encoding of first record */
-        ms_encoding_sizetype (seg->recordlist->first->msr->encoding, &samplesize, &sampletype);
+        ms_encoding_sizetype ((uint8_t)seg->recordlist->first->msr->encoding, &samplesize, &sampletype);
 
         /* Unpack data samples using record list.
          * No data buffer is supplied, so it will be allocated and assigned to the segment.

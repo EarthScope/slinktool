@@ -7,7 +7,7 @@
 
 @subsection faq-1 How do I read/write data from/to files?
 
-The short answer is to use ms3_readmsr(), ms3_readtracelist(), and ms3_writemsr().
+The short answer is to use ms3_readmsr(), ms3_readtracelist(), msr3_writemseed() and mstl3_writemseed().
 You can find descriptions and code examples in the @ref page-tutorial and @ref page-examples sections.
 
 @subsection faq-2 Can I read/write data from/to memory buffers?
@@ -26,7 +26,7 @@ The stream/file reading functions in the library will automatically detect URLs 
 and there is no need to do anything special to use this feature.
 
 Specifics of the URL support can be configured with @ref ms3_url_useragent(), @ref ms3_url_userpassword(),
-and @ref ms3_url_addheader().
+@ref ms3_url_addheader(), and @ref ms3_url_timeout().
 
 To disable TLS/SSL peer and host verification set the **LIBMSEED_SSL_NOVERIFY** environment variable.
 

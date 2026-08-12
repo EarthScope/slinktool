@@ -59,9 +59,16 @@ libmseed_memory_prealloc (void *ptr, size_t size, size_t *currentsize)
     return ptr;
 
   /* Calculate new size needed for request by adding blocks */
+  if (*currentsize > SIZE_MAX - libmseed_prealloc_block_size)
+    return NULL;
+
   newsize = *currentsize + libmseed_prealloc_block_size;
   while (newsize < size)
+  {
+    if (newsize > SIZE_MAX - libmseed_prealloc_block_size)
+      return NULL;
     newsize += libmseed_prealloc_block_size;
+  }
 
   newptr = libmseed_memory.realloc (ptr, newsize);
 
@@ -178,7 +185,7 @@ static const int monthdays_leap[] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30,
 
 /* Check that a day-of-month is in a valid range */
 #define VALIDMONTHDAY(year, month, mday) \
-  (mday >= 0 && mday <= (LEAPYEAR (year) ? monthdays_leap[month - 1] : monthdays[month - 1]))
+  (mday >= 1 && mday <= (LEAPYEAR (year) ? monthdays_leap[month - 1] : monthdays[month - 1]))
 
 /* Check that a day-of-year is in a valid range */
 #define VALIDYEARDAY(year, yday) (yday >= 1 && yday <= (365 + (LEAPYEAR (year) ? 1 : 0)))
@@ -289,7 +296,7 @@ ms_sid2nslc_n (const char *sid, char *net, size_t netsize, char *sta, size_t sta
       next = ptr + 1;
       *ptr = '\0';
 
-      if (net)
+      if (net && netsize > 0)
       {
         strncpy (net, top, netsize - 1);
         net[netsize - 1] = '\0';
@@ -303,9 +310,9 @@ ms_sid2nslc_n (const char *sid, char *net, size_t netsize, char *sta, size_t sta
       next = ptr + 1;
       *ptr = '\0';
 
-      if (sta)
+      if (sta && stasize > 0)
       {
-        strncpy (sta, top, stasize);
+        strncpy (sta, top, stasize - 1);
         sta[stasize - 1] = '\0';
       }
 
@@ -317,21 +324,21 @@ ms_sid2nslc_n (const char *sid, char *net, size_t netsize, char *sta, size_t sta
       next = ptr + 1;
       *ptr = '\0';
 
-      if (loc)
+      if (loc && locsize > 0)
       {
-        strncpy (loc, top, locsize);
+        strncpy (loc, top, locsize - 1);
         loc[locsize - 1] = '\0';
       }
 
       top = next;
     }
     /* Channel */
-    if (*top && chan)
+    if (*top && chan && chansize > 0)
     {
       /* Map extended channel to SEED channel if possible, otherwise direct copy */
-      if (ms_xchan2seedchan (chan, top))
+      if (chansize < 4 || ms_xchan2seedchan (chan, top))
       {
-        strncpy (chan, top, chansize);
+        strncpy (chan, top, chansize - 1);
         chan[chansize - 1] = '\0';
       }
     }
@@ -667,7 +674,7 @@ utf8length_int (const char *str, int maxlength)
   int length = 0;
   int offset;
 
-  for (offset = 0; str[offset] && offset < maxlength; offset++)
+  for (offset = 0; offset < maxlength && str[offset]; offset++)
   {
     type = utf8d[(uint8_t)str[offset]];
     state = utf8d[256 + state * 16 + type];
@@ -687,9 +694,9 @@ utf8length_int (const char *str, int maxlength)
  * dest while removing all spaces.  The result is left justified and
  * always null terminated.
  *
- * The destination string must have enough room needed for the
- * non-space characters within @p length and the null terminator, a
- * maximum of @p length + 1.
+ * The destination must be at least @p length + 1 bytes: the
+ * terminator is written after the copied, non-space characters, and
+ * in the worst case (no spaces removed) that is @p dest[length].
  *
  * @param[out] dest Destination for terminated string
  * @param[in] source Source string
@@ -741,9 +748,9 @@ ms_strncpclean (char *dest, const char *source, int length)
  * dest without any trailing spaces.  The result is left justified and
  * always null terminated.
  *
- * The destination string must have enough room needed for the
- * characters within @p length and the null terminator, a maximum of
- * @p length + 1.
+ * The destination must be at least @p length + 1 bytes: the
+ * terminator is always written at @p dest[length], regardless of how
+ * many trailing spaces are trimmed.
  *
  * @param[out] dest Destination for terminated string
  * @param[in] source Source string
@@ -1135,7 +1142,7 @@ ms_nstime2timestr_n (nstime_t nstime, char *timestr, size_t timestrsize, ms_time
       break;
     case UNIXEPOCH:
       expected = -1;
-      printed = snprintf (timestr, timestrsize, "%" PRId64, rawisec);
+      printed = snprintf (timestr, timestrsize, "%" PRId64, isec);
       break;
     case NANOSECONDEPOCH:
       expected = -1;
@@ -1177,7 +1184,8 @@ ms_nstime2timestr_n (nstime_t nstime, char *timestr, size_t timestrsize, ms_time
       break;
     case UNIXEPOCH:
       expected = -1;
-      printed = snprintf (timestr, timestrsize, "%" PRId64 ".%06d", rawisec, rawnanosec / 1000);
+      printed = snprintf (timestr, timestrsize, "%s%" PRId64 ".%06d",
+                          (nstime < 0 && rawisec == 0) ? "-" : "", rawisec, rawnanosec / 1000);
       break;
     case NANOSECONDEPOCH:
       expected = -1;
@@ -1218,7 +1226,8 @@ ms_nstime2timestr_n (nstime_t nstime, char *timestr, size_t timestrsize, ms_time
       break;
     case UNIXEPOCH:
       expected = -1;
-      printed = snprintf (timestr, timestrsize, "%" PRId64 ".%09d", rawisec, rawnanosec);
+      printed = snprintf (timestr, timestrsize, "%s%" PRId64 ".%09d",
+                          (nstime < 0 && rawisec == 0) ? "-" : "", rawisec, rawnanosec);
       break;
     case NANOSECONDEPOCH:
       expected = -1;
@@ -1237,7 +1246,8 @@ ms_nstime2timestr_n (nstime_t nstime, char *timestr, size_t timestrsize, ms_time
     return NULL;
   }
 
-  if (expected == 0 || (expected > 0 && printed != expected))
+  if (expected == 0 || printed < 0 || printed >= (int)timestrsize ||
+      (expected > 0 && printed != expected))
   {
     ms_log (2, "Time string not generated with the expected length\n");
     return NULL;
@@ -1251,13 +1261,17 @@ ms_nstime2timestr_n (nstime_t nstime, char *timestr, size_t timestrsize, ms_time
  *
  * This deprecated function is provided for backwards compatibility.
  * It will call ms_nstime2timestr_n() specifying the maximum size of
- * the time string as 36 bytes.
+ * the time string as 37 bytes.
+ *
+ * The @p timestr buffer must therefore be at least 37 bytes, enough for the
+ * longest output of 36 characters plus the terminating NULL.  A smaller
+ * buffer will be overflowed.
  ***************************************************************************/
 char *
 ms_nstime2timestr (nstime_t nstime, char *timestr, ms_timeformat_t timeformat,
                    ms_subseconds_t subseconds)
 {
-  return ms_nstime2timestr_n (nstime, timestr, 36, timeformat, subseconds);
+  return ms_nstime2timestr_n (nstime, timestr, 37, timeformat, subseconds);
 } /* End of ms_nstime2timestr() */
 
 /** ************************************************************************
@@ -1265,7 +1279,11 @@ ms_nstime2timestr (nstime_t nstime, char *timestr, ms_timeformat_t timeformat,
  *
  * This deprecated function is provided for backwards compatibility.
  * It will call ms_nstime2timestr_n() specifying the maximum size of
- * the time string as 36 bytes.
+ * the time string as 37 bytes.
+ *
+ * The @p timestr buffer must therefore be at least 37 bytes, enough for the
+ * longest output of 36 characters plus the terminating NULL.  A smaller
+ * buffer will be overflowed.
  ***************************************************************************/
 char *
 ms_nstime2timestrz (nstime_t nstime, char *timestr, ms_timeformat_t timeformat,
@@ -1278,7 +1296,7 @@ ms_nstime2timestrz (nstime_t nstime, char *timestr, ms_timeformat_t timeformat,
   else if (timeformat == ISOMONTHDAY_SPACE)
     timeformat = ISOMONTHDAY_SPACE_Z;
 
-  return ms_nstime2timestr_n (nstime, timestr, 36, timeformat, subseconds);
+  return ms_nstime2timestr_n (nstime, timestr, 37, timeformat, subseconds);
 } /* End of ms_nstime2timestrz() */
 
 /***************************************************************************
@@ -1308,7 +1326,18 @@ ms_time2nstime_int (int year, int yday, int hour, int min, int sec, uint32_t nse
 
   days = (365 * (shortyear - 70) + intervening_leap_days + (yday - 1));
 
-  nstime = (nstime_t)(60 * (60 * ((nstime_t)24 * days + hour) + min) + sec) * NSTMODULUS + nsec;
+  nstime_t seconds = (nstime_t)(60 * (60 * ((nstime_t)24 * days + hour) + min) + sec);
+
+  /* Guard against int64 nanosecond overflow/underflow at the extremes of the
+   * representable range (roughly year 1678 .. mid-2262).  nsec is positive, so
+   * it only matters for the upper bound. */
+  if (seconds > (INT64_MAX - (nstime_t)nsec) / NSTMODULUS || seconds < INT64_MIN / NSTMODULUS)
+  {
+    ms_log (2, "Time (year %d, day %d) is beyond the representable nstime range\n", year, yday);
+    return NSTERROR;
+  }
+
+  nstime = seconds * NSTMODULUS + nsec;
 
   return nstime;
 } /* End of ms_time2nstime_int() */
@@ -1369,6 +1398,39 @@ ms_time2nstime (int year, int yday, int hour, int min, int sec, uint32_t nsec)
   return ms_time2nstime_int (year, yday, hour, min, sec, nsec);
 } /* End of ms_time2nstime() */
 
+/***************************************************************************
+ * INTERNAL Convert a fractional-seconds digit string (as captured by a
+ * "%[.0-9]" sscanf() conversion, leading period optional) to nanoseconds.
+ *
+ * Parsing is done with integer arithmetic only, so the result does not
+ * depend on the LC_NUMERIC decimal-point character, unlike an "%lf"
+ * conversion.
+ *
+ * Returns nanoseconds in the range 0 - 1000000000, where 1000000000
+ * indicates the fraction rounded up to a whole second.
+ ***************************************************************************/
+static uint32_t
+ms_frac2nsec (const char *frac)
+{
+  uint32_t nsec = 0;
+  int ndigits = 0;
+
+  if (*frac == '.')
+    frac++;
+
+  for (; ndigits < 9 && *frac >= '0' && *frac <= '9'; frac++, ndigits++)
+    nsec = nsec * 10 + (uint32_t)(*frac - '0');
+
+  for (; ndigits < 9; ndigits++)
+    nsec *= 10;
+
+  /* Round to nearest based on the first truncated digit, if any */
+  if (*frac >= '5' && *frac <= '9')
+    nsec++;
+
+  return nsec;
+} /* End of ms_frac2nsec() */
+
 /** ************************************************************************
  * @brief Convert a time string to a high precision epoch time.
  *
@@ -1387,6 +1449,8 @@ ms_time2nstime (int year, int yday, int hour, int min, int sec, uint32_t nsec)
  * specified and then they are treated as epoch values.  For
  * consistency, a caller is recommened to always include a sign with
  * epoch values.
+ *
+ * ISO month-day time strings conform to the RFC 3339 profile.
  *
  * Note that this routine does some sanity checking of the time string
  * contents, but does _not_ perform robust date-time validation.
@@ -1412,7 +1476,7 @@ ms_timestr2nstime (const char *timestr)
   int length;
   int fields;
   int64_t sec = 0;
-  double fsec = 0.0;
+  char fracstr[16] = "";
   nstime_t nstime;
 
   if (!timestr)
@@ -1477,23 +1541,47 @@ ms_timestr2nstime (const char *timestr)
   if (!error && length == numberlike &&
       (length != 4 || (length == 4 && (timestr[0] == '-' || timestr[0] == '+'))))
   {
-    fields = sscanf (timestr, "%" SCNd64 "%lf", &sec, &fsec);
+    fields = sscanf (timestr, "%" SCNd64 "%15[.0-9]", &sec, fracstr);
 
     if (fields < 1)
     {
-      ms_log (2, "Could not convert epoch value: '%s'\n", cp);
+      ms_log (2, "Could not convert epoch value: '%s'\n", timestr);
+      return NSTERROR;
+    }
+
+    /* Guard against int64 nanosecond overflow before scaling to nanoseconds */
+    if (sec > INT64_MAX / NSTMODULUS || sec < INT64_MIN / NSTMODULUS)
+    {
+      ms_log (2, "Epoch value (%s) is beyond the representable nstime range\n", timestr);
       return NSTERROR;
     }
 
     /* Convert seconds and fractional seconds to nanoseconds, return combination */
     nstime = MS_EPOCH2NSTIME (sec);
 
-    if (fsec != 0.0)
+    if (fracstr[0])
     {
-      if (nstime >= 0)
-        nstime += (int)(fsec * 1000000000.0 + 0.5);
+      nstime_t nanofrac = (nstime_t)ms_frac2nsec (fracstr);
+
+      /* Fraction follows the sign of the value (e.g. "-0.5") */
+      if (sec < 0 || timestr[0] == '-')
+      {
+        if (nstime < INT64_MIN + nanofrac)
+        {
+          ms_log (2, "Epoch value (%s) is beyond the representable nstime range\n", timestr);
+          return NSTERROR;
+        }
+        nstime -= nanofrac;
+      }
       else
-        nstime -= (int)(fsec * 1000000000.0 + 0.5);
+      {
+        if (nstime > INT64_MAX - nanofrac)
+        {
+          ms_log (2, "Epoch value (%s) is beyond the representable nstime range\n", timestr);
+          return NSTERROR;
+        }
+        nstime += nanofrac;
+      }
     }
 
     return nstime;
@@ -1547,6 +1635,8 @@ ms_timestr2nstime (const char *timestr)
  * MM, SS and FFFF are 0.  The year is required, otherwise there
  * wouldn't be much for a date.
  *
+ * This format conforms to the RFC 3339 profile.
+ *
  * @param[in] timestr Time string in ISO-style, month-day format
  *
  * @returns epoch time on success and ::NSTERROR on error.
@@ -1564,7 +1654,8 @@ ms_mdtimestr2nstime (const char *timestr)
   int hour = 0;
   int min = 0;
   int sec = 0;
-  double fsec = 0.0;
+  int carry = 0;
+  char fracstr[16] = "";
   uint32_t nsec = 0;
 
   if (!timestr)
@@ -1573,13 +1664,19 @@ ms_mdtimestr2nstime (const char *timestr)
     return NSTERROR;
   }
 
-  fields = sscanf (timestr, "%d%*[-,/:.]%d%*[-,/:.]%d%*[-,/:.Tt ]%d%*[-,/:.]%d%*[-,/:.]%d%lf",
-                   &year, &mon, &mday, &hour, &min, &sec, &fsec);
+  fields = sscanf (timestr, "%d%*[-,/:.]%d%*[-,/:.]%d%*[-,/:.Tt ]%d%*[-,/:.]%d%*[-,/:.]%d%15[.0-9]",
+                   &year, &mon, &mday, &hour, &min, &sec, fracstr);
 
-  /* Convert fractional seconds to nanoseconds */
-  if (fsec != 0.0)
+  if (fracstr[0])
   {
-    nsec = (uint32_t)(fsec * 1000000000.0 + 0.5);
+    nsec = ms_frac2nsec (fracstr);
+
+    /* A fractional second that rounds up to a full second is carried */
+    if (nsec >= 1000000000)
+    {
+      nsec = 0;
+      carry = 1;
+    }
   }
 
   if (fields < 1)
@@ -1636,7 +1733,7 @@ ms_mdtimestr2nstime (const char *timestr)
     return NSTERROR;
   }
 
-  return ms_time2nstime_int (year, yday, hour, min, sec, nsec);
+  return ms_time2nstime_int (year, yday, hour, min, sec + carry, nsec);
 } /* End of ms_mdtimestr2nstime() */
 
 /** ************************************************************************
@@ -1669,7 +1766,8 @@ ms_seedtimestr2nstime (const char *seedtimestr)
   int hour = 0;
   int min = 0;
   int sec = 0;
-  double fsec = 0.0;
+  int carry = 0;
+  char fracstr[16] = "";
   uint32_t nsec = 0;
 
   if (!seedtimestr)
@@ -1678,13 +1776,19 @@ ms_seedtimestr2nstime (const char *seedtimestr)
     return NSTERROR;
   }
 
-  fields = sscanf (seedtimestr, "%d%*[-,:.]%d%*[-,:.Tt ]%d%*[-,:.]%d%*[-,:.]%d%lf", &year, &yday,
-                   &hour, &min, &sec, &fsec);
+  fields = sscanf (seedtimestr, "%d%*[-,:.]%d%*[-,:.Tt ]%d%*[-,:.]%d%*[-,:.]%d%15[.0-9]", &year,
+                   &yday, &hour, &min, &sec, fracstr);
 
-  /* Convert fractional seconds to nanoseconds */
-  if (fsec != 0.0)
+  if (fracstr[0])
   {
-    nsec = (uint32_t)(fsec * 1000000000.0 + 0.5);
+    nsec = ms_frac2nsec (fracstr);
+
+    /* A fractional second that rounds up to a full second is carried */
+    if (nsec >= 1000000000)
+    {
+      nsec = 0;
+      carry = 1;
+    }
   }
 
   if (fields < 1)
@@ -1729,7 +1833,7 @@ ms_seedtimestr2nstime (const char *seedtimestr)
     return NSTERROR;
   }
 
-  return ms_time2nstime_int (year, yday, hour, min, sec, nsec);
+  return ms_time2nstime_int (year, yday, hour, min, sec + carry, nsec);
 } /* End of ms_seedtimestr2nstime() */
 
 /** ************************************************************************
@@ -1752,40 +1856,62 @@ ms_seedtimestr2nstime (const char *seedtimestr)
  * @see ms_readleapsecondfile()
  *
  * @param[in] time Time value for first sample in array
- * @param[in] offset Offset of sample to calculate time of
+ * @param[in] offset Offset of sample to calculate time of, must be non-negative
  * @param[in] samprate Sample rate (when positive) or period (when negative)
  *
- * @returns Time of the sample at specified offset
+ * @returns Time of the sample at specified offset, ::NSTERROR if @p offset
+ * is negative or the result is not representable.
  ***************************************************************************/
 nstime_t
 ms_sampletime (nstime_t time, int64_t offset, double samprate)
 {
   nstime_t span = 0;
   LeapSecond *lslist = leapsecondlist;
+  double spandouble = 0.0;
+
+  if (offset < 0)
+  {
+    ms_log (2, "Sample offset cannot be negative (%" PRId64 ")\n", offset);
+    return NSTERROR;
+  }
 
   if (offset > 0)
   {
     /* Calculate time span using sample rate */
     if (samprate > 0.0)
-      span = (nstime_t)(((double)offset / samprate * NSTMODULUS) + 0.5);
+      spandouble = (double)offset / samprate * NSTMODULUS + 0.5;
 
     /* Calculate time span using sample period */
     else if (samprate < 0.0)
-      span = (nstime_t)(((double)offset * -samprate * NSTMODULUS) + 0.5);
+      spandouble = (double)offset * -samprate * NSTMODULUS + 0.5;
+
+    /* Reject a non-finite or out-of-range span before casting to integer */
+    if (!isfinite (spandouble) || spandouble < (double)INT64_MIN || spandouble >= (double)INT64_MAX)
+    {
+      ms_log (2, "Time span is not representable (offset: %" PRId64 ", samprate: %g)\n", offset,
+              samprate);
+      return NSTERROR;
+    }
+
+    span = (nstime_t)spandouble;
   }
 
-  /* Check if the time range contains a leap second, if list is available */
-  if (lslist)
+  /* Reject overflow of the final time calculation before evaluating leap seconds,
+   * so the leap loop's arithmetic cannot overflow */
+  if ((span > 0 && time > INT64_MAX - span) || (span < 0 && time < INT64_MIN - span))
   {
-    while (lslist)
-    {
-      if (lslist->leapsecond > time && lslist->leapsecond <= (time + span - NSTMODULUS))
-      {
-        span -= NSTMODULUS;
-        break;
-      }
+    ms_log (2, "Sample time is not representable\n");
+    return NSTERROR;
+  }
 
-      lslist = lslist->next;
+  /* Adjust for each leap second contained in the time range, if list is available.
+   * The contained test (leapsecond <= time + span - NSTMODULUS) is written in
+   * addition form to avoid overflow of the intermediate expression. */
+  for (; lslist; lslist = lslist->next)
+  {
+    if (lslist->leapsecond > time && lslist->leapsecond + NSTMODULUS <= time + span)
+    {
+      span -= NSTMODULUS;
     }
   }
 
@@ -1933,14 +2059,24 @@ ms_readleapsecondfile (const char *filename)
 
     if (fields == 2)
     {
-      if ((ls = (LeapSecond *)libmseed_memory.malloc (sizeof (LeapSecond))) == NULL)
+      /* Convert NTP epoch to Unix epoch; guard against int64 overflow */
+      leapsecond = leapsecond - NTPPOSIXEPOCHDELTA;
+
+      if (leapsecond > INT64_MAX / NSTMODULUS || leapsecond < INT64_MIN / NSTMODULUS)
       {
-        ms_log (2, "Cannot allocate LeapSecond entry, out of memory?\n");
+        ms_log (2, "Leap second epoch is beyond the representable nstime range\n");
+        fclose (fp);
         return -1;
       }
 
-      /* Convert NTP epoch time to Unix epoch time and then to nttime_t */
-      ls->leapsecond = MS_EPOCH2NSTIME (leapsecond - NTPPOSIXEPOCHDELTA);
+      if ((ls = (LeapSecond *)libmseed_memory.malloc (sizeof (LeapSecond))) == NULL)
+      {
+        ms_log (2, "Cannot allocate LeapSecond entry, out of memory?\n");
+        fclose (fp);
+        return -1;
+      }
+
+      ls->leapsecond = MS_EPOCH2NSTIME (leapsecond);
       ls->TAIdelta = TAIdelta;
       ls->next = NULL;
       count++;
@@ -1966,6 +2102,7 @@ ms_readleapsecondfile (const char *filename)
   if (ferror (fp))
   {
     ms_log (2, "Error reading leap second file (%s): %s\n", filename, strerror (errno));
+    fclose (fp);
     return -1;
   }
 
@@ -2024,19 +2161,20 @@ lmp_nanosleep (uint64_t nanoseconds)
 #if defined(LMP_WIN)
 
   /* SleepEx is limited to milliseconds */
-  SleepEx ((DWORD)(nanoseconds / 1e6), 1);
+  SleepEx ((DWORD)(nanoseconds / 1000000ULL), 1);
 
   return 0;
 #else
 
-  struct timespec treq, trem;
+  struct timespec treq;
+  struct timespec trem = {0};
 
-  treq.tv_sec = (time_t)(nanoseconds / 1e9);
-  treq.tv_nsec = (long)(nanoseconds - (uint64_t)treq.tv_sec * 1e9);
+  treq.tv_sec = (time_t)(nanoseconds / 1000000000ULL);
+  treq.tv_nsec = (long)(nanoseconds % 1000000000ULL);
 
   nanosleep (&treq, &trem);
 
-  return trem.tv_sec * 1e9 + trem.tv_nsec;
+  return (uint64_t)trem.tv_sec * 1000000000ULL + (uint64_t)trem.tv_nsec;
 
 #endif
 } /* End of lmp_nanosleep() */
@@ -2077,3 +2215,47 @@ lmp_systemtime (void)
 
 #endif
 } /* End of lmp_systemtime() */
+
+/* Simple ASCII-only tolower() implementation */
+static inline unsigned char
+ascii_tolower (unsigned char c)
+{
+  return (c >= 'A' && c <= 'Z') ? (c + ('a' - 'A')) : c;
+}
+
+/** ************************************************************************
+ * @brief Case-insensitive, ASCII-only string comparison
+ *
+ * Compare two strings up to n characters, ignoring case.  This function is
+ * ASCII-only and does not handle multibyte characters.
+ *
+ * @param[in] s1 First string to compare
+ * @param[in] s2 Second string to compare
+ * @param[in] n Maximum number of characters to compare
+ *
+ * @returns 0 if the strings are equal, a non-zero value otherwise
+ ***************************************************************************/
+int
+lmp_strncasecmp (const char *s1, const char *s2, size_t n)
+{
+  unsigned char ca, cb;
+
+  if (n == 0)
+    return 0;
+
+  while (n--)
+  {
+    ca = (unsigned char)*s1++;
+    cb = (unsigned char)*s2++;
+
+    ca = (unsigned char)ascii_tolower (ca);
+    cb = (unsigned char)ascii_tolower (cb);
+
+    if (ca != cb)
+      return ca - cb;
+
+    if (ca == '\0')
+      return 0;
+  }
+  return 0;
+} /* End of lmp_strncasecmp() */
