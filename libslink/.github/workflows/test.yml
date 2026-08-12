@@ -1,0 +1,81 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install Python test dependencies
+        run: python3 -m pip install trustme
+
+      - name: Build and run test suite
+        run: make test
+
+  sanitize:
+    name: Test (sanitizers)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install Python test dependencies
+        run: python3 -m pip install trustme
+
+      - name: Build and run test suite under ASan/UBSan
+        run: |
+          make clean
+          CFLAGS="-fsanitize=address,undefined -g -O1" make
+          cd tests && make clean && CFLAGS="-fsanitize=address,undefined -g -O1" make test
+
+  windows:
+    name: Test (windows-latest)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Visual Studio shell
+        uses: egor-tensin/vs-shell@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install Python test dependencies
+        run: python -m pip install trustme
+
+      - name: Build library with nmake
+        run: nmake -f Makefile.win
+
+      - name: Build test harness with nmake
+        run: nmake -f Makefile.win
+        working-directory: tests
+
+      - name: Run Python test suite
+        run: python -m unittest test_protocol test_spec_v3 test_spec_v4 test_tls test_exports -v
+        working-directory: tests

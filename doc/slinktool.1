@@ -1,4 +1,4 @@
-.TH SLINKTOOL 1 2016/10/19
+.TH SLINKTOOL 1 2026/08/12
 .SH NAME
 slinktool \- SeedLink client for data stream inspection, data collection
 and server testing
@@ -10,10 +10,9 @@ slinktool [options] [host][:][port]
 .fi
 .SH DESCRIPTION
 \fBslinktool\fP connects to a \fISeedLink\fR server and queries the
-server for informaion or requests data using uni-station or
+server for information or requests data using uni-station or
 multi-station mode and prints information about the packets received.
-All received packets can optionally be dumped to a single file or
-saved in custom directory and file layouts.
+All received packets can optionally be dumped to a single file.
 
 .SH OPTIONS
 
@@ -36,14 +35,35 @@ server was successfully contacted the return code will be 0, if errors
 were encountered the return code will be 1.
 
 .IP "-p         "
-Print details of received Mini-SEED data records. This flag can be
+Print details of received miniSEED data records. This flag can be
 used multiple times ("-p -p" or "-pp") for more detail.  One flag: a
-single summary line for each data packet received.  Two flags: details
-of the Mini-SEED data records received, including information from
-fixed header and 100/1000/1001 blockettes.
+single summary line for each data packet received.  Two+ flags: more
+details of the payload received.
 
 .IP "-u         "
 Print data samples in data packets, implies at least one -p flag.
+By default only 6 lines of samples are printed (36 samples), adding
+more -u flags (e.g. -uu) will print all samples.
+
+.IP "-T         "
+Enable a secure TLS connection.  TLS is also enabled automatically
+when the server port is 18500.
+
+.IP "-Ap        "
+Prompt for username and password authentication details (SeedLink v4
+only).  See also the \fISEEDLINK_USERNAME\fR and
+\fISEEDLINK_PASSWORD\fR environment variables.
+
+.IP "-At        "
+Prompt for a JWT authentication token (SeedLink v4 only).
+
+.IP "-3         "
+Use the SeedLink 3.x protocol explicitly.  By default the protocol is
+negotiated with the server.
+
+.IP "-4         "
+Use the SeedLink 4.0 protocol explicitly.  By default the protocol is
+negotiated with the server.
 
 .IP "-nd \fIdelay\fR"
 The network reconnect delay (in seconds) for the connection to
@@ -53,7 +73,7 @@ The default value is 30 seconds.
 
 .IP "-nt \fItimeout\fR"
 The network timeout (in seconds) for the connection to the SeedLink
-server.  If no data [or keep alive packets?] are received in this
+server.  If no data or keepalive packets are received in this
 time the connection is closed and re-established (after the
 reconnect delay has expired).  The default value is 600 seconds.
 A value of 0 disables the timeout.
@@ -76,48 +96,21 @@ saved only on normal program termination.
 
 .IP "-d"
 Configure the connection in "dial-up" mode.  The remote server will
-close the connection when it has sent all of the data in it's buffers
+close the connection when it has sent all of the data in its buffers
 for the selected data streams.  This is opposed to the normal behavior
-of waiting indefinately for data.
+of waiting indefinitely for data.
 
 .IP "-b"
-Configure the connection in "batch" mode.  Negotiation with the remote
-server is made faster by minimizing acknowledgement checks.
+Configure the connection in "batch" mode (SeedLink v3).  Negotiation
+with the remote server is made faster by minimizing acknowledgement
+checks.
 
 .IP "-o \fIdumpfile\fR"
-If specified, all packets (Mini-SEED records) received will be
+If specified, all packets (miniSEED records) received will be
 appended to this file.  The file is created if it does not exist.  A
 special mode for this option is to send all received packets to
 standard output when the dumpfile is specified as '-'.  In this case
 all output besides these records will be redirected to standard error.
-
-.IP "-A \fIformat\fR"
-If specified, all packets (Mini-SEED records) received will be
-appended to a directory/file structure defined by \fBformat\fP.
-All directories implied in the \fBformat\fP string will be created if
-necessary.  See the section \fIArchiving data\fR.
-
-.IP "-SDS \fISDSdir\fR"
-If specified, all packets (Mini-SEED records) received will be
-saved into a Simple Data Structure (SDS) dir/file structure
-starting at the specified directory.  This directory and all
-subdirectories will be created if necessary.  This option is
-esentially a preset version of '-A' option.  The SDS dir/file
-structure is:
-.nf
-SDSdir/YEAR/NET/STA/CHAN.TYPE/NET.STA.LOC.CHAN.TYPE.YEAR.DAY
-.fi
-
-.IP "-BUD \fIBUDdir\fR"
-If specified, all waveform data packets (Mini-SEED data records)
-received will be saved into a Buffer of Uniform Data (BUD) dir/file
-structure starting at the specified directory.  This directory and all
-subdirectories will be created if necessary.  This option is
-esentially a preset version of '-A' option.  The BUD dir/file
-structure is:
-.nf
-BUDdir/NET/STA/STA.NET.LOC.CHAN.YEAR.DAY
-.fi
 
 .IP "-s \fIselectors\fR"
 This defines default selectors.  If no multi-station data streams are
@@ -138,29 +131,35 @@ NET_STA format and \fIselectors\fR are normal SeedLink selectors, see
 examples and notes below.  If no selectors are provided for a given
 stream, the default selectors, if defined, will be used.
 
-.IP "-tw \fIstart:[end]\fR  (requires SeedLink >= 3)"
-Specifies a time window applied, by the server, to data streams.
-The format for both times is year,month,day,hour,min,sec; for example:
-"2002,08,05,14,00:2002,08,05,14,15,00".
-The end time is optional but the colon must be present.  If no end
-time is specified the server will send data indefinately.  This option
-will override any saved state information.
-
+.IP "-ts \fIstarttime\fR"
+Specify a start time to request from the server.
 Warning: time windowing might be disabled on the remote server.
 
-.IP "-i \fIlevel\fR  (requires SeedLink >= 3)"
-Send an information request (INFO); the returned raw XML response
-is displayed.  Possible levels are: ID, CAPABILITIES, STATIONS,
-STREAMS, GAPS, CONNECTIONS, ALL.
+.IP "-te \fIendtime\fR"
+Specify an end time to request from the server.
+Warning: time windowing might be disabled on the remote server.
 
-Formatted INFO shortcuts (formats the XML for readability):
+.IP "-i \fItype\fR  (requires SeedLink >= 3)"
+Send an information request (INFO) and print the raw response.
+Standard info types include: ID, CAPABILITIES, STATIONS, STREAMS,
+CONNECTIONS, FORMATS, GAPS, ALL.
+
+.IP "-F \fItype\fR  (requires SeedLink >= 3)"
+Send an information request (INFO), parse the response, and print a
+formatted form.  Uses the same info types as \fB-i\fR.
+
+.IP "-f         "
+Increase the level of detail included in formatted INFO output.
+This flag can be used multiple times.
+
+Formatted INFO shortcuts:
 
 .nf
--I   print server id/version and exit
--L   print station list and exit
--Q   print stream list and exit
--G   print gap list and exit
--C   print connection list and exit
+-I   equivalent to -F ID
+-L   equivalent to -F STATIONS
+-Q   equivalent to -F STREAMS
+-G   equivalent to -F GAPS
+-C   equivalent to -F CONNECTIONS
 .fi
 
 Warning: informational (INFO) messages might be disabled on the server.
@@ -171,7 +170,8 @@ host:port format.  Either the host, port or both can be omitted.  If
 host is omitted then localhost is assumed, i.e. ':18000'
 implies 'localhost:18000'.  If the port is omitted then 18000 is
 assumed, i.e. 'localhost' implies 'localhost:18000'.  If only ':' is
-specified 'localhost:18000' is assumed.
+specified 'localhost:18000' is assumed.  Port 18500 enables TLS
+automatically.
 
 .SH "EXAMPLES"
 .IP All-station/Uni-station mode example:
@@ -216,7 +216,7 @@ Of course, a variety of different data selections can be made:
   (vertical channels only)
 
 .IP Wildcarding network and station codes
-Some SeedLink implementation support wildcarding of the network and
+Some SeedLink implementations support wildcarding of the network and
 station codes, when this is the case the only two wildcard characters
 recognized are '*' for one or more characters and '?' for any single
 character.
@@ -250,99 +250,60 @@ BH? E        - BHZ, BHN, BHE & detection records of all channels
 !L !T        - exclude log and timing records
 .fi
 
-.SH "Archiving data"
-Using the '-A \fBformat\fP' option received data can be saved in a
-custom directory and file structure.  The archive \fBformat\fP
-argument is expanded for each packet processed using the following
-flags:
-
-.nf
-  \fBn\fP : network code, white space removed
-  \fBs\fP : station code, white space removed
-  \fBl\fP : location code, white space removed
-  \fBc\fP : channel code, white space removed
-  \fBY\fP : year, 4 digits
-  \fBy\fP : year, 2 digits zero padded
-  \fBj\fP : day of year, 3 digits zero padded
-  \fBH\fP : hour, 2 digits zero padded
-  \fBM\fP : minute, 2 digits zero padded
-  \fBS\fP : second, 2 digits zero padded
-  \fBF\fP : fractional seconds, 4 digits zero padded
-  \fB%\fP : the percent (%) character
-  \fB#\fP : the number (#) character
-  \fBt\fP : single character type code:
-         D - waveform data packet
-         E - detection packet
-         C - calibration packet
-         T - timing packet
-         L - log packet
-         O - opaque data packet
-         U - unknown/general packet
-         I - INFO packet
-         ? - unidentifiable packet
-.fi
-
-The flags are prefaced with either the \fB%\fP or \fB#\fP modifier.
-The \fB%\fP modifier indicates a defining flag while the \fB#\fP
-indicates a non-defining flag.  All received packets with the same set
-of defining flags will be saved to the same file. Non-defining flags
-will be expanded using the values in the first packet received for the
-resulting file name.
-
-Time flags are based on the start time of the given packet.
-
-For example, the format string:
-
-\fB/archive/%n/%s/%n.%s.%l.%c.%Y.%j\fP
-
-would be expanded to day length files named something like:
-
-\fB/archive/NL/HGN/NL.HGN..BHE.2003.055\fP
-
-Using non-defining flags the format string:
-
-\fB/data/%n.%s.%Y.%j.%H:#M:#S.miniseed\fP
-
-would be expanded to:
-
-\fB/data/NL.HGN.2003.044.14:17:54.miniseed\fP
-
-resulting in hour length files because the minute and second are
-specified with the non-defining modifier.  The minute and second
-fields are from the first packet in the file.
-
 .SH "Stream list file"
 The stream list file used with the '-l' option is expected to
 define a data stream on each line.  The format of each line is:
 
 .nf
-Network Station [selectors]
+StationID [selectors]
 .fi
 
-The selectors are optional.  If default selectors are also specified
-(with the '-s' option), they they will be used when no selectors are
-specified for a given stream.  An example file follows:
+\fIStationID\fR is in NET_STA format.  The selectors are optional.  If
+default selectors are also specified (with the '-s' option), they will
+be used when no selectors are specified for a given stream.  An
+example file follows:
 
 .nf
 ----  Begin example file -----
-# Comment lines begin with a '#' or '*'
-# Example stream list file for use with the -l argument of slclient or
-# with the sl_read_streamlist() libslink function.
-GE ISP  BH?.D
-NL HGN
-MN AQU  BH? HH?
+# Comment lines begin with a '#'
+# Example stream list file for use with the -l argument of slinktool or
+# with the sl_add_streamlist_file() libslink function.
+GE_ISP  BH?.D
+NL_HGN
+MN_AQU  BH? HH?
 ----  End example file -----
 .fi
 
+.SH "ENVIRONMENT"
+.IP "SEEDLINK_USERNAME"
+.IP "SEEDLINK_PASSWORD"
+If both are set, they are used for SeedLink v4 USERPASS authentication.
+This is an alternative to prompting with \fB-Ap\fR.  The server must
+support authentication.
+
+.IP "LIBSLINK_CA_CERT_FILE"
+Location of a CA certificate file to load for TLS server verification.
+
+.IP "LIBSLINK_CA_CERT_PATH"
+Path to a directory of CA certificate files to load for TLS server
+verification.
+
+.IP "LIBSLINK_TLS_DEBUG"
+TLS debugging output level (integer), increase for more detail.
+
+.IP "LIBSLINK_CERT_UNVERIFIED_OK"
+If set, allow unverified TLS certificates (TLS 1.2 connections only).
+
 .SH "NOTES"
 All diagnostic output from slinktool is printed to standard error
-(stderr), exceptions are when printing Mini-SEED packet details (the
+(stderr), exceptions are when printing miniSEED packet details (the
 -p flag), when printing unpacked samples (the -u flag) and when
 printing the raw or formatted responses to INFO requests.
 
 .SH AUTHOR
 .nf
 Chad Trabant
-ORFEUS Data Center/EC-Project MEREDIAN
-IRIS Data Management Center
+previously ORFEUS Data Center/EC-Project MEREDIAN
+previously IRIS Data Management Center
+EarthScope Data Services
 .fi

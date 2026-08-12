@@ -1,0 +1,23 @@
+# Built test binaries (extensionless, so a wildcard would also catch the
+# .c sources and the .py test modules -- list them explicitly instead).
+test_genutils
+test_globmatch
+test_payload
+test_slcd
+test_streams
+test_statefile
+test_logging
+test_internals
+test_netprims
+test_network
+slharness
+
+fuzz/fuzz_detect
+fuzz/fuzz_dtparse
+fuzz/fuzz_globmatch
+fuzz/fuzz_payload
+fuzz/fuzz_statefile
+
+__pycache__/
+slmock/__pycache__/
+*.dSYM/

@@ -1,172 +1,247 @@
-/*
- * robust glob pattern matcher
- * ozan s. yigit/dec 1994
- * public domain
+/***************************************************************************
+ * Portable glob matcher.  Tests matching of strings against glob patterns.
  *
- * glob patterns:
- *	*	matches zero or more characters
- *	?	matches any single character
- *	[set]	matches any character in the set
- *	[^set]	matches any character NOT in the set
- *		where a set is a group of characters or ranges. a range
- *		is written as two characters seperated with a hyphen: a-z denotes
- *		all characters between a to z inclusive.
- *	[-set]	set matches a literal hypen and any character in the set
- *	[]set]	matches a literal close bracket and any character in the set
+ * The matcher function's final symbol name can be prefixed by defining
+ * `GLOBMATCH_PREFIX` either in globmatch.h or at compile-time.
  *
- *	char	matches itself except where char is '*' or '?' or '['
- *	\char	matches char, including any pattern character
+ * Inspired by Ozan Yigit's 1994 version, posted to Usenet and placed in the
+ * public domain, and helping many projects over the years.
  *
- * examples:
- *	a*c		ac abc abbc ...
- *	a?c		acc abc aXc ...
- *	a[a-z]c		aac abc acc ...
- *	a[-a-z]c	a-c aac abc ...
+ * This code is released into the public domain.
  *
- * $Log: not supported by cvs2svn $
- * Revision 1.4sl  2007/06/18  12:47:00  ct
- * Rename globmatch to sl_globmatch for integration into libslink.
- *
- * Revision 1.4  2004/12/26  12:38:00  ct
- * Changed function name (amatch -> globmatch), variables and
- * formatting for clarity.  Also add matching header globmatch.h.
- *
- * Revision 1.3  1995/09/14  23:24:23  oz
- * removed boring test/main code.
- *
- * Revision 1.2  94/12/11  10:38:15  oz
- * charset code fixed. it is now robust and interprets all
- * variations of charset [i think] correctly, including [z-a] etc.
- *
- * Revision 1.1  94/12/08  12:45:23  oz
- * Initial revision
- */
+ * Version: 2
+ ***************************************************************************/
+
+#include <stddef.h>
+#include <string.h>
 
 #include "globmatch.h"
 
-#define SL_GLOBMATCH_TRUE 1
-#define SL_GLOBMATCH_FALSE 0
+static int _match_charclass (const char **pp, unsigned char c);
 
-/***********************************************************************
- * sl_globmatch:
+/** ************************************************************************
+ * @brief Check if a string matches a globbing pattern.
  *
- * Check if a string matches a globbing pattern.
+ * Supported semantics:
+ * `*` matches zero or more characters, e.g. `*.txt`
+ * `?` matches a single character, e.g. `a?c`
+ * `[]` matches a set of characters `[abc]`
+ * `[a-z]` matches a range of characters `[A-Z]`
+ * `[!abc]` negation, matches when no characters in the set, e.g. `[!ABC]` or `[^ABC]`
+ * `[!a-z]` negation, matches when no characters in the range, e.g. `[!A-Z]` or `[^A-Z]`
+ * `\` prefix to match a literal character, e.g. `\*`, `\?`, `\[`
  *
- * Return 0 if string does not match pattern and non-zero otherwise.
- **********************************************************************/
+ * Notes / limitations:
+ * - Escapes are not interpreted inside `[...]`; e.g. `[\]]` is a class
+ *   containing `\` terminated by the first `]`.
+ * - Descending ranges (e.g. `[z-a]`) are treated as the three literal
+ *   characters rather than an error.
+ * - A trailing `\` with no following character matches a literal `\`.
+ *
+ * @param string  The string to check.
+ * @param pattern The globbing pattern to match.
+ *
+ * @returns 0 if string does not match pattern and non-zero otherwise.
+ ***************************************************************************/
 int
-sl_globmatch (char *string, char *pattern)
+GLOBMATCH (globmatch) (const char *string, const char *pattern)
 {
-  int negate;
-  int match;
-  int c;
+  const char *star_p = NULL;   /* position of the most recent '*' in pattern */
+  const char *star_s = NULL;   /* position in string when that '*' was seen */
+  unsigned char star_skip = 0; /* byte to skip past on backtrack, or 0 if none */
+  unsigned char c;
 
-  while (*pattern)
+  if (string == NULL || pattern == NULL)
+    return 0;
+
+  for (;;)
   {
-    if (!*string && *pattern != '*')
-      return SL_GLOBMATCH_FALSE;
+    c = (unsigned char)*pattern++;
 
-    switch (c = *pattern++)
+    switch (c)
     {
+    case '\0':
+      /* End of pattern: must also be end of string unless a previous '*'
+         can consume more characters. */
+      if (*string == '\0')
+        return 1;
+      if (star_p)
+        goto star_backtrack;
+      return 0;
+
+    case '?':
+      if (*string == '\0')
+        goto star_backtrack;
+      string++;
+      break;
 
     case '*':
+      /* Collapse consecutive '*' */
       while (*pattern == '*')
         pattern++;
 
-      if (!*pattern)
-        return SL_GLOBMATCH_TRUE;
+      /* Trailing '*' matches everything */
+      if (*pattern == '\0')
+        return 1;
 
-      if (*pattern != '?' && *pattern != '[' && *pattern != '\\')
-        while (*string && *pattern != *string)
-          string++;
-
-      while (*string)
+      /* Determine the literal byte (if any) following the '*'. If it is a
+         literal, we can skip string characters that cannot match it. */
       {
-        if (sl_globmatch (string, pattern))
-          return SL_GLOBMATCH_TRUE;
-        string++;
+        unsigned char next = (unsigned char)*pattern;
+
+        if (next == '\\' && pattern[1])
+          next = (unsigned char)pattern[1];
+        else if (next == '?' || next == '[')
+          next = 0; /* not a literal; skip the optimization */
+
+        star_skip = next;
+
+        if (star_skip)
+        {
+          const char *found = strchr (string, star_skip);
+          if (found == NULL)
+            return 0; /* required literal cannot occur in remaining string */
+          string = found;
+        }
       }
-      return SL_GLOBMATCH_FALSE;
 
-    case '?':
-      if (*string)
-        break;
-      return SL_GLOBMATCH_FALSE;
+      star_p = pattern - 1;
+      star_s = string;
+      continue;
 
-    /* set specification is inclusive, that is [a-z] is a, z and
-	   * everything in between. this means [z-a] may be interpreted
-	   * as a set that contains z, a and nothing in between.
-	   */
     case '[':
-      if (*pattern != SL_GLOBMATCH_NEGATE)
-        negate = SL_GLOBMATCH_FALSE;
-      else
-      {
-        negate = SL_GLOBMATCH_TRUE;
-        pattern++;
-      }
-
-      match = SL_GLOBMATCH_FALSE;
-
-      while (!match && (c = *pattern++))
-      {
-        if (!*pattern)
-          return SL_GLOBMATCH_FALSE;
-
-        if (*pattern == '-') /* c-c */
-        {
-          if (!*++pattern)
-            return SL_GLOBMATCH_FALSE;
-          if (*pattern != ']')
-          {
-            if (*string == c || *string == *pattern ||
-                (*string > c && *string < *pattern))
-              match = SL_GLOBMATCH_TRUE;
-          }
-          else
-          { /* c-] */
-            if (*string >= c)
-              match = SL_GLOBMATCH_TRUE;
-            break;
-          }
-        }
-        else /* cc or c] */
-        {
-          if (c == *string)
-            match = SL_GLOBMATCH_TRUE;
-          if (*pattern != ']')
-          {
-            if (*pattern == *string)
-              match = SL_GLOBMATCH_TRUE;
-          }
-          else
-            break;
-        }
-      }
-
-      if (negate == match)
-        return SL_GLOBMATCH_FALSE;
-
-      /*
-	   * if there is a match, skip past the charset and continue on
-	   */
-      while (*pattern && *pattern != ']')
-        pattern++;
-      if (!*pattern++) /* oops! */
-        return SL_GLOBMATCH_FALSE;
-      break;
-
-    case '\\':
-      if (*pattern)
-        c = *pattern++;
-    default:
-      if (c != *string)
-        return SL_GLOBMATCH_FALSE;
+    {
+      const char *pp = pattern;
+      if (*string == '\0')
+        goto star_backtrack;
+      if (!_match_charclass (&pp, (unsigned char)*string))
+        goto star_backtrack;
+      pattern = pp;
+      string++;
       break;
     }
 
-    string++;
+    case '\\':
+      if (*pattern)
+        c = (unsigned char)*pattern++;
+      /* FALLTHROUGH */
+
+    default:
+      if ((unsigned char)*string != c)
+        goto star_backtrack;
+      string++;
+      break;
+    }
+
+    continue;
+
+  star_backtrack:
+    /* If there was a previous '*', backtrack: let it consume one more
+       character and retry from pattern just after that '*'. */
+    if (star_p)
+    {
+      if (*star_s == '\0')
+        return 0;
+
+      star_s++;
+
+      /* Reuse the saved fast-forward byte so we don't walk non-matching
+         characters one at a time on each retry. */
+      if (star_skip)
+      {
+        const char *found = strchr (star_s, star_skip);
+        if (found == NULL)
+          return 0;
+        star_s = found;
+      }
+      else if (*star_s == '\0')
+      {
+        return 0;
+      }
+
+      string = star_s;
+      pattern = star_p + 1;
+      continue;
+    }
+    return 0;
+  }
+}
+
+/***************************************************************************
+ * Character class parser helper function.
+ *
+ *   On entry: *pp points just past '['.
+ *             If the class is negated, the next character will be '^'
+ *             and is handled inside this function.
+ *
+ *   On return: *pp is advanced past the closing ']'.
+ *
+ * Return 1 if c matches the class, 0 otherwise.
+ ***************************************************************************/
+static int
+_match_charclass (const char **pp, unsigned char c)
+{
+  const char *p;
+  int negate = 0;
+  int matched = 0;
+
+  if (pp == NULL || *pp == NULL)
+    return 0;
+
+  p = *pp;
+
+  /* Handle negation */
+  if (*p == '^' || *p == '!')
+  {
+    negate = 1;
+    p++;
   }
 
-  return !*string;
+  /* Per glob rules, leading ']' is literal */
+  if (*p == ']')
+  {
+    matched = (c == ']');
+    p++;
+  }
+
+  /* Per glob rules, leading '-' is literal */
+  if (*p == '-')
+  {
+    matched |= (c == '-');
+    p++;
+  }
+
+  /* Main loop until ']' or end of string */
+  while (*p && *p != ']')
+  {
+    unsigned char pc = (unsigned char)*p;
+
+    if (p[1] == '-' && p[2] && p[2] != ']' && (unsigned char)pc <= (unsigned char)p[2])
+    {
+      /* Range X-Y (only ascending ranges are supported) */
+      unsigned char start = pc;
+      unsigned char end = (unsigned char)p[2];
+
+      matched |= (c >= start && c <= end);
+
+      p += 3; /* skip X-Y */
+    }
+    else
+    {
+      /* Literal character */
+      matched |= (c == pc);
+      p++;
+    }
+  }
+
+  /* Malformed class (no closing ']') → no match */
+  if (*p != ']')
+  {
+    *pp = p;
+    return 0;
+  }
+
+  *pp = p + 1; /* skip ']' */
+
+  return negate ? !matched : matched;
 }

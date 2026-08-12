@@ -3,12 +3,14 @@
  * testing.
  *
  * Connects to a SeedLink server, configures a connection using either
- * uni or multi-station mode and collects data.  Detailed information about
- * the data received can be printed and the data can be saved to files.
+ * and collects data and/or server details (INFO).  Detailed
+ * information about the data received can be printed and the data can
+ * be saved to files.
  *
- * Written by Chad Trabant, ORFEUS/EC-Project MEREDIAN
- *
- * modified 2016.293
+ * Written by Chad Trabant,
+ *   ORFEUS/EC-Project MEREDIAN
+ *   IRIS Data Management Center
+ *   EarthScope Data Services
  ***************************************************************************/
 
 #include <stdio.h>
@@ -16,149 +18,151 @@
 #include <string.h>
 #include <time.h>
 
-#ifndef SLP_WIN
-#include <signal.h>
-#endif
-
+#include <libmseed.h>
 #include <libslink.h>
 
-#include "archive.h"
-#include "slinkxml.h"
+#include "slinkinfo.h"
 
 #define PACKAGE "slinktool"
-#define VERSION "4.3"
+#define VERSION "5.0.0"
 
-/* Idle archive stream timeout */
-#define IDLE_ARCH_STREAM_TIMEOUT 120
-
-static short int verbose  = 0; /* flag to control general verbosity */
-static short int pingonly = 0; /* flag to control ping function */
-static short int ppackets = 0; /* flag to control printing of data packets */
-static short int psamples = 0; /* flag to control printing of data samples */
-static int stateint       = 0; /* packet interval to save statefile */
-static char *archformat   = 0; /* format string for a custom structure */
-static char *sdsdir       = 0; /* base directory for a SDS structure */
-static char *buddir       = 0; /* base directory for a BUD structure */
-static char *statefile    = 0; /* state file for saving/restoring the seq. no. */
-static char *dumpfile     = 0; /* output file for data dump */
-static FILE *outfile      = 0; /* the descriptor for the dumpfile */
+static uint8_t verbose     = 0;    /* flag to control general verbosity */
+static uint8_t formatlevel = 0;    /* flag to control format verbosity */
+static uint8_t pingonly    = 0;    /* flag to control ping function */
+static uint8_t ppackets    = 0;    /* flag to control printing of data packets */
+static uint8_t psamples    = 0;    /* flag to control printing of data samples */
+static int stateint        = 0;    /* packet interval to save statefile */
+static char *statefile     = NULL; /* state file for saving/restoring the seq. no. */
+static char *dumpfile      = NULL; /* output file for data dump */
+static FILE *outfile       = NULL; /* the descriptor for the dumpfile */
 
 static SLCD *slconn; /* connection parameters */
 
-/* Possible query types */
+static char plbuffer[10485760]; /* 10 MiB payload buffer */
+
+/* Query types */
 static enum {
-  SLTNoQuery,
-  SLTIDQuery,
-  SLTStationQuery,
-  SLTStreamQuery,
-  SLTGapQuery,
-  SLTConnectionQuery,
-  SLTGenericQuery,
-  SLTKeepAliveQuery
-} slt_query = SLTNoQuery;
+  INFO_REQUEST_NONE,
+  INFO_REQUEST_RAW,
+  INFO_REQUEST_FORMAT
+} info_request = INFO_REQUEST_NONE;
 
 /* Functions internal to this source file */
-static void packet_handler (char *msrecord, int packet_type,
-                            int seqnum, int packet_size);
-static int info_handler (SLMSrecord *msr, int terminate);
-
-static int parameter_proc (int argcount, char **argvec);
+static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
+                            const char *payload, uint32_t payloadlength);
+static int info_handler_mseed (MS3Record *msr, int terminate);
+static const char *auth_value_userpass (const char *server, void *data);
+static const char *auth_value_token (const char *server, void *data);
+static void auth_finish (const char *server, void *data);
+static int parameter_proc (SLCD *slconn, int argcount, char **argvec);
 static char *getoptval (int argcount, char **argvec, int argopt);
-static void print_samples (SLMSrecord *msr);
+static void print_samples (MS3Record *msr, int maxlines);
 static int ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
-static void report_environ ();
+static int print_json (const char *json, uint32_t jsonlength, int indent);
 static void usage (void);
 
-#ifndef SLP_WIN
-static void term_handler (int sig);
-#endif
+static char auth_buffer[1024] = {0};
 
 int
 main (int argc, char **argv)
 {
-  SLpacket *slpack;
-  int seqnum;
-  int ptype;
-  int packetcnt = 0;
+  const SLpacketinfo *packetinfo = NULL;
+  int status;
+  int exitstatus = 0;
 
-#ifndef SLP_WIN
-  /* Signal handling, use POSIX calls with standardized semantics */
-  struct sigaction sa;
-
-  sa.sa_flags = SA_RESTART;
-  sigemptyset (&sa.sa_mask);
-
-  sa.sa_handler = term_handler;
-  sigaction (SIGINT, &sa, NULL);
-  sigaction (SIGQUIT, &sa, NULL);
-  sigaction (SIGTERM, &sa, NULL);
-
-  sa.sa_handler = SIG_IGN;
-  sigaction (SIGHUP, &sa, NULL);
-  sigaction (SIGPIPE, &sa, NULL);
-#endif
+  uint64_t packetcnt = 0;
 
   /* Allocate and initialize a new connection description */
-  slconn = sl_newslcd ();
+  slconn = sl_initslcd (PACKAGE, VERSION);
+
+  /* Configure authentication via SEEDLINK_USERNAME and SEEDLINK_PASSWORD
+   * environment variables if they are set */
+  if (getenv ("SEEDLINK_USERNAME") && getenv ("SEEDLINK_PASSWORD"))
+  {
+    sl_set_auth_envvars (slconn, "SEEDLINK_USERNAME", "SEEDLINK_PASSWORD");
+  }
 
   /* Process given parameters (command line and parameter file) */
-  if (parameter_proc (argc, argv) < 0)
+  if (parameter_proc (slconn, argc, argv) < 0)
   {
     sl_log (2, 0, "parameter processing failed.\n");
     return -1;
   }
 
+  /* Set signal handlers to trigger clean connection shutdown */
+  if (sl_set_termination_handler (slconn) < 0)
+  {
+    sl_log (2, 0, "Failed to set termination handler\n");
+    return -1;
+  }
+
   /* Print important parameters if verbose enough */
   if (verbose >= 3)
-    report_environ ();
+    sl_printslcd (slconn);
 
   /* Only do a ping if requested */
   if (pingonly)
     exit (ping_server (slconn));
 
   /* Loop with the connection manager */
-  while (sl_collect (slconn, &slpack))
+  while ((status = sl_collect (slconn, &packetinfo,
+                               plbuffer, (uint32_t)sizeof (plbuffer))) != SLTERMINATE)
   {
-    ptype  = sl_packettype (slpack);
-    seqnum = sl_sequence (slpack);
-
-    packet_handler ((char *)&slpack->msrecord, ptype, seqnum, SLRECSIZE);
+    if (status == SLPACKET)
+    {
+      packet_handler (slconn, packetinfo, plbuffer, packetinfo->payloadcollected);
+    }
+    else if (status == SLTOOLARGE)
+    {
+      sl_log (2, 0, "received payload length %u too large for max buffer of %zu\n",
+              packetinfo->payloadlength, sizeof (plbuffer));
+      exitstatus = 1;
+      break;
+    }
+    else if (status == SLAUTHFAIL)
+    {
+      sl_log (2, 0, "authentication failed\n");
+      exitstatus = 1;
+      break;
+    }
+    else if (status == SLNOPACKET)
+    {
+      /* Only reachable in non-blocking mode, which this program does not use */
+      sl_usleep (500000);
+    }
 
     if (statefile && stateint)
     {
-      if (++packetcnt >= stateint)
+      if (++packetcnt >= (uint64_t)stateint)
       {
         sl_savestate (slconn, statefile);
         packetcnt = 0;
       }
     }
 
-    /* Quit if no streams and terminated INFO is received */
-    if (slconn->streams == NULL && ptype == SLINFT)
+    /* An INFO query only: quit if no streams and INFO complete */
+    if (status == SLPACKET &&
+        slconn->streams == NULL &&
+        (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM ||
+         (packetinfo->payloadformat == SLPAYLOAD_JSON &&
+          (packetinfo->payloadsubformat == SLPAYLOAD_JSON_INFO ||
+           packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR))))
       break;
   }
 
   /* Shutdown */
-  if (slconn->link != -1)
-    sl_disconnect (slconn);
+  sl_disconnect (slconn);
 
   if (dumpfile)
     fclose (outfile);
 
-  if (buddir)
-    bud_streamproc (NULL, NULL, 0, 0);
-
-  if (archformat)
-    arch_streamproc (NULL, NULL, 0, 0, 0);
-
-  if (sdsdir)
-    sds_streamproc (NULL, NULL, 0, 0, 0);
-
   if (statefile)
     sl_savestate (slconn, statefile);
 
-  return 0;
+  sl_freeslcd (slconn);
+
+  return exitstatus;
 } /* End of main() */
 
 /***************************************************************************
@@ -166,118 +170,129 @@ main (int argc, char **argv)
  * Process a received packet based on packet type.
  ***************************************************************************/
 static void
-packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
+packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
+                const char *payload, uint32_t payloadlength)
 {
-  static SLMSrecord *msr = NULL;
-
-  double dtime;   /* Epoch time */
-  double secfrac; /* Fractional part of epoch time */
-  time_t ttime;   /* Integer part of epoch time */
-  char timestamp[20];
+  (void)slconn; /* Unused for now */
+  static MS3Record *msr = NULL;
+  char timestamp[64]    = {0};
+  int64_t now_nano;
+  time_t now_sec;
+  int64_t now_milli;
   struct tm *timep;
-  int archflag = 1;
-
-  /* The following is dependent on the packet type values in libslink.h */
-  char *type[] = {"Data", "Detection", "Calibration", "Timing",
-                  "Message", "General", "Request", "Info",
-                  "Info (terminated)", "KeepAlive"};
 
   /* Build a current local time string */
-  dtime   = sl_dtime ();
-  secfrac = (double)((double)dtime - (int)dtime);
-  ttime   = (time_t)dtime;
-  timep   = localtime (&ttime);
-  snprintf (timestamp, 20, "%04d.%03d.%02d:%02d:%02d.%01.0f",
-            timep->tm_year + 1900, timep->tm_yday + 1, timep->tm_hour,
-            timep->tm_min, timep->tm_sec, secfrac);
+  now_nano  = sl_nstime ();
+  now_sec   = (time_t)(now_nano / 1000000000);
+  now_milli = (now_nano - ((int64_t)now_sec * 1000000000)) / 1000000;
+  timep     = localtime (&now_sec);
 
-  /* Process waveform data and send it on */
-  if (packet_type == SLDATA)
+  snprintf (timestamp, sizeof (timestamp), "%04d-%02d-%02dT%02d:%02d:%02d.%03d",
+            timep->tm_year + 1900, timep->tm_mon + 1, timep->tm_mday,
+            timep->tm_hour, timep->tm_min, timep->tm_sec, (int)now_milli);
+
+  sl_log (0, 1, "%s (local), seq %" PRIu64 ", Received %u bytes of payload format %s\n",
+          timestamp, packetinfo->seqnum, payloadlength,
+          sl_formatstr (packetinfo->payloadformat, packetinfo->payloadsubformat));
+
+  /* Handle miniSEED payload packets */
+  if (packetinfo->payloadformat == SLPAYLOAD_MSEED2 ||
+      packetinfo->payloadformat == SLPAYLOAD_MSEED3)
   {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
+    int parse_status = msr3_parse (payload, payloadlength, &msr,
+                                   (psamples) ? MSF_UNPACKDATA : 0, verbose);
 
-    /* Parse data record and print requested detail if any */
-    if (psamples)
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 1);
-    else
-      sl_msr_parse (slconn->log, msrecord, &msr, 1, 0);
+    /* On failure, 'msr' may still point at the previously parsed record */
+    if (parse_status != 0 || msr == NULL)
+    {
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
+    }
 
     if (ppackets)
-      sl_msr_print (slconn->log, msr, ppackets - 1);
+    {
+      if (ppackets < 2)
+      {
+        /* Create single line summary and include latency */
+        ms_nstime2timestr_n (msr->starttime, timestamp, sizeof (timestamp), ISOMONTHDAY_Z, NANO_MICRO);
+
+        sl_log (0, 0, "%s, %d, %d, %" PRId64 " samples, %g Hz, %s (latency ~%.1f)\n",
+                msr->sid, msr->pubversion, msr->reclen, msr->samplecnt,
+                msr3_sampratehz (msr), timestamp, msr3_host_latency (msr));
+      }
+      else
+      {
+        msr3_print (msr, ppackets - 1);
+      }
+    }
 
     if (psamples)
-      print_samples (msr);
-
-    /* Test for a so-called end-of-detection record */
-    if (msr->fsdh.samprate_fact == 0 && msr->fsdh.num_samples == 0)
-      archflag = 0;
-
-    /* Write packet to BUD structure if requested */
-    if (buddir && archflag)
-    {
-      if (bud_streamproc (buddir, msr, packet_size,
-                          IDLE_ARCH_STREAM_TIMEOUT))
-        sl_log (2, 0, "cannot write data to BUD at %s\n", buddir);
-    }
+      print_samples (msr, (ppackets >= 1) ? 0 : 6);
   }
-  else if (packet_type == SLINF || packet_type == SLINFT)
+  /* Handle miniSEED-encoded INFO packets */
+  else if (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFO ||
+           packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM)
   {
-    int terminate;
+    int parse_status = msr3_parse (payload, payloadlength, &msr, MSF_UNPACKDATA, verbose);
 
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
-
-    terminate = (packet_type == SLINFT);
-
-    sl_msr_parse (slconn->log, msrecord, &msr, 0, 0);
-
-    if (info_handler (msr, terminate) == -2)
+    /* On failure, 'msr' may still point at the previously parsed record */
+    if (parse_status != 0 || msr == NULL)
     {
-      sl_log (2, 1, "processing of INFO packet failed\n");
+      sl_log (2, 0, "cannot parse miniSEED record\n");
+      return;
     }
 
-    archflag = 0;
+    if (info_handler_mseed (msr, (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM) ? 1 : 0) == -2)
+    {
+      sl_log (2, 1, "processing of INFO record failed\n");
+    }
   }
-  else if (packet_type == SLKEEP)
+  else if (packetinfo->payloadformat == SLPAYLOAD_JSON)
   {
-    sl_log (2, 0, "keepalive packet received by packet_handler?!?\n");
-
-    archflag = 0;
+    if (info_request == INFO_REQUEST_RAW)
+    {
+      print_json (payload, payloadlength, 0);
+    }
+    else if (packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR)
+    {
+      print_info_json (payload, payloadlength, 0);
+    }
+    else
+    {
+      print_info_json (payload, payloadlength, formatlevel);
+    }
+  }
+  /* Handle XML payloads (distinct from the legacy miniSEED-encoded XML INFO
+   * handled above); no formatted parser is implemented for this format */
+  else if (packetinfo->payloadformat == SLPAYLOAD_XML)
+  {
+    if (info_request == INFO_REQUEST_RAW)
+    {
+      fprintf (stdout, "%.*s\n", (int)payloadlength, payload);
+    }
+    else
+    {
+      sl_log (1, 1, "Formatted parsing of XML payloads is not supported, use '-i' for raw output\n");
+    }
   }
   else
   {
-    sl_log (1, 1, "%s, seq %d, Received %s blockette\n",
-            timestamp, seqnum, type[packet_type]);
+    sl_log (1, 1, "Unsupported payload type: %s\n",
+            sl_formatstr (packetinfo->payloadformat, packetinfo->payloadsubformat));
   }
 
   /* Write packet to dumpfile if defined */
   if (dumpfile)
   {
-    if (fwrite (msrecord, packet_size, 1, outfile) == 0)
+    if (fwrite (payload, payloadlength, 1, outfile) == 0)
       sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
-  }
-
-  /* Write packet to an archive if requested */
-  if (archformat && archflag)
-  {
-    if (arch_streamproc (archformat, msr, packet_size, packet_type,
-                         IDLE_ARCH_STREAM_TIMEOUT))
-      sl_log (2, 0, "cannot write data to archive\n");
-  }
-
-  /* Write packet to an SDS archive if requested */
-  if (sdsdir && archflag)
-  {
-    if (sds_streamproc (sdsdir, msr, packet_size, packet_type,
-                        IDLE_ARCH_STREAM_TIMEOUT))
-      sl_log (2, 0, "cannot write data to SDS at %s\n", sdsdir);
   }
 } /* End of packet_handler() */
 
 /***************************************************************************
- * info_handler:
- * Process XML-based INFO packets.
+ * info_handler_mseed:
+ *
+ * Process XML-based INFO packets encoded in miniSEED text records.
  *
  * Returns:
  * -2 = Errors
@@ -285,55 +300,70 @@ packet_handler (char *msrecord, int packet_type, int seqnum, int packet_size)
  *  0 = XML is not terminated
  ***************************************************************************/
 static int
-info_handler (SLMSrecord *msr, int terminate)
+info_handler_mseed (MS3Record *msr, int terminate)
 {
-  static char *xml_buffer = 0;
-  static int xml_size     = 0;
+  static char *xml_buffer  = NULL;
+  static size_t xml_length = 0;
 
-  char *xml_bit   = (char *)msr->msrecord + msr->fsdh.begin_data;
-  int xml_bitsize = msr->fsdh.num_samples;
+  char channel[11];
+  char *xml_bit;
+  int xml_bitsize;
 
-  ezxml_t xmldoc;
+  if (!msr)
+    return -2;
 
-  /* Buffer size sanity check: 10MB limit */
-  if ((xml_size + xml_bitsize) > 10485760)
+  xml_bit     = (char *)msr->datasamples;
+  xml_bitsize = (int)msr->numsamples;
+
+  /* Only append if unpacked, non-empty sample data is present */
+  if (xml_bit != NULL && xml_bitsize > 0)
   {
-    sl_log (2, 0, "info_handler(): XML buffer beyond sanity limit\n");
+    /* Buffer size sanity check: 10MiB limit */
+    if ((xml_length + xml_bitsize) > 10485760)
+    {
+      sl_log (2, 0, "%s(): XML buffer beyond sanity limit\n", __func__);
 
-    if (xml_buffer)
       free (xml_buffer);
-    xml_buffer = 0;
-    xml_size   = 0;
+      xml_buffer = NULL;
+      xml_length = 0;
 
-    return -2;
+      return -2;
+    }
+
+    /* Grow XML string buffer, include room (+1) for NULL terminator */
+    if ((xml_buffer = realloc (xml_buffer, (xml_length + xml_bitsize + 1))) == NULL)
+    {
+      sl_log (2, 0, "%s(): XML buffer memory allocation error\n", __func__);
+
+      free (xml_buffer);
+      xml_buffer = NULL;
+      xml_length = 0;
+
+      return -2;
+    }
+
+    /* First character is terminator for initial buffer allocation */
+    if (xml_length == 0)
+    {
+      *xml_buffer = '\0';
+    }
+
+    /* Append new XML to buffer */
+    strncat (xml_buffer, xml_bit, xml_bitsize);
+    xml_length += xml_bitsize;
   }
-
-  /* Grow XML string buffer, include room (+1) for NULL terminator */
-  if ((xml_buffer = realloc (xml_buffer, (xml_size + xml_bitsize + 1))) == NULL)
-  {
-    sl_log (2, 0, "info_handler(): XML buffer memory allocation error\n");
-    return -2;
-  }
-
-  /* First character is terminator for initial buffer allocation */
-  if (xml_size == 0)
-  {
-    *xml_buffer = '\0';
-  }
-
-  /* Append new XML to buffer */
-  strncat (xml_buffer, xml_bit, xml_bitsize);
-  xml_size += xml_bitsize;
 
   /* Check for an error condition */
-  if (!strncmp (msr->fsdh.channel, "ERR", 3))
+  channel[0] = '\0';
+  ms_sid2nslc_n (msr->sid, NULL, 0, NULL, 0, NULL, 0, channel, sizeof (channel));
+
+  if (!strncmp (channel, "ERR", 3))
   {
     sl_log (2, 0, "INFO type requested is not enabled\n");
 
-    if (xml_buffer)
-      free (xml_buffer);
-    xml_buffer = 0;
-    xml_size   = 0;
+    free (xml_buffer);
+    xml_buffer = NULL;
+    xml_length = 0;
 
     return -2;
   }
@@ -341,64 +371,139 @@ info_handler (SLMSrecord *msr, int terminate)
   /* Process the XML if terminated */
   if (terminate)
   {
-
-    /* Parse the XML if not dumping the raw XML */
-    if (slt_query != SLTGenericQuery)
+    /* Parse the XML for formatted output */
+    if (info_request == INFO_REQUEST_FORMAT)
     {
-      if ((xmldoc = ezxml_parse_str (xml_buffer, xml_size)) == NULL)
-      {
-        sl_log (2, 0, "XML parse error\n");
-
-        if (xml_buffer)
-          free (xml_buffer);
-        xml_buffer = 0;
-        xml_size   = 0;
-
-        return -2;
-      }
-
-      switch (slt_query)
-      {
-      case SLTIDQuery:
-        prtinfo_identification (xmldoc);
-        break;
-      case SLTStationQuery:
-        prtinfo_stations (xmldoc);
-        break;
-      case SLTStreamQuery:
-        prtinfo_streams (xmldoc);
-        break;
-      case SLTGapQuery:
-        prtinfo_gaps (xmldoc);
-        break;
-      case SLTConnectionQuery:
-        prtinfo_connections (xmldoc);
-        break;
-      default:
-        sl_log (2, 0, "info_handler: unrecognized INFO query: %d\n", slt_query);
-        break;
-      }
-
-      ezxml_free (xmldoc);
+      print_info_xml (xml_buffer, xml_length, formatlevel);
     }
+    /* Dump the raw XML */
     else
     {
       fprintf (stdout, "%s\n", xml_buffer);
     }
 
     /* Clean up */
-    slt_query = SLTNoQuery;
+    info_request = INFO_REQUEST_NONE;
 
-    if (xml_buffer)
-      free (xml_buffer);
-    xml_buffer = 0;
-    xml_size   = 0;
+    free (xml_buffer);
+    xml_buffer = NULL;
+    xml_length = 0;
 
     return -1;
   }
 
   return 0;
-} /* End of info_handler() */
+} /* End of info_handler_mseed() */
+
+/***************************************************************************
+ * auth_value:
+ *
+ * A callback function registered at SLCD.auth_value() that should return
+ * a string to be sumitted with the SeedLink AUTH command.
+ *
+ * In this case, the function prompts the user for a username and password
+ * for interactive input.
+ *
+ * Returns authorization value string on success, and NULL on failure
+ ***************************************************************************/
+static const char *
+auth_value_userpass (const char *server, void *data)
+{
+  (void)data; /* User-supplied data is not used in this case */
+  char username[256] = {0};
+  char password[256] = {0};
+  int printed;
+
+  fprintf (stderr, "Enter username for %s: ", server);
+  if (fgets (username, sizeof (username), stdin) == NULL)
+  {
+    fprintf (stderr, "%s() failed to read username\n", __func__);
+    return NULL;
+  }
+  username[strcspn (username, "\n")] = '\0';
+
+  fprintf (stderr, "Enter password: ");
+  if (fgets (password, sizeof (password), stdin) == NULL)
+  {
+    fprintf (stderr, "%s() failed to read password\n", __func__);
+    return NULL;
+  }
+  password[strcspn (password, "\n")] = '\0';
+
+  /* Create AUTH value of "USERPASS <username> <password>" */
+  printed = snprintf (auth_buffer, sizeof (auth_buffer),
+                      "USERPASS %s %s",
+                      username, password);
+
+  if (printed < 0 || (size_t)printed >= sizeof (auth_buffer))
+  {
+    fprintf (stderr, "%s() Auth value is too large (%d bytes)\n", __func__, printed);
+
+    return NULL;
+  }
+
+  return auth_buffer;
+}
+
+/***************************************************************************
+ * auth_value_token:
+ *
+ * A callback function registered at SLCD.auth_value() that should return
+ * a string to be submitted with the SeedLink AUTH command.
+ *
+ * In this case, the function prompts the user for a username and password
+ * for interactive input.
+ *
+ * Returns authorization value string on success, and NULL on failure
+ ***************************************************************************/
+static const char *
+auth_value_token (const char *server, void *data)
+{
+  (void)data; /* User-supplied data is not used in this case */
+  char token[4096] = {0};
+  int printed;
+
+  fprintf (stderr, "Enter token for [%s]: ", server);
+  if (fgets (token, sizeof (token), stdin) == NULL)
+  {
+    fprintf (stderr, "%s() failed to read token\n", __func__);
+    return NULL;
+  }
+  token[strcspn (token, "\n")] = '\0';
+
+  /* Create AUTH value of "JWT <token>" */
+  printed = snprintf (auth_buffer, sizeof (auth_buffer),
+                      "JWT %s",
+                      token);
+
+  if (printed < 0 || (size_t)printed >= sizeof (auth_buffer))
+  {
+    fprintf (stderr, "%s() Auth value is too large (%d bytes)\n", __func__, printed);
+
+    return NULL;
+  }
+
+  return auth_buffer;
+}
+
+/***************************************************************************
+ * auth_finish:
+ *
+ * A callback function registered at SLCD.auth_finish() that is called
+ * after the AUTH command has been sent to the server.
+ *
+ * In this case, the function clears the memory used to store the
+ * username and password populated by auth_value().
+ ***************************************************************************/
+static void
+auth_finish (const char *server, void *data)
+{
+  (void)server; /* Server name is not used in this case */
+  (void)data;   /* User-supplied data is not used in this case */
+
+  /* Clear memory used to store auth value */
+  memset (auth_buffer, 0, sizeof (auth_buffer));
+}
 
 /***************************************************************************
  * parameter_proc:
@@ -407,18 +512,26 @@ info_handler (SLMSrecord *msr, int terminate)
  * Returns 0 on success, and -1 on failure
  ***************************************************************************/
 static int
-parameter_proc (int argcount, char **argvec)
+parameter_proc (SLCD *slconn, int argcount, char **argvec)
 {
+  char starttimestr[32] = {0};
+  char endtimestr[32]   = {0};
+  nstime_t nstime;
   int error = 0;
   int optind;
 
-  char *streamfile  = 0; /* stream list file for configuring streams */
-  char *multiselect = 0;
-  char *selectors   = 0;
-  char *timewin     = 0;
-  char *tptr;
+  char *server_address = NULL;
+  char *streamfile     = NULL;
+  char *multiselect    = NULL;
+  char *selectors      = NULL;
 
-  SLstrlist *timelist; /* split the time window arg */
+  char info_cmd[100] = {0};
+  char *info_type    = NULL;
+
+  char *timewin   = NULL;
+  char *timestart = NULL;
+  char *timeend   = NULL;
+  char *tptr;
 
   if (argcount <= 1)
     error++;
@@ -448,45 +561,53 @@ parameter_proc (int argcount, char **argvec)
     {
       ppackets += strspn (&argvec[optind][1], "p");
     }
-    else if (strcmp (argvec[optind], "-u") == 0)
+    else if (strcmp (argvec[optind], "-T") == 0)
     {
-      psamples = 1;
+      sl_set_tlsmode (slconn, 1);
+    }
+    else if (strcmp (argvec[optind], "-Ap") == 0)
+    {
+      sl_set_auth_params (slconn, auth_value_userpass, auth_finish, NULL);
+    }
+    else if (strcmp (argvec[optind], "-At") == 0)
+    {
+      sl_set_auth_params (slconn, auth_value_token, auth_finish, NULL);
+    }
+    else if (strcmp (argvec[optind], "-3") == 0)
+    {
+      sl_set_protocol (slconn, SLPROTO3X);
+    }
+    else if (strcmp (argvec[optind], "-4") == 0)
+    {
+      sl_set_protocol (slconn, SLPROTO40);
+    }
+    else if (strncmp (argvec[optind], "-u", 2) == 0)
+    {
+      psamples = strspn (&argvec[optind][1], "u");
     }
     else if (strcmp (argvec[optind], "-d") == 0)
     {
-      slconn->dialup = 1;
+      sl_set_dialupmode (slconn, 1);
     }
     else if (strcmp (argvec[optind], "-b") == 0)
     {
-      slconn->batchmode = 1;
+      sl_set_batchmode (slconn, 1);
     }
     else if (strcmp (argvec[optind], "-nt") == 0)
     {
-      slconn->netto = atoi (getoptval (argcount, argvec, optind++));
+      sl_set_idletimeout (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-nd") == 0)
     {
-      slconn->netdly = atoi (getoptval (argcount, argvec, optind++));
+      sl_set_reconnectdelay (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-k") == 0)
     {
-      slconn->keepalive = atoi (getoptval (argcount, argvec, optind++));
+      sl_set_keepalive (slconn, atoi (getoptval (argcount, argvec, optind++)));
     }
     else if (strcmp (argvec[optind], "-o") == 0)
     {
       dumpfile = getoptval (argcount, argvec, optind++);
-    }
-    else if (strcmp (argvec[optind], "-A") == 0)
-    {
-      archformat = getoptval (argcount, argvec, optind++);
-    }
-    else if (strcmp (argvec[optind], "-SDS") == 0)
-    {
-      sdsdir = getoptval (argcount, argvec, optind++);
-    }
-    else if (strcmp (argvec[optind], "-BUD") == 0)
-    {
-      buddir = getoptval (argcount, argvec, optind++);
     }
     else if (strcmp (argvec[optind], "-l") == 0)
     {
@@ -506,33 +627,50 @@ parameter_proc (int argcount, char **argvec)
     }
     else if (strcmp (argvec[optind], "-i") == 0)
     {
-      if (sl_request_info (slconn, getoptval (argcount, argvec, optind++)) == 0)
-        slt_query = SLTGenericQuery;
+      info_type    = getoptval (argcount, argvec, optind++);
+      info_request = INFO_REQUEST_RAW;
+    }
+    else if (strcmp (argvec[optind], "-F") == 0)
+    {
+      info_type    = getoptval (argcount, argvec, optind++);
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-I") == 0)
     {
-      if (sl_request_info (slconn, "ID") == 0)
-        slt_query = SLTIDQuery;
+      info_type    = "ID";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-L") == 0)
     {
-      if (sl_request_info (slconn, "STATIONS") == 0)
-        slt_query = SLTStationQuery;
+      info_type    = "STATIONS";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-Q") == 0)
     {
-      if (sl_request_info (slconn, "STREAMS") == 0)
-        slt_query = SLTStreamQuery;
+      info_type    = "STREAMS";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-G") == 0)
     {
-      if (sl_request_info (slconn, "GAPS") == 0)
-        slt_query = SLTGapQuery;
+      info_type    = "GAPS";
+      info_request = INFO_REQUEST_FORMAT;
     }
     else if (strcmp (argvec[optind], "-C") == 0)
     {
-      if (sl_request_info (slconn, "CONNECTIONS") == 0)
-        slt_query = SLTConnectionQuery;
+      info_type    = "CONNECTIONS";
+      info_request = INFO_REQUEST_FORMAT;
+    }
+    else if (strncmp (argvec[optind], "-f", 2) == 0)
+    {
+      formatlevel += strspn (&argvec[optind][1], "f");
+    }
+    else if (strcmp (argvec[optind], "-ts") == 0)
+    {
+      timestart = getoptval (argcount, argvec, optind++);
+    }
+    else if (strcmp (argvec[optind], "-te") == 0)
+    {
+      timeend = getoptval (argcount, argvec, optind++);
     }
     else if (strcmp (argvec[optind], "-tw") == 0)
     {
@@ -543,9 +681,9 @@ parameter_proc (int argcount, char **argvec)
       fprintf (stderr, "Unknown option: %s\n", argvec[optind]);
       exit (1);
     }
-    else if (!slconn->sladdr)
+    else if (server_address == NULL)
     {
-      slconn->sladdr = argvec[optind];
+      server_address = argvec[optind];
     }
     else
     {
@@ -555,7 +693,7 @@ parameter_proc (int argcount, char **argvec)
   }
 
   /* Make sure a server was specified */
-  if (!slconn->sladdr)
+  if (server_address == NULL)
   {
     fprintf (stderr, "No SeedLink server specified\n\n");
     fprintf (stderr, "%s version %s\n\n", PACKAGE, VERSION);
@@ -563,6 +701,8 @@ parameter_proc (int argcount, char **argvec)
     fprintf (stderr, "Try '-h' for detailed help\n");
     exit (1);
   }
+
+  sl_set_serveraddress (slconn, server_address);
 
   /* Initialize the verbosity for the sl_log function */
   sl_loginit (verbose, NULL, NULL, NULL, NULL);
@@ -605,61 +745,115 @@ parameter_proc (int argcount, char **argvec)
 
   /* Load the stream list from a file if specified */
   if (streamfile)
-    sl_read_streamlist (slconn, streamfile, selectors);
+    sl_add_streamlist_file (slconn, streamfile, selectors);
 
-  /* Split the time window argument */
-  if (timewin)
+  if (timestart)
   {
-    SLstrlist *timeptr;
+    sl_isodatetime (starttimestr, timestart); /* Convert SeedLink-style (comma) time string */
 
-    if (strchr (timewin, ':') == NULL)
+    /* Parse and normalize time string */
+    if ((nstime = ms_timestr2nstime (starttimestr)) == NSTERROR)
     {
-      sl_log (2, 0, "time window not in begin:[end] format\n");
+      sl_log (2, 0, "start time not in recognized format: '%s' \n", timestart);
       return -1;
     }
 
-    if (sl_strparse (timewin, ":", &timelist) > 2)
-    {
-      sl_log (2, 0, "time window not in begin:[end] format\n");
-      return -1;
-    }
-
-    timeptr = timelist;
-
-    if (strlen (timeptr->element) == 0)
-    {
-      sl_log (2, 0, "time window must specify a begin time\n");
-      return -1;
-    }
-
-    slconn->begin_time = strdup (timeptr->element);
-
-    timeptr = timeptr->next;
-
-    if (timeptr != 0)
-    {
-      slconn->end_time = strdup (timeptr->element);
-
-      if (timeptr->next != 0)
-      {
-        sl_log (2, 0, "malformed time window specification\n");
-        return -1;
-      }
-    }
-
-    /* Free the parsed list */
-    sl_strparse (NULL, NULL, &timelist);
+    ms_nstime2timestr_n (nstime, starttimestr, sizeof (starttimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
   }
 
-  /* Parse the 'multiselect' string following '-S' */
-  if (multiselect)
+  if (timeend)
   {
-    if (sl_parse_streamlist (slconn, multiselect, selectors) == -1)
+    sl_isodatetime (endtimestr, timeend); /* Convert SeedLink-style (comma) time string */
+
+    /* Parse and normalize time string */
+    if ((nstime = ms_timestr2nstime (endtimestr)) == NSTERROR)
+    {
+      sl_log (2, 0, "end time not in recognized format: '%s' \n", timeend);
+      return -1;
+    }
+
+    ms_nstime2timestr_n (nstime, endtimestr, sizeof (endtimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+  }
+
+  /* DEPRECATED, legacy support for time window argument */
+  if (timewin)
+  {
+    char *startptr = strdup (timewin);
+    char *endptr;
+
+    if ((endptr = strchr (startptr, ':')) == NULL)
+    {
+      sl_log (2, 0, "time window (-tw) not in start:[end] format\n");
+      return -1;
+    }
+
+    /* Terminate begin time part and increment pointer to end time start */
+    *endptr = '\0';
+    endptr++;
+
+    if (startptr[0] != '\0')
+    {
+      sl_isodatetime (starttimestr, startptr); /* Convert SeedLink-style (comma) time string */
+
+      if ((nstime = ms_timestr2nstime (starttimestr)) == NSTERROR)
+      {
+        sl_log (2, 0, "start time not in recognized format: '%s' \n", startptr);
+        return -1;
+      }
+
+      ms_nstime2timestr_n (nstime, starttimestr, sizeof (starttimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+    }
+
+    if (endptr[0] != '\0')
+    {
+      sl_isodatetime (endtimestr, endptr); /* Convert SeedLink-style (comma) time string */
+
+      if ((nstime = ms_timestr2nstime (endtimestr)) == NSTERROR)
+      {
+        sl_log (2, 0, "end time not in recognized format: '%s' \n", endptr);
+        return -1;
+      }
+
+      ms_nstime2timestr_n (nstime, endtimestr, sizeof (endtimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+    }
+
+    free (startptr);
+  }
+
+  if (starttimestr[0] != '\0' || endtimestr[0] != '\0')
+  {
+    sl_set_timewindow (slconn,
+                       starttimestr[0] ? starttimestr : NULL,
+                       endtimestr[0] ? endtimestr : NULL);
+  }
+
+  /* Configure an INFO request */
+  if (info_request != INFO_REQUEST_NONE)
+  {
+    /* Convert station and stream pattern delimiter in multiselect to a space */
+    if (multiselect && (tptr = strchr (multiselect, ':')) != NULL)
+      *tptr = ' ';
+
+    if (multiselect)
+      snprintf (info_cmd, sizeof (info_cmd), "%s %s", info_type, multiselect);
+    else
+      snprintf (info_cmd, sizeof (info_cmd), "%s", info_type);
+
+    if (sl_request_info (slconn, info_cmd))
+    {
+      sl_log (2, 0, "cannot request INF: %s\n", info_cmd);
+      return -1;
+    }
+  }
+  /* If not INFO, parse the 'multiselect' string following '-S' */
+  else if (multiselect)
+  {
+    if (sl_add_streamlist (slconn, multiselect, selectors) == -1)
       return -1;
   }
   else if (slconn->streams == NULL && slconn->info == NULL)
-  { /* No 'streams' array, assuming uni-station mode */
-    sl_setuniparams (slconn, selectors, -1, 0);
+  { /* No 'streams' array or INFO requested, assuming uni-station mode */
+    sl_set_allstation_params (slconn, selectors, SL_UNSETSEQUENCE, NULL);
   }
 
   /* Attempt to recover sequence numbers from state file */
@@ -727,26 +921,89 @@ getoptval (int argcount, char **argvec, int argopt)
 
 /***************************************************************************
  * print_samples:
- * Print samples in the supplied SLMSrecord with a simple format.
+ *
+ * For binary sample types, 6 samples will be printed per line of output.
+ * For text samples, 70 characters will be printed per line of output.
+ *
+ * Output will be limited to the first 'maxlines' lines of samples.
+ * Set maxlines to zero to print all samples.
+ *
+ * Print paylod samples in the supplied record with a simple format.
  ***************************************************************************/
 static void
-print_samples (SLMSrecord *msr)
+print_samples (MS3Record *msr, int maxlines)
 {
   int line, lines, col, cnt;
+  int32_t *idata;
+  float *fdata;
+  double *ddata;
+  char *tdata;
 
-  if (msr->datasamples != NULL)
+  if (!msr || !msr->datasamples)
+    return;
+
+  if (msr->sampletype == 'i' || msr->sampletype == 'f' || msr->sampletype == 'd')
   {
-    lines = (msr->numsamples / 6) + 1;
+    idata = (int32_t *)msr->datasamples;
+    fdata = (float *)msr->datasamples;
+    ddata = (double *)msr->datasamples;
 
-    for (cnt = 0, line = 0; line < lines; line++)
+    /* Print 6 binary samples per line */
+    lines    = (msr->numsamples / 6) + 1;
+    maxlines = (maxlines <= 0) ? lines : maxlines;
+
+    for (cnt = 0, line = 0;
+         line < lines && line < maxlines;
+         line++)
     {
       for (col = 0; col < 6; col++)
       {
         if (cnt < msr->numsamples)
-          sl_log (0, 0, "%10d  ", *(msr->datasamples + cnt++));
+        {
+          if (msr->sampletype == 'i')
+          {
+            sl_log (0, 0, "%10d  ", idata[cnt++]);
+          }
+          else if (msr->sampletype == 'f')
+          {
+            sl_log (0, 0, "%10g  ", fdata[cnt++]);
+          }
+          else if (msr->sampletype == 'd')
+          {
+            sl_log (0, 0, "%10g  ", ddata[cnt++]);
+          }
+        }
       }
       sl_log (0, 0, "\n");
     }
+
+    /* Print ellipsis is not all samples were printed */
+    if (line < lines)
+      sl_log (0, 0, "...\n");
+  }
+  else if (msr->sampletype == 't')
+  {
+    tdata = (char *)msr->datasamples;
+
+    /* Print 70 character samples per line */
+    lines    = (msr->numsamples + 69) / 70;
+    maxlines = (maxlines <= 0) ? lines : maxlines;
+
+    for (cnt = 0, line = 0;
+         line < lines && line < maxlines;
+         line++)
+    {
+      sl_log (0, 0, "%.70s\n", &tdata[cnt]);
+      cnt += 70;
+    }
+
+    /* Print ellipsis is not all samples were printed */
+    if (line < lines)
+      sl_log (0, 0, "...\n");
+  }
+  else
+  {
+    sl_log (0, 0, "Unrecognized sample type: %c\n", msr->sampletype);
   }
 
   return;
@@ -762,14 +1019,26 @@ print_samples (SLMSrecord *msr)
 static int
 ping_server (SLCD *slconn)
 {
+  /* sl_ping() only populates these on success (retval == 0), using an
+   * internal strcpy() with no length limit, so 100 bytes is the required
+   * minimum size; leave uninitialized otherwise. */
   char serverid[100];
   char site[100];
+  char *cp;
   int retval;
 
   retval = sl_ping (slconn, serverid, site);
 
   if (retval == 0)
   {
+    /* Truncate server ID and site strings at carriage return or new line */
+    if ((cp = strchr (serverid, '\r')) != NULL ||
+        (cp = strchr (serverid, '\n')) != NULL)
+      *cp = '\0';
+    if ((cp = strchr (site, '\r')) != NULL ||
+        (cp = strchr (site, '\n')) != NULL)
+      *cp = '\0';
+
     sl_log (0, 0, "%s\n%s\n", serverid, site);
   }
   else if (retval == -1)
@@ -798,113 +1067,74 @@ print_stderr (const char *message)
 }
 
 /***************************************************************************
- * report_environ:
- * Report (print) the state of global variables, intended for testing.
+ * print_json:
+ *
+ * print simply-formatted JSON by inserting indentation, spaces and newlines.
+ *
+ * Returns 0 on success and -1 on error.
  ***************************************************************************/
-static void
-report_environ ()
+static int
+print_json (const char *json, uint32_t jsonlength, int indent)
 {
-  SLstream *curstream;
+  uint32_t idx;
+  int instring = 0;
 
-  sl_log (1, 0, "verbose:\t%d\n", verbose);
-  sl_log (1, 0, "pingonly:\t%d\n", pingonly);
+  if (!json)
+    return -1;
 
-  if (dumpfile)
-    sl_log (1, 0, "dumpfile:\t%s\n", dumpfile);
-  else
-    sl_log (1, 0, "'dumpfile' not defined\n");
-
-  if (archformat)
-    sl_log (1, 0, "archformat:\t%s\n", archformat);
-  else
-    sl_log (1, 0, "'archformat' not defined\n");
-
-  if (sdsdir)
-    sl_log (1, 0, "sdsdir:\t%s\n", sdsdir);
-  else
-    sl_log (1, 0, "'sdsdir' not defined\n");
-
-  if (buddir)
-    sl_log (1, 0, "buddir:\t%s\n", buddir);
-  else
-    sl_log (1, 0, "'buddir' not defined\n");
-
-  if (statefile)
-    sl_log (1, 0, "statefile:\t%s\n", statefile);
-  else
-    sl_log (1, 0, "'statefile' not defined\n");
-
-  if (slconn->sladdr)
-    sl_log (1, 0, "sladdr:\t%s\n", slconn->sladdr);
-  else
-    sl_log (1, 0, "'slconn->sladdr' not defined\n");
-
-  if (slconn->begin_time)
-    sl_log (1, 0, "slconn->begin_time:\t%s\n", slconn->begin_time);
-  else
-    sl_log (1, 0, "'slconn->begin_time' not defined\n");
-  if (slconn->end_time)
-    sl_log (1, 0, "slconn->end_time:\t%s\n", slconn->end_time);
-  else
-    sl_log (1, 0, "'slconn->end_time' not defined\n");
-
-  sl_log (1, 0, "slconn->dialup:\t%d\n", slconn->dialup);
-  sl_log (1, 0, "slconn->multistation:\t%d\n", slconn->multistation);
-
-  if (slconn->info)
-    sl_log (1, 0, "slconn->info:\t%s\n", slconn->info);
-  else
-    sl_log (1, 0, "'slconn->info' not defined\n");
-
-  sl_log (1, 0, "keepalive:\t%d\n", slconn->keepalive);
-  sl_log (1, 0, "nettimeout:\t%d\n", slconn->netto);
-  sl_log (1, 0, "netdelay:\t%d\n", slconn->netdly);
-
-  sl_log (1, 0, "slconn->protocol_ver:\t%f\n", slconn->protocol_ver);
-  sl_log (1, 0, "slconn->link:\t%d\n", slconn->link);
-
-  curstream = slconn->streams;
-
-  sl_log (1, 0, "'streams' array:\n");
-  while (curstream != NULL)
+  /* Print JSON character-by-character, inserting
+   * indentation, spaces and newlines for readability. */
+  sl_log (0, 0, "%*s", indent, "");
+  for (idx = 0; idx < jsonlength; idx++)
   {
-    if (curstream->net)
-      sl_log (1, 0, "Sta - net: %s\n", curstream->net);
+    /* Toggle "in string" flag for double quotes */
+    if (json[idx] == '"')
+      instring = (instring) ? 0 : 1;
+
+    if (!instring)
+    {
+      if (json[idx] == ':')
+      {
+        sl_log (0, 0, ": ");
+      }
+      else if (json[idx] == ',')
+      {
+        sl_log (0, 0, ",\n%*s", indent, "");
+      }
+      else if (json[idx] == '{')
+      {
+        indent += 2;
+        sl_log (0, 0, "{\n%*s", indent, "");
+      }
+      else if (json[idx] == '[')
+      {
+        indent += 2;
+        sl_log (0, 0, "[\n%*s", indent, "");
+      }
+      else if (json[idx] == '}')
+      {
+        indent -= 2;
+        sl_log (0, 0, "\n%*s}", indent, "");
+      }
+      else if (json[idx] == ']')
+      {
+        indent -= 2;
+        sl_log (0, 0, "\n%*s]", indent, "");
+      }
+      else
+      {
+        sl_log (0, 0, "%c", json[idx]);
+      }
+    }
     else
-      sl_log (1, 0, "'net' not defined\n");
-
-    if (curstream->sta)
-      sl_log (1, 0, "Sta - sta: %s\n", curstream->sta);
-    else
-      sl_log (1, 0, "'sta' not defined\n");
-
-    if (curstream->selectors)
-      sl_log (1, 0, "Sta - selectors: %s\n", curstream->selectors);
-    else
-      sl_log (1, 0, "'selectors' not defined\n");
-
-    sl_log (1, 0, "Sta - seqnum: %d\n", curstream->seqnum);
-
-    if (curstream->timestamp[0] != '\0')
-      sl_log (1, 0, "Sta - timestamp: %s\n", curstream->timestamp);
-    else
-      sl_log (1, 0, "'timestamp' not defined\n");
-
-    curstream = curstream->next;
+    {
+      sl_log (0, 0, "%c", json[idx]);
+    }
   }
-} /* End of report_environ() */
+  sl_log (0, 0, "\n");
 
-#ifndef SLP_WIN
-/***************************************************************************
- * term_handler:
- * Signal handler routine to set the termination flag.
- ***************************************************************************/
-static void
-term_handler (int sig)
-{
-  sl_terminate (slconn);
-}
-#endif
+  return 0;
+} /* End of print_json() */
 
 /***************************************************************************
  * usage:
@@ -922,14 +1152,19 @@ usage (void)
            " -v              be more verbose, multiple flags can be used\n"
            " -P              ping the server, report the server ID and exit\n"
            " -p              print details of data packets, multiple flags can be used\n"
-           " -u              print unpacked samples of data packets\n\n"
+           " -u              print unpacked samples of data packets\n"
+           " -T              Enable secure TLS connection, already enabled if port 18500\n"
+           " -Ap             prompt for user and password authentication details (v4 only)\n"
+           " -At             prompt for JWT authentication token (v4 only)\n"
+           " -3 or -4        use SeedLink 3.x or 4.0 protocol explicitly\n"
+           "\n"
            " -nd delay       network re-connect delay (seconds), default 30\n"
            " -nt timeout     network timeout (seconds), re-establish connection if no\n"
            "                   data/keepalives are received in this time, default 600\n"
            " -k interval     send keepalive (heartbeat) packets this often (seconds)\n"
            " -x sfile[:int]  save/restore stream state information to this file\n"
            " -d              configure the connection in dial-up mode\n"
-           " -b              configure the connection in batch mode\n"
+           " -b              configure the connection in batch mode (SLv3)\n"
            "\n"
            " ## Data stream selection ##\n"
            " -s selectors    selectors for uni-station or default for multi-station mode\n"
@@ -937,27 +1172,25 @@ usage (void)
            " -S streams      define a stream list for multi-station mode\n"
            "   'streams' = 'stream1[:selectors1],stream2[:selectors2],...'\n"
            "        'stream' is in NET_STA format, for example:\n"
-           "        -S \"IU_KONO:BHE BHN,GE_WLF,MN_AQU:HH?.D\"\n\n"
-           " -tw begin:[end]  (requires SeedLink >= 3)\n"
-           "        specify a time window in year,month,day,hour,min,sec format\n"
-           "        example: -tw 2002,08,05,14,00,00:2002,08,05,14,15,00\n"
-           "        the end time is optional, but the colon must be present\n"
+           "        -S \"IU_KONO:B_H_E B_H_N,GE_WLF,MN_AQU:H_H_?:3\"\n"
+           "\n"
+           " -ts starttime   specify a start time\n"
+           " -te endtime     specify an end time\n"
            "\n"
            " ## Data saving options ##\n"
-           " -o dumpfile     write all received records to this file\n"
-           " -A format       save all received records is a custom file structure\n"
-           " -SDS SDSdir     save all received records in a SDS file structure\n"
-           " -BUD BUDdir     save all received data records in a BUD file structure\n"
+           " -o outfile      write all received records to this file\n"
            "\n"
-           " ## Data server  information ## (requires SeedLink >= 3)\n"
-           " -i type         send info request, type is one of the following:\n"
-           "                   ID, CAPABILITIES, STATIONS, STREAMS, GAPS, CONNECTIONS, ALL\n"
-           "                   the returned raw XML is displayed when using this option\n"
-           " -I              print formatted server id and version\n"
-           " -L              print formatted station list (if supported by server)\n"
-           " -Q              print formatted stream list (if supported by server)\n"
-           " -G              print formatted gap list (if supported by server)\n"
-           " -C              print formatted connection list (if supported by server)\n"
+           " ## Data server information ## (requires SeedLink >= 3)\n"
+           " -f              increase level of details included in formatted output\n"
+           " -i type         request info, print in raw form\n"
+           " -F type         request info, parse and print formatted form\n"
+           "                   Standard info types are:\n"
+           "                   ID, CAPABILITIES, STATIONS, STREAMS, CONNECTIONS, FORMATS, GAPS, ALL\n"
+           " -I              equivalent to -F ID\n"
+           " -L              equivalent to -F STATIONS\n"
+           " -Q              equivalent to -F STREAMS\n"
+           " -G              equivalent to -F GAPS\n"
+           " -C              equivalent to -F CONNECTIONS\n"
            "\n"
            " [host][:][port] Address of the SeedLink server in host:port format\n"
            "                   Default host is 'localhost' and default port is '18000'\n");

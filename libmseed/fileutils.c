@@ -1,0 +1,1334 @@
+/****************************************************************************
+ * Routines to manage files of miniSEED.
+ *
+ * This file is part of the miniSEED Library.
+ *
+ * Copyright (c) 2024 Chad Trabant, EarthScope Data Services
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ***************************************************************************/
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+
+#include "libmseed.h"
+#include "msio.h"
+
+/* Skip length in bytes when skipping non-data */
+#define SKIPLEN 1
+
+/* Initialize the global file reading parameters */
+MS3FileParam gMS3FileParam = MS3FileParam_INITIALIZER;
+
+/* Stream state flags */
+#define MSFP_RANGEAPPLIED 0x0001 //!< Byte ranging has been applied
+#define MSFP_PARSEDRECORD 0x0002 //!< A record has been parsed from the stream
+
+static char *parse_pathname_range (const char *string, int64_t *start, int64_t *end);
+
+/** ************************************************************************
+ * @brief Run-time test for URL support in libmseed.
+ *
+ * @returns 0 when no URL suported is included, non-zero otherwise.
+ ***************************************************************************/
+int
+libmseed_url_support (void)
+{
+#if defined(LIBMSEED_URL)
+  return 1;
+#else
+  return 0;
+#endif
+} /* End of libmseed_url_support() */
+
+/** ************************************************************************
+ * @brief Initialize ::MS3FileParam parameters for a file descriptor
+ *
+ * Initialize a ::MS3FileParam for reading from a specified @p fd
+ * (file descriptor).
+ *
+ * The ::MS3FileParam should be used with ms3_readmsr_r() or
+ * ms3_readmsr_selection().
+ *
+ * Note: the specified file descriptor will _not_ be closed during cleanup
+ * of the MS3FileParam.  The caller is responsible for closing the file
+ * descriptor when it is no longer needed.
+ *
+ * @param[in] fd File descriptor for input reading
+ *
+ * @returns Allocated ::MS3FileParam on success and NULL on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+MS3FileParam *
+ms3_msfp_init_fd (int fd)
+{
+  return ms3_msfp_init (0, 0, fd);
+}
+
+/** ************************************************************************
+ * @brief Initialize ::MS3FileParam parameters
+ *
+ * Initialize a ::MS3FileParam for reading from a specified @p startoffset,
+ * @p endoffset and/or @p fd (file descriptor).
+ *
+ * The ::MS3FileParam should be used with ms3_readmsr_r() or
+ * ms3_readmsr_selection().  Once all data has been read from the
+ * stream, it will be closed during the cleanup call of those routines.
+ *
+ * Note: the specified file descriptor will _not_ be closed during cleanup
+ * of the MS3FileParam.  The caller is responsible for closing the file
+ * descriptor when it is no longer needed.
+ *
+ * @param[in] startoffset Start offset in input stream if > 0
+ * @param[in] endoffset End offset in input stream if > 0
+ * @param[in] fd File descriptor for input reading if >= 0
+ *
+ * @returns Allocated ::MS3FileParam on success and NULL on error.
+ *
+ * @see ms3_readmsr_r()
+ * @see ms3_readmsr_selection()
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+MS3FileParam *
+ms3_msfp_init (int64_t startoffset, int64_t endoffset, int fd)
+{
+  MS3FileParam *msfp;
+
+  /* Initialize the read parameters if needed */
+  msfp = (MS3FileParam *)libmseed_memory.malloc (sizeof (MS3FileParam));
+
+  if (msfp == NULL)
+  {
+    ms_log (2, "%s(): Cannot allocate memory for MS3FileParam\n", __func__);
+    return NULL;
+  }
+
+  *msfp = (MS3FileParam)MS3FileParam_INITIALIZER;
+
+  /* Set the start and end offsets if provided */
+  if (startoffset > 0)
+  {
+    msfp->startoffset = startoffset;
+  }
+
+  if (endoffset > 0)
+  {
+    msfp->endoffset = endoffset;
+  }
+
+  /* Initialize the input handle if a file descriptor is provided */
+  if (fd >= 0)
+  {
+    msfp->input.type = LMIO_FD;
+
+    int myfd = dup (fd);
+    if (myfd < 0)
+    {
+      ms_log (2, "%s(): Cannot dup file descriptor %d\n", __func__, fd);
+      libmseed_memory.free (msfp);
+      return NULL;
+    }
+
+    msfp->input.handle = fdopen (myfd, "rb");
+    if (msfp->input.handle == NULL)
+    {
+      ms_log (2, "%s(): Cannot fdopen file descriptor %d\n", __func__, fd);
+      close (myfd);
+      libmseed_memory.free (msfp);
+      return NULL;
+    }
+
+    /* Seek to the start offset and set stream position; the dup'd descriptor
+     * shares the file offset of the original and is not otherwise positioned.
+     * Only required when a start offset is requested, which also keeps
+     * non-seekable descriptors (e.g. pipes) usable when startoffset is 0. */
+    if (msfp->startoffset > 0)
+    {
+      if (lmp_fseek64 (msfp->input.handle, msfp->startoffset, SEEK_SET))
+      {
+        ms_log (2, "%s(): Cannot seek file descriptor %d to offset %" PRId64 "\n", __func__, fd,
+                msfp->startoffset);
+        msio_fclose (&msfp->input);
+        libmseed_memory.free (msfp);
+        return NULL;
+      }
+
+      msfp->streampos = msfp->startoffset;
+    }
+  }
+
+  return msfp;
+}
+
+/***************************************************************************
+ *
+ * A helper routine to shift (remove bytes from the beginning of) the
+ * stream reading buffer for a MSFP.  The buffer length, reading offset
+ * and stream position indicators are all updated as necessary.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+static void
+ms3_shift_msfp (MS3FileParam *msfp, int shift)
+{
+  if (!msfp)
+  {
+    ms_log (2, "%s(): Required input not defined: 'msfp'\n", __func__);
+    return;
+  }
+
+  if (shift <= 0 || shift > msfp->readlength)
+  {
+    ms_log (2, "Cannot shift buffer, shift: %d, readlength: %d, readoffset: %d\n", shift,
+            msfp->readlength, msfp->readoffset);
+    return;
+  }
+
+  memmove (msfp->readbuffer, msfp->readbuffer + shift, msfp->readlength - shift);
+  msfp->readlength -= shift;
+
+  if (shift < msfp->readoffset)
+  {
+    msfp->readoffset -= shift;
+  }
+  else
+  {
+    msfp->streampos += (shift - msfp->readoffset);
+    msfp->readoffset = 0;
+  }
+
+  return;
+} /* End of ms3_shift_msfp() */
+
+/* Macro to calculate length of unprocessed buffer */
+#define MSFPBUFLEN(MSFP) (MSFP->readlength - MSFP->readoffset)
+
+/* Macro to return current reading position */
+#define MSFPREADPTR(MSFP) (MSFP->readbuffer + MSFP->readoffset)
+
+/***************************************************************************
+ * Implementation of MS3Record reading functions
+ *
+ * @see ms3_readmsr()
+ * @see ms3_readmsr_r()
+ * @see ms3_readmsr_selection()
+ ***************************************************************************/
+int
+_ms3_readmsr_impl (MS3FileParam **ppmsfp, MS3Record **ppmsr, const char *mspath, uint32_t flags,
+                   const MS3Selections *selections, int8_t verbose)
+{
+  MS3FileParam *msfp;
+  uint32_t pflags = flags;
+  char *pathname_range = NULL;
+
+  int parseval = 0;
+  int readsize = 0;
+  int readcount = 0;
+  int retcode = MS_NOERROR;
+  int atrangeend = 0;
+
+  if (!ppmsr || !ppmsfp)
+  {
+    ms_log (2, "%s(): Required input not defined: 'ppmsr' or 'ppmsfp'\n", __func__);
+    return MS_GENERROR;
+  }
+
+  msfp = *ppmsfp;
+
+  /* Initialize the read parameters if needed */
+  if (!msfp)
+  {
+    msfp = (MS3FileParam *)libmseed_memory.malloc (sizeof (MS3FileParam));
+
+    if (msfp == NULL)
+    {
+      ms_log (2, "Cannot allocate memory for MS3FileParam\n");
+      return MS_GENERROR;
+    }
+
+    *msfp = (MS3FileParam)MS3FileParam_INITIALIZER;
+
+    /* Redirect the supplied pointer to the allocated params */
+    *ppmsfp = msfp;
+  }
+
+  /* When cleanup is requested */
+  if (mspath == NULL)
+  {
+    msr3_free (ppmsr);
+
+    if (msfp->input.handle != NULL)
+      msio_fclose (&msfp->input);
+
+    if (msfp->readbuffer != NULL)
+      libmseed_memory.free (msfp->readbuffer);
+
+    /* If the parameters are the global parameters reset them */
+    if (*ppmsfp == &gMS3FileParam)
+    {
+      gMS3FileParam = (struct MS3FileParam)MS3FileParam_INITIALIZER;
+    }
+    /* Otherwise free the MS3FileParam */
+    else
+    {
+      libmseed_memory.free (*ppmsfp);
+      *ppmsfp = NULL;
+    }
+
+    return MS_NOERROR;
+  }
+
+  /* Allocate reading buffer */
+  if (msfp->readbuffer == NULL)
+  {
+    if (!(msfp->readbuffer = (char *)libmseed_memory.malloc (MAXRECLEN)))
+    {
+      ms_log (2, "Cannot allocate memory for read buffer\n");
+      return MS_GENERROR;
+    }
+  }
+
+  /* Open the stream if needed, use stdin if path is "-" */
+  if (msfp->input.handle == NULL)
+  {
+    /* Reject a path/URL that will not fit, rather than silently truncating it */
+    if (strlen (mspath) >= sizeof (msfp->path))
+    {
+      ms_log (2, "Path or URL is too long (%zu bytes), maximum is %zu: %s\n", strlen (mspath),
+              sizeof (msfp->path) - 1, mspath);
+      msr3_free (ppmsr);
+      return MS_GENERROR;
+    }
+
+    /* Parse and set byte range from path name suffix */
+    if (flags & MSF_PNAMERANGE)
+    {
+      pathname_range = parse_pathname_range (mspath, &msfp->startoffset, &msfp->endoffset);
+    }
+
+    /* Reject a negative start or end offset, whether parsed above or set
+     * directly by a caller on the MS3FileParam fields for advanced usage */
+    if (msfp->startoffset < 0 || msfp->endoffset < 0)
+    {
+      ms_log (2, "Invalid negative byte range offset for %s\n", mspath);
+      msr3_free (ppmsr);
+      return MS_GENERROR;
+    }
+
+    /* Store the path */
+    strncpy (msfp->path, mspath, sizeof (msfp->path) - 1);
+
+    /* Truncate to remove byte range suffix if present or maximum range */
+    if (pathname_range)
+    {
+      size_t rangeidx = (size_t)(pathname_range - mspath);
+
+      /* pathname_range points into the original mspath, which may be longer
+       * than the path buffer; clamp the index to stay within bounds */
+      if (rangeidx >= sizeof (msfp->path))
+        rangeidx = sizeof (msfp->path) - 1;
+
+      msfp->path[rangeidx] = '\0';
+    }
+    else
+    {
+      msfp->path[sizeof (msfp->path) - 1] = '\0';
+    }
+
+    if (strcmp (mspath, "-") == 0)
+    {
+      int myfd = dup (fileno (stdin));
+      if (myfd < 0)
+      {
+        ms_log (2, "Cannot dup stdin\n");
+        msr3_free (ppmsr);
+        return MS_GENERROR;
+      }
+
+      msfp->input.type = LMIO_FD;
+      msfp->input.handle = fdopen (myfd, "rb");
+      if (msfp->input.handle == NULL)
+      {
+        close (myfd);
+        msr3_free (ppmsr);
+        return MS_GENERROR;
+      }
+    }
+    else
+    {
+      if (msio_fopen (&msfp->input, msfp->path, "rb", &msfp->startoffset, &msfp->endoffset))
+      {
+        msr3_free (ppmsr);
+        return MS_GENERROR;
+      }
+
+      /* Set stream position to start offset */
+      if (msfp->startoffset > 0)
+      {
+        msfp->streampos = msfp->startoffset;
+      }
+    }
+  }
+
+  /* Defer data unpacking if selections are used by unsetting MSF_UNPACKDATA */
+  if ((flags & MSF_UNPACKDATA) && selections)
+    pflags &= ~(MSF_UNPACKDATA);
+
+  /* Read data and search for records until input stream ends or end offset is reached */
+  for (;;)
+  {
+    /* Finished when within MINRECLEN from known end offset in stream */
+    if (msfp->endoffset && (msfp->endoffset - msfp->streampos) < (MINRECLEN - 1))
+    {
+      retcode = MS_ENDOFFILE;
+      break;
+    }
+
+    /* Read more data into buffer if not at EOF and buffer has less than MINRECLEN
+     * or more data is needed for the current record detected in buffer. */
+    if (!msio_feof (&msfp->input) && (MSFPBUFLEN (msfp) < MINRECLEN || parseval > 0))
+    {
+      /* Reset offsets if no unprocessed data in buffer */
+      if (MSFPBUFLEN (msfp) <= 0)
+      {
+        msfp->readlength = 0;
+        msfp->readoffset = 0;
+      }
+      /* Otherwise shift existing data to beginning of buffer */
+      else if (msfp->readoffset > 0)
+      {
+        ms3_shift_msfp (msfp, msfp->readoffset);
+      }
+
+      /* Determine read size */
+      readsize = (MAXRECLEN - msfp->readlength);
+
+      /* Do not read beyond a known end offset, for local files only.
+       * URL reads must request at least a curl receive-chunk of data
+       * (see msio_fread()); the end offset is enforced below instead,
+       * once the data has been buffered, via the atrangeend check. */
+      if (msfp->endoffset && msfp->input.type != LMIO_URL)
+      {
+        int64_t inrange = msfp->endoffset - (msfp->streampos + MSFPBUFLEN (msfp));
+        if (inrange < (readsize - 1))
+          readsize = (inrange >= 0) ? (int)(inrange + 1) : 0;
+      }
+
+      /* Read data into record buffer only when there is room; a full buffer
+       * (readsize == 0) means the buffer is exhausted for the current record
+       * and is handled by the oversized-record logic below, not a read error. */
+      if (readsize > 0)
+      {
+        readcount = (int)msio_fread (&msfp->input, msfp->readbuffer + msfp->readlength, readsize);
+
+        if (readcount <= 0 && !msio_feof (&msfp->input))
+        {
+          ms_log (2, "Error reading %s at offset %" PRId64 "\n", msfp->path, msfp->streampos);
+          retcode = MS_GENERROR;
+          break;
+        }
+
+        /* Update read buffer length */
+        msfp->readlength += readcount;
+      }
+    }
+
+    /* At end of a known byte range once buffered data reaches the end offset */
+    atrangeend = (msfp->endoffset && (msfp->streampos + MSFPBUFLEN (msfp)) > msfp->endoffset);
+
+    /* Attempt to parse record from buffer */
+    if (MSFPBUFLEN (msfp) >= MINRECLEN)
+    {
+      /* Set end of file flag if at EOF or a known end offset */
+      if (msio_feof (&msfp->input) || atrangeend)
+        pflags |= MSF_ATENDOFFILE;
+
+      parseval = msr3_parse (MSFPREADPTR (msfp), MSFPBUFLEN (msfp), ppmsr, pflags, verbose);
+
+      /* Record detected and parsed */
+      if (parseval == 0)
+      {
+        msfp->flags |= MSFP_PARSEDRECORD;
+
+        /* Test against selections if supplied */
+        if (selections && !ms3_matchselect (selections, (*ppmsr)->sid, (*ppmsr)->starttime,
+                                            msr3_endtime (*ppmsr), (*ppmsr)->pubversion, NULL))
+        {
+          if (verbose > 1)
+          {
+            ms_log (
+                0, "Skipping (selection) record for %s (%d bytes) starting at offset %" PRId64 "\n",
+                (*ppmsr)->sid, (*ppmsr)->reclen, msfp->streampos);
+          }
+
+          /* Skip record length bytes, update reading offset and file position */
+          msfp->readoffset += (*ppmsr)->reclen;
+          msfp->streampos += (*ppmsr)->reclen;
+        }
+        else
+        {
+          /* Unpack data samples if this has been deferred */
+          if (!(pflags & MSF_UNPACKDATA) && (flags & MSF_UNPACKDATA) && (*ppmsr)->samplecnt > 0)
+          {
+            if (msr3_unpack_data ((*ppmsr), verbose) != (*ppmsr)->samplecnt)
+            {
+              ms_log (2, "Cannot unpack data samples for record at byte offset %" PRId64 ": %s\n",
+                      msfp->streampos, msfp->path);
+
+              retcode = MS_GENERROR;
+              break;
+            }
+          }
+
+          if (verbose > 1)
+            ms_log (0, "Read record length of %d bytes\n", (*ppmsr)->reclen);
+
+          /* Update reading offset, stream position and record count */
+          msfp->readoffset += (*ppmsr)->reclen;
+          msfp->streampos += (*ppmsr)->reclen;
+          msfp->recordcount++;
+
+          retcode = MS_NOERROR;
+          break;
+        }
+      }
+      else if (parseval < 0)
+      {
+        /* Skip non-data if requested */
+        if (flags & MSF_SKIPNOTDATA)
+        {
+          if (verbose > 1)
+          {
+            ms_log (0, "Skipped %d bytes of non-data record at byte offset %" PRId64 "\n", SKIPLEN,
+                    msfp->streampos);
+          }
+
+          /* Skip SKIPLEN bytes, update reading offset and file position */
+          msfp->readoffset += SKIPLEN;
+          msfp->streampos += SKIPLEN;
+        }
+        /* Parsing errors */
+        else if (parseval == MS_NOTSEED)
+        {
+          ms_log (2, "No miniSEED data detected in %s (starting at byte offset %" PRId64 ")\n",
+                  msfp->path, msfp->streampos);
+
+          retcode = parseval;
+          break;
+        }
+        else if (parseval == MS_OUTOFRANGE)
+        {
+          ms_log (2,
+                  "miniSEED record length out of supported range in %s (at byte offset %" PRId64
+                  ")\n",
+                  msfp->path, msfp->streampos);
+
+          retcode = parseval;
+          break;
+        }
+        else
+        {
+          retcode = parseval;
+          break;
+        }
+      }
+      else /* parseval > 0 (found record but need more data) */
+      {
+        /* Check for parse hints that are larger than MAXRECLEN */
+        if ((MSFPBUFLEN (msfp) + parseval) > MAXRECLEN)
+        {
+          if (flags & MSF_SKIPNOTDATA)
+          {
+            /* Skip SKIPLEN bytes, update reading offset and file position */
+            msfp->readoffset += SKIPLEN;
+            msfp->streampos += SKIPLEN;
+          }
+          else
+          {
+            ms_log (2,
+                    "miniSEED record length out of supported range in %s (at byte offset %" PRId64
+                    ")\n",
+                    msfp->path, msfp->streampos);
+
+            retcode = MS_OUTOFRANGE;
+            break;
+          }
+        }
+        /* End of file or known end offset check */
+        else if (msio_feof (&msfp->input) || atrangeend)
+        {
+          if (verbose)
+            ms_log (0, "Truncated record at byte offset %" PRId64 ", end offset %" PRId64 ": %s\n",
+                    msfp->streampos, msfp->endoffset, msfp->path);
+
+          retcode = MS_ENDOFFILE;
+          break;
+        }
+      }
+    } /* End of record detection */
+
+    /* Finished when at end-of-stream or end offset and buffer contains less than MINRECLEN */
+    if ((msio_feof (&msfp->input) || atrangeend) && MSFPBUFLEN (msfp) < MINRECLEN)
+    {
+      if (!(msfp->flags & MSFP_PARSEDRECORD))
+      {
+        ms_log (2, "%s: No data records read, not SEED?\n", msfp->path);
+        retcode = MS_NOTSEED;
+      }
+      else
+      {
+        retcode = MS_ENDOFFILE;
+      }
+
+      break;
+    }
+  } /* End of reading, record detection and parsing loop */
+
+  /* Cleanup target MS3Record if returning an error */
+  if (retcode != MS_NOERROR)
+  {
+    msr3_free (ppmsr);
+  }
+
+  return retcode;
+} /* End of ms3_readmsr_selection() */
+
+/** ************************************************************************
+ * @brief Read miniSEED records from a file or URL
+ *
+ * This routine will open and read, with subsequent calls, all
+ * miniSEED records in specified stream (file or URL).
+ *
+ * All stream reading parameters are stored in a ::MS3FileParam
+ * container and returned (via a pointer to a pointer) for the calling
+ * routine to use in subsequent calls.  A ::MS3FileParam container
+ * will be allocated if @p *ppmsfp is @c NULL.  This routine is thread
+ * safe and can be used to read multiple streams in parallel as long as
+ * the stream reading parameters are managed appropriately.
+ *
+ * The @p flags argument are bit flags used to control the reading
+ * process.  The following flags are supported:
+ *  - ::MSF_SKIPNOTDATA - skip input that cannot be identified as miniSEED
+ *  - ::MSF_UNPACKDATA data samples will be unpacked
+ *  - ::MSF_VALIDATECRC Validate CRC (if present in format)
+ *  - ::MSF_PNAMERANGE Parse byte range suffix from @p mspath
+ *
+ * If ::MSF_PNAMERANGE is set in @p flags, the @p mspath will be
+ * searched for start and end byte offsets for the file or URL in the
+ * following format: '@c PATH@@@c START-@c END', where @c START and @c
+ * END are both optional and specified in bytes.
+ *
+ * After reading all the records in a stream the calling program should
+ * call this routine a final time with @p mspath set to NULL.  This
+ * will close the input stream and free allocated memory.
+ *
+ * @param[out] ppmsr Pointer-to-pointer of an ::MS3Record, which will
+ * contain a parsed record on success.
+ *
+ * @param[in] mspath File or URL to read
+ *
+ * @param[in] flags Flags used to control parsing, see @ref control-flags
+ *
+ * @param[in] verbose Controls verbosity, 0 means no diagnostic output
+ *
+ * @returns ::MS_NOERROR and populates an ::MS3Record struct, at @p *ppmsr,
+ * on successful read.  On error, a (negative) libmseed error
+ * code is returned and *ppmsr is set to NULL.
+ * @retval ::MS_ENDOFFILE on reaching the end of a stream
+ * @retval ::MS_NOTSEED when no miniSEED records were detected
+ *
+ * @see @ref data-selections
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see ms3_readmsr_r()
+ * @see ms3_readmsr_selection()
+ ***************************************************************************/
+int
+ms3_readmsr (MS3Record **ppmsr, const char *mspath, uint32_t flags, int8_t verbose)
+{
+  MS3FileParam *msfp = &gMS3FileParam;
+
+  return ms3_readmsr_selection (&msfp, ppmsr, mspath, flags, NULL, verbose);
+} /* End of ms3_readmsr() */
+
+/** ************************************************************************
+ * @copydoc ms3_readmsr()
+ *
+ * This function is identical to ms3_readmsr() but with the additonal @p ppmsfp
+ * parameter enabling re-entrant capabilities. This function is thread safe and
+ * can be used to read more than one stream at a time as long as separate
+ * ::MS3FileParam instances are used for each stream.
+ *
+ * @param[out] ppmsfp Pointer-to-pointer of an ::MS3FileParam, which
+ * contains the state of stream reading across iterative calls of this
+ * function.
+ *
+ * A ::MS3FileParam container will be allocated if @p *ppmsfp is @c NULL.
+ ***************************************************************************/
+int
+ms3_readmsr_r (MS3FileParam **ppmsfp, MS3Record **ppmsr, const char *mspath, uint32_t flags,
+               int8_t verbose)
+{
+  return ms3_readmsr_selection (ppmsfp, ppmsr, mspath, flags, NULL, verbose);
+} /* End of ms_readmsr_r() */
+
+/** ************************************************************************
+ * @copydoc ms3_readmsr()
+ *
+ * This function is identical to ms3_readmsr() but with the additonal @p ppmsfp
+ * and @p selections parameters:
+ *
+ * @param[out] ppmsfp Pointer-to-pointer of an ::MS3FileParam, which contains
+ * the state of stream reading across iterative calls of this function. A
+ * ::MS3FileParam container will be allocated if @p *ppmsfp is @c NULL.
+ *
+ * @param[in] selections Specify limits to which data should be
+ * returned, see @ref data-selections
+ ***************************************************************************/
+int
+ms3_readmsr_selection (MS3FileParam **ppmsfp, MS3Record **ppmsr, const char *mspath, uint32_t flags,
+                       const MS3Selections *selections, int8_t verbose)
+{
+  return _ms3_readmsr_impl (ppmsfp, ppmsr, mspath, flags, selections, verbose);
+}
+
+/** ************************************************************************
+ * @brief Read miniSEED from a file into a trace list
+ *
+ * This is a simple wrapper for ms3_readtracelist_selection() that
+ * uses no selections.
+ *
+ * See ms3_readtracelist_selection() for a further description of
+ * arguments.
+ *
+ * @returns Return value from ms3_readtracelist_selection()
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see @ref trace-list
+ ***************************************************************************/
+int
+ms3_readtracelist (MS3TraceList **ppmstl, const char *mspath, const MS3Tolerance *tolerance,
+                   int8_t splitversion, uint32_t flags, int8_t verbose)
+{
+  return ms3_readtracelist_selection (ppmstl, mspath, tolerance, NULL, splitversion, flags,
+                                      verbose);
+} /* End of ms3_readtracelist() */
+
+/** ************************************************************************
+ * @brief Read miniSEED from a file into a trace list, with time range
+ * selection
+ *
+ * This is a wrapper for ms3_readtraces_selection() that creates a
+ * simple selection for a specified time window.
+ *
+ * See ms3_readtracelist_selection() for a further description of
+ * arguments.
+ *
+ * @returns Return value from ms3_readtracelist_selection()
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see @ref trace-list
+ ***************************************************************************/
+int
+ms3_readtracelist_timewin (MS3TraceList **ppmstl, const char *mspath, const MS3Tolerance *tolerance,
+                           nstime_t starttime, nstime_t endtime, int8_t splitversion,
+                           uint32_t flags, int8_t verbose)
+{
+  MS3Selections selection;
+  MS3SelectTime selecttime;
+
+  selection.sidpattern[0] = '*';
+  selection.sidpattern[1] = '\0';
+  selection.timewindows = &selecttime;
+  selection.pubversion = 0;
+  selection.next = NULL;
+
+  selecttime.starttime = starttime;
+  selecttime.endtime = endtime;
+  selecttime.next = NULL;
+
+  return ms3_readtracelist_selection (ppmstl, mspath, tolerance, &selection, splitversion, flags,
+                                      verbose);
+} /* End of ms3_readtracelist_timewin() */
+
+/** ************************************************************************
+ * @brief Read miniSEED from a file into a trace list, with selection
+ * filtering
+ *
+ * This routine will open and read all miniSEED records in specified
+ * file and populate a ::MS3TraceList, allocating this struture if
+ * needed.  This routine is thread safe.
+ *
+ * If @p selections is not NULL, the ::MS3Selections will be used to
+ * limit which records are added to the trace list.  Any data not
+ * matching the selections will be skipped.
+ *
+ * As this routine reads miniSEED records it attempts to construct
+ * continuous time series, merging segments when possible.  See
+ * mstl3_addmsr() for details of @p tolerance.
+ *
+ * The @p splitversion flag controls whether data are grouped
+ * according to data publication version (or quality for miniSEED
+ * 2.x).  See mstl3_addmsr() for full details.
+ *
+ * If the ::MSF_RECORDLIST flag is set in @p flags, a ::MS3RecordList
+ * will be built for each ::MS3TraceSeg.  The ::MS3RecordPtr entries
+ * contain the location of the data record, bit flags, extra headers, etc.
+ * Extra headers are omitted if ::MSF_RECORDLIST_NOEXTRAS is also set.
+ *
+ * @param[out] ppmstl Pointer-to-pointer to a ::MS3TraceList to populate
+ * @param[in] mspath File to read
+ * @param[in] tolerance Tolerance function pointers as ::MS3Tolerance
+ * @param[in] selections Pointer to ::MS3Selections for limiting data
+ * @param[in] splitversion Flag to control splitting of version/quality
+ * @param[in] flags
+ * @parblock
+ *  - @c ::MSF_RECORDLIST : Build a ::MS3RecordList for each ::MS3TraceSeg
+ *  - @c ::MSF_RECORDLIST_NOEXTRAS : Do not copy extra headers into record list entries
+ *  - @c ::MSF_SKIPADJACENTDUPLICATES : Skip adjacent duplicate records
+ *  - Flags supported by msr3_parse()
+ *  - Flags supported by mstl3_addmsr()
+ * @endparblock
+ * @param[in] verbose Controls verbosity, 0 means no diagnostic output
+ *
+ * @returns ::MS_NOERROR and populates an ::MS3TraceList struct at *ppmstl
+ * on success, otherwise returns a (negative) libmseed error code.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see @ref trace-list
+ * @see @ref data-selections
+ ***************************************************************************/
+int
+ms3_readtracelist_selection (MS3TraceList **ppmstl, const char *mspath,
+                             const MS3Tolerance *tolerance, const MS3Selections *selections,
+                             int8_t splitversion, uint32_t flags, int8_t verbose)
+{
+  MS3Record *msr = NULL;
+  MS3FileParam *msfp = NULL;
+  MS3TraceSeg *seg = NULL;
+  MS3RecordPtr *recordptr = NULL;
+  uint32_t dataoffset;
+  uint32_t datasize;
+  uint32_t previous_crc = 0;
+  int retcode;
+
+  if (!ppmstl)
+  {
+    ms_log (2, "%s(): Required input not defined: 'ppmstl'\n", __func__);
+    return MS_GENERROR;
+  }
+
+  /* Initialize MS3TraceList if needed */
+  if (!*ppmstl)
+  {
+    *ppmstl = mstl3_init (*ppmstl);
+
+    if (!*ppmstl)
+    {
+      ms_log (2, "Cannot allocate memory\n");
+      return MS_GENERROR;
+    }
+  }
+
+  /* Loop over the input file and add each record to trace list */
+  while ((retcode = ms3_readmsr_selection (&msfp, &msr, mspath, flags, selections, verbose)) ==
+         MS_NOERROR)
+  {
+    if (flags & MSF_SKIPADJACENTDUPLICATES)
+    {
+      uint32_t crc = ms_crc32c ((const uint8_t *)msr->record, msr->reclen, 0);
+
+      if (crc == previous_crc)
+      {
+        continue;
+      }
+
+      previous_crc = crc;
+    }
+
+    seg = mstl3_addmsr_recordptr (*ppmstl, msr, (flags & MSF_RECORDLIST) ? &recordptr : NULL,
+                                  splitversion, 1, flags, tolerance);
+
+    if (seg == NULL)
+    {
+      ms_log (2, "%s: Cannot add record to trace list\n", msr->sid);
+
+      retcode = MS_GENERROR;
+      break;
+    }
+
+    /* Populate remaining fields of record pointer */
+    if (recordptr)
+    {
+      /* Determine offset to data and length of data payload */
+      if (msr3_data_bounds (msr, &dataoffset, &datasize))
+      {
+        retcode = MS_GENERROR;
+        break;
+      }
+
+      recordptr->bufferptr = NULL;
+      recordptr->fileptr = NULL;
+      recordptr->filename = mspath;
+      recordptr->fileoffset = msfp->streampos - msr->reclen;
+      recordptr->dataoffset = dataoffset;
+      recordptr->prvtptr = NULL;
+    }
+  }
+
+  /* Reset return code to MS_NOERROR on successful read by ms_readmsr_selection() */
+  if (retcode == MS_ENDOFFILE)
+    retcode = MS_NOERROR;
+
+  ms3_readmsr_selection (&msfp, &msr, NULL, 0, NULL, 0);
+
+  return retcode;
+} /* End of ms3_readtracelist_selection() */
+
+/** ************************************************************************
+ * @brief Set User-Agent header for URL-based requests.
+ *
+ * Configure global User-Agent header for URL-based requests
+ * generated by the library.  The @p program and @p version values
+ * will be combined into the form "program/version" along with
+ * declarations of the library and URL-supporting dependency versions.
+ *
+ * An error will be returned when the library was not compiled with
+ * URL support.
+ *
+ * @param[in] program Name of calling program
+ * @param[in] version Version of calling program
+ *
+ * @returns 0 on succes and a negative library error code on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+int
+ms3_url_useragent (const char *program, const char *version)
+{
+#if !defined(LIBMSEED_URL)
+  (void)program; /* Unused */
+  (void)version; /* Unused */
+  ms_log (2, "URL support not included in library\n");
+  return -1;
+#else
+  return msio_url_useragent (program, version);
+#endif
+} /* End of ms3_url_useragent() */
+
+/** ************************************************************************
+ * @brief Set connection and stall timeouts for URL-based requests.
+ *
+ * Set global timeouts, in seconds, for URL-based requests generated
+ * by the library.  The @p connecttimeout limits the time allowed to
+ * establish a connection and the @p stalltimeout limits the time a
+ * transfer is allowed to proceed at less than 1 byte/second, guarding
+ * against a stalled connection that would otherwise hang indefinitely.
+ *
+ * A value of 0 disables the respective timeout and a negative value
+ * leaves it unchanged.  If not set, a connect timeout of 60 seconds
+ * and a stall timeout of 300 seconds are used by default.  The stall
+ * timeout can also be set with the \b LIBMSEED_URL_TIMEOUT
+ * environment variable, overridden by a call to this function.
+ *
+ * An error will be returned when the library was not compiled with
+ * URL support.
+ *
+ * @param[in] connecttimeout Connection timeout in seconds, negative to leave unchanged
+ * @param[in] stalltimeout Stall (low-speed) timeout in seconds, negative to leave unchanged
+ *
+ * @returns 0 on succes and a negative library error code on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+int
+ms3_url_timeout (long connecttimeout, long stalltimeout)
+{
+#if !defined(LIBMSEED_URL)
+  (void)connecttimeout; /* Unused */
+  (void)stalltimeout;   /* Unused */
+  ms_log (2, "URL support not included in library\n");
+  return -1;
+#else
+  return msio_url_timeout (connecttimeout, stalltimeout);
+#endif
+} /* End of ms3_url_timeout() */
+
+/** ************************************************************************
+ * @brief Set authentication credentials for URL-based requests.
+ *
+ * Sets global user and password for authentication for URL-based
+ * requests generated by the library.  The expected format of the
+ * credentials is: "[user name]:[password]" (without the square
+ * brackets).
+ *
+ * An error will be returned when the library was not compiled with
+ * URL support.
+ *
+ * @param[in] userpassword User and password as user:password
+ *
+ * @returns 0 on succes and a negative library error code on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+int
+ms3_url_userpassword (const char *userpassword)
+{
+#if !defined(LIBMSEED_URL)
+  (void)userpassword; /* Unused */
+  ms_log (2, "URL support not included in library\n");
+  return -1;
+#else
+  return msio_url_userpassword (userpassword);
+#endif
+} /* End of ms3_url_userpassword() */
+
+/** ************************************************************************
+ * @brief Add header to any URL-based requests.
+ *
+ * Sets global header to be included in URL-based requests generated
+ * by the library.
+ *
+ * An error will be returned when the library was not compiled with
+ * URL support.
+ *
+ * @see ms3_url_freeheaders()
+ *
+ * @param[in] header Header in "key: value" format
+ *
+ * @returns 0 on succes and a negative library error code on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ ***************************************************************************/
+int
+ms3_url_addheader (const char *header)
+{
+#if !defined(LIBMSEED_URL)
+  (void)header; /* Unused */
+  ms_log (2, "URL support not included in library\n");
+  return -1;
+#else
+  return msio_url_addheader (header);
+#endif
+} /* End of ms3_url_addheader() */
+
+/** ************************************************************************
+ * @brief Free all set headers for URL-based requests.
+ *
+ * Free all global headers for URL-based requests as set by
+ * ms3_url_addheader().
+ *
+ * @see ms3_url_addheader()
+ ***************************************************************************/
+void
+ms3_url_freeheaders (void)
+{
+#if !defined(LIBMSEED_URL)
+  ms_log (2, "URL support not included in library\n");
+  return;
+#else
+  msio_url_freeheaders ();
+#endif
+} /* End of ms3_url_freeheaders() */
+
+/** ************************************************************************
+ * @brief Write miniSEED from an ::MS3Record container to a file
+ *
+ * Pack ::MS3Record data into miniSEED record(s) by calling
+ * msr3_pack() and write to a specified file.  The ::MS3Record
+ * container is used as a template for record(s) written to the file.
+ *
+ * The @p overwrite flag controls whether a existing file is
+ * overwritten or not.  If true (non-zero) any existing file will be
+ * replaced.  If false (zero) new records will be appended to an
+ * existing file.  In either case, new files will be created if they
+ * do not yet exist.
+ *
+ * To write a header-only record with no data payload (i.e., no samples), set
+ * @ref MS3Record.numsamples to 0.
+ *
+ * @param[in,out] msr ::MS3Record containing data to write
+ * @param[in] mspath File for output records
+ * @param[in] overwrite Flag to control overwriting versus appending
+ * @param[in] flags Flags controlling data packing, see msr3_pack()
+ * @param[in] verbose Controls verbosity, 0 means no diagnostic output
+ *
+ * @returns the number of records written on success and -1 on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see msr3_pack()
+ ***************************************************************************/
+int64_t
+msr3_writemseed (MS3Record *msr, const char *mspath, int8_t overwrite, uint32_t flags,
+                 int8_t verbose)
+{
+  FILE *ofp;
+  const char *perms = (overwrite) ? "wb" : "ab";
+  int64_t packedrecords = 0;
+
+  MS3RecordPacker *packer;
+  char *record = NULL;
+  int32_t reclen = 0;
+  int result;
+
+  if (!msr || !mspath)
+  {
+    ms_log (2, "%s(): Required input not defined: 'msr' or 'mspath'\n", __func__);
+    return -1;
+  }
+
+  /* Open output file or use stdout */
+  if (strcmp (mspath, "-") == 0)
+  {
+    ofp = stdout;
+  }
+  else if ((ofp = fopen (mspath, perms)) == NULL)
+  {
+    ms_log (2, "Cannot open output file %s: %s\n", mspath, strerror (errno));
+    return -1;
+  }
+
+  /* Initialize packer */
+  packer = msr3_pack_init (msr, flags, verbose);
+  if (!packer)
+  {
+    if (ofp != stdout)
+      fclose (ofp);
+    return -1;
+  }
+
+  /* Pack the MS3Record */
+  while ((result = msr3_pack_next (packer, &record, &reclen)) == 1)
+  {
+    if (fwrite (record, reclen, 1, (FILE *)ofp) != 1)
+    {
+      ms_log (2, "Error writing to output file\n");
+      packedrecords = -1;
+      break;
+    }
+
+    packedrecords++;
+  }
+
+  /* A negative result indicates a packing error */
+  if (result < 0 && packedrecords >= 0)
+    packedrecords = -1;
+
+  /* Free packer and get total packed samples */
+  msr3_pack_free (&packer, NULL);
+
+  /* Close file and return record count */
+  if (ofp != stdout)
+    fclose (ofp);
+
+  return packedrecords;
+} /* End of msr3_writemseed() */
+
+/***************************************************************************
+ *
+ * Internal record handler.  The handler data should be a pointer to
+ * an open file descriptor to which records will be written.
+ *
+ ***************************************************************************/
+static void
+ms_record_handler_int (char *record, int reclen, void *ofp)
+{
+  if (fwrite (record, reclen, 1, (FILE *)ofp) != 1)
+  {
+    ms_log (2, "Error writing to output file\n");
+  }
+} /* End of ms_record_handler_int() */
+
+/** ************************************************************************
+ * @brief Write miniSEED from an ::MS3TraceList container to a file
+ *
+ * Pack ::MS3TraceList data into miniSEED record(s) by calling
+ * mstl3_pack() and write to a specified file.
+ *
+ * The @p overwrite flag controls whether a existing file is
+ * overwritten or not.  If true (non-zero) any existing file will be
+ * replaced.  If false (zero) new records will be appended to an
+ * existing file.  In either case, new files will be created if they
+ * do not yet exist.
+ *
+ * @param[in,out] mstl ::MS3TraceList containing data to write
+ * @param[in] mspath File for output records
+ * @param[in] overwrite Flag to control overwriting versus appending
+ * @param[in] maxreclen The maximum record length to create
+ * @param[in] encoding encoding Encoding for data samples, see msr3_pack()
+ * @param[in] flags Flags controlling data packing, see mstl3_pack() and msr3_pack()
+ * @param[in] verbose Controls verbosity, 0 means no diagnostic output
+ *
+ * @returns the number of records written on success and -1 on error.
+ *
+ * @ref MessageOnError - this function logs a message on error
+ *
+ * @see mstl3_pack()
+ * @see msr3_pack()
+ ***************************************************************************/
+int64_t
+mstl3_writemseed (MS3TraceList *mstl, const char *mspath, int8_t overwrite, int maxreclen,
+                  int8_t encoding, uint32_t flags, int8_t verbose)
+{
+  FILE *ofp;
+  const char *perms = (overwrite) ? "wb" : "ab";
+  int64_t packedrecords = 0;
+
+  if (!mstl || !mspath)
+  {
+    ms_log (2, "%s(): Required input not defined: 'msr' or 'mspath'\n", __func__);
+    return -1;
+  }
+
+  /* Open output file or use stdout */
+  if (strcmp (mspath, "-") == 0)
+  {
+    ofp = stdout;
+  }
+  else if ((ofp = fopen (mspath, perms)) == NULL)
+  {
+    ms_log (2, "Cannot open output file %s: %s\n", mspath, strerror (errno));
+    return -1;
+  }
+
+  /* Do not modify the trace list during packing */
+  flags |= MSF_MAINTAINMSTL;
+
+  /* Pack all data */
+  flags |= MSF_FLUSHDATA;
+
+  packedrecords = mstl3_pack (mstl, &ms_record_handler_int, ofp, maxreclen, encoding, NULL, flags,
+                              verbose, NULL);
+
+  /* The record handler cannot signal a write failure, so flush and check
+   * the stream directly.  A full or read-only filesystem may not surface
+   * an error until buffered data is flushed. */
+  if (packedrecords >= 0 && (fflush (ofp) != 0 || ferror (ofp)))
+  {
+    ms_log (2, "Error writing to output file %s\n", mspath);
+    packedrecords = -1;
+  }
+
+  /* Close file and return record count */
+  if (ofp != stdout)
+  {
+    if (fclose (ofp) != 0 && packedrecords >= 0)
+    {
+      ms_log (2, "Error closing output file %s: %s\n", mspath, strerror (errno));
+      packedrecords = -1;
+    }
+  }
+
+  return packedrecords;
+} /* End of mstl3_writemseed() */
+
+/** ************************************************************************
+ * Parse a range from the end of a string.
+ *
+ * Expected format is: 'PATH@START-END'
+ * where START and END are optional but the dash must be included
+ * for an END to be present.  The START and END values must contain
+ * 20 or fewer digits (0-9).
+ *
+ * Expected variations: '@START', '@START-END', '@-END'
+ *
+ * @returns Pointer to '@' starting valid range on success, otherwise NULL.
+ ***************************************************************************/
+char *
+parse_pathname_range (const char *string, int64_t *start, int64_t *end)
+{
+  char startstr[21] = {0}; /* Maximum of 20 digit value */
+  char endstr[21] = {0};   /* Maximum of 20 digit value */
+  unsigned long long startval = 0;
+  unsigned long long endval = 0;
+  uint8_t startdigits = 0;
+  uint8_t enddigits = 0;
+  char *dash = NULL;
+  char *at = NULL;
+  char *ptr;
+
+  if (!string || (!start || !end))
+    return NULL;
+
+  /* Find last '@' */
+  if ((at = strrchr (string, '@')) != NULL)
+  {
+    /* Walk the characters in the string following '@'.
+     * Fail as soon as a non-conforming pattern is determined. */
+    ptr = at;
+    while (*(++ptr) != '\0')
+    {
+      /* If a digit before dash, part of start */
+      if (isdigit ((unsigned char)*ptr) && dash == NULL)
+        startstr[startdigits++] = *ptr;
+      /* If a digit after dash, part of end */
+      else if (isdigit ((unsigned char)*ptr) && dash != NULL)
+        endstr[enddigits++] = *ptr;
+      /* If a dash after a dash, not a valid range */
+      else if (*ptr == '-' && dash != NULL)
+        return NULL;
+      /* If first dash found, store pointer */
+      else if (*ptr == '-' && dash == NULL)
+        dash = ptr;
+      /* Nothing else is acceptable, not a valid range */
+      else
+        return NULL;
+
+      /* If digit sequences have exceeded limits, not a valid range */
+      if (startdigits >= sizeof (startstr) || enddigits >= sizeof (endstr))
+        return NULL;
+    }
+
+    /* A range with no digits at all, e.g. a bare '@' or '@-', is not valid */
+    if (!startdigits && !enddigits)
+      return NULL;
+
+    /* Convert start and end values to numbers if non-zero length,
+     * rejecting values that overflow a signed 64-bit offset */
+    if (startdigits)
+    {
+      startval = strtoull (startstr, NULL, 10);
+
+      if (startval > INT64_MAX)
+        return NULL;
+    }
+
+    if (enddigits)
+    {
+      endval = strtoull (endstr, NULL, 10);
+
+      if (endval > INT64_MAX)
+        return NULL;
+    }
+
+    if (start && startdigits)
+      *start = (int64_t)startval;
+
+    if (end && enddigits)
+      *end = (int64_t)endval;
+  }
+
+  return at;
+} /* End of parse_pathname_range() */

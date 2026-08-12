@@ -5,21 +5,22 @@
 #   CFLAGS : Specify compiler options to use
 
 # Required compiler parameters
-CFLAGS += -I../libslink -I../ezxml
+CFLAGS += -I../libslink -I../libmseed -I../ezxml
 
-LDFLAGS = -L../libslink -L../ezxml
-LDLIBS  = -lslink -lezxml
+LDFLAGS = -L../libslink -L../libmseed -L../ezxml
+
+LDLIBS  = -lslink -lmseed -lezxml
 
 # For Windows w/ Unix-like build environments uncomment the following line
 # This is needed for MinGW but not for Cygwin
-#LDLIBS = -lslink -lezxml -lws2_32
+#LDLIBS = -lslink -lmseed -lezxml -lws2_32
 
 # For SunOS/Solaris uncomment the following line
-#LDLIBS = -lslink -lezxml -lsocket -lnsl -lrt
+#LDLIBS = -lslink -lmseed -lezxml -lsocket -lnsl -lrt
 
 BIN  = ../slinktool
 
-SRCS = dsarchive.c archive.c slinkxml.c slinktool.c
+SRCS = slinkinfo.c slinktool.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(BIN)
