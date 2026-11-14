@@ -1,0 +1,9 @@
+# Build artifacts
+*.o
+*.a
+/slinktool
+
+# Editor settings
+/.vscode/
+
+/TODO
