@@ -26,10 +26,12 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "globmatch.h"
 #include "libslink.h"
 
 #if !defined(SLP_WIN)
@@ -41,6 +43,7 @@
 #include "mbedtls/include/mbedtls/entropy.h"
 #include "mbedtls/include/mbedtls/error.h"
 #include "mbedtls/include/mbedtls/net_sockets.h"
+#include "mbedtls/include/mbedtls/platform_util.h"
 #include "mbedtls/include/mbedtls/ssl.h"
 
 /* Some portable macros to test error conditions */
@@ -54,6 +57,13 @@
 #define IS_ECONNRESET() (errno == ECONNRESET)
 #endif
 
+/* Writes to a closed connection return EPIPE rather than raising SIGPIPE */
+#if defined(MSG_NOSIGNAL)
+#define SEND_FLAGS MSG_NOSIGNAL
+#else
+#define SEND_FLAGS 0
+#endif
+
 /* Functions only used in this source file */
 static char *extreply_int (char *readbuf, int bytesread);
 static int sayhello_int (SLCD *slconn);
@@ -61,11 +71,17 @@ static int batchmode_int (SLCD *slconn);
 static int negotiate_uni_v3 (SLCD *slconn);
 static int negotiate_multi_v3 (SLCD *slconn);
 static int negotiate_v4 (SLCD *slconn);
+static int is_wildcard (const SLstream *stream);
+static const SLstream *first_wildcard_int (SLCD *slconn);
+static int stream_overlaps (SLCD *slconn, const SLstream *firstwild, const SLstream *stream);
+static SLstream *next_stream_int (SLCD *slconn, SLstream *curstream);
 static int sockstartup_int (void);
 static int sockconnect_int (SOCKET sock, struct sockaddr *inetaddr, int addrlen);
 static int socknoblock_int (SOCKET sock);
 static int setsocktimeo_int (SOCKET socket, int timeout);
 static int load_ca_certs (SLCD *slconn);
+static int cmdlen_int (const void *buffer, size_t buflen);
+static int parse_ca_int (SLCD *slconn, const char *source, int isdir);
 
 /* Data structures for TLS connection context */
 /* @cond */
@@ -79,6 +95,34 @@ typedef struct TLSCTX
   mbedtls_x509_crt cacert;
 } TLSCTX;
 /* @endcond */
+
+#if !defined(SLP_WIN)
+/* TLS send callback, equivalent to mbedtls_net_send() but sending with SEND_FLAGS */
+static int
+tls_net_send (void *ctx, const unsigned char *buf, size_t len)
+{
+  int fd = ((mbedtls_net_context *)ctx)->fd;
+  ssize_t ret;
+
+  if (fd < 0)
+    return MBEDTLS_ERR_NET_INVALID_CONTEXT;
+
+  ret = send (fd, buf, len, SEND_FLAGS);
+
+  if (ret < 0)
+  {
+    if (IS_EWOULDBLOCK () || errno == EINTR)
+      return MBEDTLS_ERR_SSL_WANT_WRITE;
+
+    if (errno == EPIPE || errno == ECONNRESET)
+      return MBEDTLS_ERR_NET_CONN_RESET;
+
+    return MBEDTLS_ERR_NET_SEND_FAILED;
+  }
+
+  return (int)ret;
+}
+#endif
 
 /* Debug output for TLS to stderr */
 void
@@ -148,7 +192,7 @@ tls_configure (SLCD *slconn, const char *nodename)
   }
 
   /* Load Certificate Authority certificates */
-  if (load_ca_certs (slconn) == 0)
+  if (load_ca_certs (slconn) <= 0)
   {
     sl_log_r (slconn, 1, 0, "[%s] No trusted CA certificates found, connections may not work\n",
               slconn->sladdr);
@@ -186,7 +230,11 @@ tls_configure (SLCD *slconn, const char *nodename)
     return -1;
   }
 
+#if defined(SLP_WIN)
   mbedtls_ssl_set_bio (&tlsctx->ssl, &tlsctx->server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+#else
+  mbedtls_ssl_set_bio (&tlsctx->ssl, &tlsctx->server_fd, tls_net_send, mbedtls_net_recv, NULL);
+#endif
 
   sl_log_r (slconn, 1, 2, "[%s] Starting TLS handshake\n", slconn->sladdr);
 
@@ -276,7 +324,7 @@ tls_configure (SLCD *slconn, const char *nodename)
  * @param slconn The ::SLCD connection to connect
  * @param sayhello If true, send HELLO command to server
  *
- * @retval socket descriptor created on success (positive)
+ * @retval socket descriptor created on success (non-negative)
  * @retval -1 on connection error
  * @retval SLAUTHFAIL on authentication failed, should not be retried
  *
@@ -346,6 +394,14 @@ sl_connect (SLCD *slconn, int sayhello)
     {
       continue;
     }
+
+#if defined(SO_NOSIGPIPE)
+    /* Writes to a closed connection return EPIPE rather than raising SIGPIPE */
+    {
+      int nosigpipe = 1;
+      setsockopt (slconn->link, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof (nosigpipe));
+    }
+#endif
 
     /* Set socket I/O timeouts if possible */
     if (slconn->iotimeout)
@@ -541,7 +597,11 @@ sl_send_info (SLCD *slconn, const char *infostr, int verbose)
 {
   char sendstr[100]; /* A buffer for command strings */
 
-  snprintf (sendstr, sizeof (sendstr), "INFO %s\r\n", infostr);
+  if ((size_t)snprintf (sendstr, sizeof (sendstr), "INFO %s\r\n", infostr) >= sizeof (sendstr))
+  {
+    sl_log_r (slconn, 2, 0, "[%s] INFO request too long: %s\n", slconn->sladdr, infostr);
+    return -1;
+  }
 
   sl_log_r (slconn, 1, verbose, "[%s] requesting INFO %s\n", slconn->sladdr, infostr);
 
@@ -728,7 +788,8 @@ sl_senddata (SLCD *slconn, void *buffer, size_t buflen, const char *ident, void 
     }
     else
     {
-      byteswritten = send (slconn->link, (char *)buffer + sentbytes, buflen - sentbytes, 0);
+      byteswritten =
+          send (slconn->link, (char *)buffer + sentbytes, buflen - sentbytes, SEND_FLAGS);
 
       if (byteswritten < 0 && !IS_EWOULDBLOCK () && !IS_EINTR (byteswritten))
       {
@@ -747,7 +808,7 @@ sl_senddata (SLCD *slconn, void *buffer, size_t buflen, const char *ident, void 
     if (stallcnt++ > 30)
     {
       sl_log_r (slconn, 2, 0, "[%s] timeout sending '%.*s'\n", (ident) ? ident : "",
-                (int)strcspn ((char *)buffer, "\r\n"), (char *)buffer);
+                cmdlen_int (buffer, buflen), (char *)buffer);
       return -1;
     }
 
@@ -764,7 +825,7 @@ sl_senddata (SLCD *slconn, void *buffer, size_t buflen, const char *ident, void 
   if (sentbytes < buflen)
   {
     sl_log_r (slconn, 2, 0, "[%s] error sending '%.*s'\n", (ident) ? ident : "",
-              (int)strcspn ((char *)buffer, "\r\n"), (char *)buffer);
+              cmdlen_int (buffer, buflen), (char *)buffer);
     return -1;
   }
 
@@ -895,8 +956,9 @@ sl_recvdata (SLCD *slconn, void *buffer, size_t maxbytes, const char *ident)
  *
  * To receive a response to a command read one byte at a time until
  * `"\r\n"` or up to \a maxbytes is received and written into a
- * specified \a buffer.  The function will wait up to 30 seconds for a
- * response to be recv'd.  \a command is a string to be included in
+ * specified \a buffer.  The remainder of a response line longer than
+ * the buffer is read and discarded.  The function will wait up to 30
+ * seconds for a response to be recv'd.  \a command is a string to be included in
  * error messages indicating which command the response is
  * for. \a ident is a string to be included in error messages for
  * identification, usually the address of the remote server.
@@ -985,6 +1047,49 @@ sl_recvresp (SLCD *slconn, void *buffer, size_t maxbytes, const char *command, c
     }
   }
 
+  /* The buffer filled before "\r\n": discard the remainder of the line */
+  if (bytesread > 0)
+  {
+    char prev = ((char *)buffer)[bytesread - 1];
+    char discard;
+
+    for (;;)
+    {
+      recvret = sl_recvdata (slconn, &discard, 1, ident);
+
+      if (slconn->terminate)
+        return 0;
+
+      if (recvret < 0)
+      {
+        sl_log_r (slconn, 2, 0, "[%s] bad response to '%.*s'\n", ident,
+                  (int)strcspn (cmdstr, "\r\n"), cmdstr);
+        return -1;
+      }
+
+      if (recvret > 0)
+      {
+        if (prev == '\r' && discard == '\n')
+          break;
+
+        prev = discard;
+        continue;
+      }
+
+      if (ackcnt++ > 600)
+      {
+        sl_log_r (slconn, 2, 0, "[%s] timeout waiting for response to '%.*s'\n", ident,
+                  (int)strcspn (cmdstr, "\r\n"), cmdstr);
+        return -1;
+      }
+
+      sl_usleep (ackpoll);
+    }
+
+    sl_log_r (slconn, 1, 1, "[%s] response to '%.*s' truncated to %d bytes\n", ident,
+              (int)strcspn (cmdstr, "\r\n"), cmdstr, (int)bytesread);
+  }
+
   return (int)bytesread;
 } /* End of sl_recvresp() */
 
@@ -1027,6 +1132,7 @@ sl_poll (SLCD *slconn, int readability, int writability, int timeout_ms)
   {
     fd_set readset;
     fd_set writeset;
+    fd_set exceptset;
     struct timeval to;
 
     to.tv_sec = timeout_ms / 1000;
@@ -1038,14 +1144,19 @@ sl_poll (SLCD *slconn, int readability, int writability, int timeout_ms)
        * attempt, including EINTR retries */
       FD_ZERO (&readset);
       FD_ZERO (&writeset);
+      FD_ZERO (&exceptset);
 
       if (readability)
         FD_SET (slconn->link, &readset);
 
+      /* A failed non-blocking connect is reported in the exception set */
       if (writability)
+      {
         FD_SET (slconn->link, &writeset);
+        FD_SET (slconn->link, &exceptset);
+      }
 
-      ret = select (slconn->link + 1, &readset, &writeset, NULL, &to);
+      ret = select (slconn->link + 1, &readset, &writeset, &exceptset, &to);
 
       /* Limit retries to 100 */
       if (retries++ > 100)
@@ -1391,11 +1502,11 @@ sayhello_int (SLCD *slconn)
       sl_log_r (slconn, 1, 2, "[%s] capabilities OK %s%s%s\n", slconn->sladdr,
                 (extreply) ? "{" : "", (extreply) ? extreply : "", (extreply) ? "}" : "");
     }
+    /* Extended replies are optional, continue without them */
     else if (!strncmp (readbuf, "ERROR\r", 6) && bytesread >= 7)
     {
-      sl_log_r (slconn, 1, 2, "[%s] CAPABILITIES not accepted %s%s%s\n", slconn->sladdr,
+      sl_log_r (slconn, 1, 1, "[%s] CAPABILITIES not accepted %s%s%s\n", slconn->sladdr,
                 (extreply) ? "{" : "", (extreply) ? extreply : "", (extreply) ? "}" : "");
-      return -1;
     }
     else
     {
@@ -1409,11 +1520,17 @@ sayhello_int (SLCD *slconn)
   if (slconn->protocol & SLPROTO40)
   {
     /* Create USERAGENT, optional client name and version */
-    snprintf (sendstr, sizeof (sendstr), "USERAGENT %s%s%s libslink/%s\r\n",
-              (slconn->clientname) ? slconn->clientname : "",
-              (slconn->clientname && slconn->clientversion) ? "/" : "",
-              (slconn->clientname && slconn->clientversion) ? slconn->clientversion : "",
-              LIBSLINK_VERSION);
+    if ((size_t)snprintf (sendstr, sizeof (sendstr), "USERAGENT %s%s%s libslink/%s\r\n",
+                          (slconn->clientname) ? slconn->clientname : "",
+                          (slconn->clientname && slconn->clientversion) ? "/" : "",
+                          (slconn->clientname && slconn->clientversion) ? slconn->clientversion
+                                                                        : "",
+                          LIBSLINK_VERSION) >= sizeof (sendstr))
+    {
+      sl_log_r (slconn, 1, 1, "[%s] client name and version too long, omitted from USERAGENT\n",
+                slconn->sladdr);
+      snprintf (sendstr, sizeof (sendstr), "USERAGENT libslink/%s\r\n", LIBSLINK_VERSION);
+    }
 
     /* Send USERAGENT and recv response */
     sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr, (int)strcspn (sendstr, "\r\n"),
@@ -1432,6 +1549,7 @@ sayhello_int (SLCD *slconn)
     {
       sl_log_r (slconn, 1, 2, "[%s] USERAGENT accepted\n", slconn->sladdr);
     }
+    /* USERAGENT is informational, continue without it */
     else if (!strncmp (readbuf, "ERROR", 5) && bytesread >= 6)
     {
       char *cp = readbuf + (bytesread - 1);
@@ -1440,8 +1558,7 @@ sayhello_int (SLCD *slconn)
       while (*cp == ' ' || *cp == '\r' || *cp == '\n')
         *cp-- = '\0';
 
-      sl_log_r (slconn, 1, 2, "[%s] USERAGENT not accepted: %s\n", slconn->sladdr, readbuf + 6);
-      return -1;
+      sl_log_r (slconn, 1, 1, "[%s] USERAGENT not accepted: %s\n", slconn->sladdr, readbuf + 6);
     }
     else
     {
@@ -1493,7 +1610,7 @@ sayhello_int (SLCD *slconn)
                              sizeof (readbuf));
 
     /* Clear memory with authentication value */
-    memset (sendstr, 0, sizeof (sendstr));
+    mbedtls_platform_zeroize (sendstr, sizeof (sendstr));
 
     if (bytesread < 0)
     { /* Error from sl_senddata() */
@@ -1695,7 +1812,14 @@ negotiate_uni_v3 (SLCD *slconn)
       {
 
         /* Build SELECT command, send it and receive response */
-        snprintf (sendstr, sizeof (sendstr), "SELECT %.*s\r\n", sellen, selptr);
+        if ((size_t)snprintf (sendstr, sizeof (sendstr), "SELECT %.*s\r\n", sellen, selptr) >=
+            sizeof (sendstr))
+        {
+          sl_log_r (slconn, 2, 0, "[%s] %s(): selector too long: %.*s\n", slconn->sladdr, __func__,
+                    sellen, selptr);
+          slconn->config_error = 1;
+          return -1;
+        }
 
         sl_log_r (slconn, 1, 2, "[%s] sending: %.*s\n", slconn->sladdr,
                   (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -1838,6 +1962,116 @@ negotiate_uni_v3 (SLCD *slconn)
 } /* End of negotiate_uni_v3() */
 
 /***************************************************************************
+ * is_wildcard:
+ *
+ * Returns 1 if the station ID of \a stream contains wildcards, else 0.
+ ***************************************************************************/
+static int
+is_wildcard (const SLstream *stream)
+{
+  return (strpbrk (stream->stationid, "*?") != NULL);
+} /* End of is_wildcard() */
+
+/***************************************************************************
+ * first_wildcard_int:
+ *
+ * Return the first wildcarded stream list entry after any leading
+ * all-station entry, or NULL if none.  The stream list is partitioned
+ * with entries without wildcards first, so this entry and all following
+ * entries are wildcarded.
+ ***************************************************************************/
+static const SLstream *
+first_wildcard_int (SLCD *slconn)
+{
+  const SLstream *curstream = slconn->streams;
+
+  if (curstream && strcmp (curstream->stationid, "*") == 0)
+    curstream = curstream->next;
+
+  for (; curstream; curstream = curstream->next)
+  {
+    if (is_wildcard (curstream))
+      return curstream;
+  }
+
+  return NULL;
+} /* End of first_wildcard_int() */
+
+/***************************************************************************
+ * stream_overlaps:
+ *
+ * Determine if a stream list entry overlaps another entry: a wildcarded
+ * entry that matches one or more entries without wildcards, or an entry
+ * without wildcards that is matched by one or more wildcarded entries.
+ *
+ * \a firstwild is the first wildcarded entry from first_wildcard_int().
+ *
+ * Returns 1 if overlapping, else 0.
+ ***************************************************************************/
+static int
+stream_overlaps (SLCD *slconn, const SLstream *firstwild, const SLstream *stream)
+{
+  const SLstream *curstream;
+
+  if (is_wildcard (stream))
+  {
+    for (curstream = slconn->streams; curstream && curstream != firstwild;
+         curstream = curstream->next)
+    {
+      if (!is_wildcard (curstream) && sl_globmatch (curstream->stationid, stream->stationid))
+        return 1;
+    }
+
+    return 0;
+  }
+
+  /* A leading all-station entry matches every station */
+  if (slconn->streams && strcmp (slconn->streams->stationid, "*") == 0)
+    return 1;
+
+  for (curstream = firstwild; curstream; curstream = curstream->next)
+  {
+    if (sl_globmatch (stream->stationid, curstream->stationid))
+      return 1;
+  }
+
+  return 0;
+} /* End of stream_overlaps() */
+
+/***************************************************************************
+ * next_stream_int:
+ *
+ * Return the stream list entry to negotiate after \a curstream, or the
+ * first when \a curstream is NULL.  Entries without wildcards are
+ * returned first, followed by wildcarded entries, so that stations are
+ * configured before any wildcarded entry that also matches them.
+ *
+ * Returns the next entry or NULL when done.
+ ***************************************************************************/
+static SLstream *
+next_stream_int (SLCD *slconn, SLstream *curstream)
+{
+  int wildcard = (curstream) ? is_wildcard (curstream) : 0;
+
+  curstream = (curstream) ? curstream->next : slconn->streams;
+
+  while (1)
+  {
+    for (; curstream; curstream = curstream->next)
+    {
+      if (is_wildcard (curstream) == wildcard)
+        return curstream;
+    }
+
+    if (wildcard)
+      return NULL;
+
+    wildcard = 1;
+    curstream = slconn->streams;
+  }
+} /* End of next_stream_int() */
+
+/***************************************************************************
  * negotiate_multi_v3:
  *
  * Negotiate stream selection with protocol 3 in multi-station mode
@@ -1848,6 +2082,10 @@ negotiate_uni_v3 (SLCD *slconn)
  *
  * If \a curstream->seqnum is not `SL_UNSETSEQUENCE` and the SLCD \a resume
  * flag is true then data is requested starting at seqnum.
+ *
+ * Entries without wildcards are configured before wildcarded entries.  A
+ * wildcarded entry that matches other entries requests the next available
+ * data, as each matched station resumes from its own sequence number.
  *
  * Returns -1 on errors, otherwise returns the link descriptor.
  ***************************************************************************/
@@ -1865,6 +2103,7 @@ negotiate_multi_v3 (SLCD *slconn)
   char sendstr[100]; /* A buffer for command strings */
   char readbuf[100]; /* A buffer for responses */
   SLstream *curstream;
+  const SLstream *firstwild;
 
   char net[22];
   char *sta;
@@ -1916,7 +2155,8 @@ negotiate_multi_v3 (SLCD *slconn)
               slconn->sladdr);
   }
 
-  curstream = slconn->streams;
+  firstwild = first_wildcard_int (slconn);
+  curstream = next_stream_int (slconn, NULL);
 
   /* Loop through the stream list */
   while (curstream != NULL)
@@ -1960,7 +2200,7 @@ negotiate_multi_v3 (SLCD *slconn)
         sl_log_r (slconn, 2, 0, "[%s] station not accepted %s%s%s\n", curstream->stationid,
                   (extreply) ? "{" : "", (extreply) ? extreply : "", (extreply) ? "}" : "");
         /* Increment the loop control and skip to the next stream */
-        curstream = curstream->next;
+        curstream = next_stream_int (slconn, curstream);
         continue;
       }
       else
@@ -1991,7 +2231,14 @@ negotiate_multi_v3 (SLCD *slconn)
         else
         {
           /* Build SELECT command, send it and receive response */
-          snprintf (sendstr, sizeof (sendstr), "SELECT %.*s\r\n", sellen, selptr);
+          if ((size_t)snprintf (sendstr, sizeof (sendstr), "SELECT %.*s\r\n", sellen, selptr) >=
+              sizeof (sendstr))
+          {
+            sl_log_r (slconn, 2, 0, "[%s] %s(): selector too long: %.*s\n", curstream->stationid,
+                      __func__, sellen, selptr);
+            slconn->config_error = 1;
+            return -1;
+          }
 
           sl_log_r (slconn, 1, 2, "[%s] sending: SELECT %.*s\n", curstream->stationid,
                     (int)strcspn (sendstr, "\r\n"), sendstr);
@@ -2067,7 +2314,9 @@ negotiate_multi_v3 (SLCD *slconn)
       }
       sl_log_r (slconn, 1, 1, "[%s] requesting specified time window\n", curstream->stationid);
     }
-    else if (curstream->seqnum != SL_UNSETSEQUENCE && slconn->resume)
+    else if (curstream->seqnum != SL_UNSETSEQUENCE && slconn->resume &&
+             !(curstream->seqnum != SL_ALLDATASEQUENCE && is_wildcard (curstream) &&
+               stream_overlaps (slconn, firstwild, curstream)))
     {
       char cmd[10];
 
@@ -2161,7 +2410,7 @@ negotiate_multi_v3 (SLCD *slconn)
       }
     }
 
-    curstream = curstream->next;
+    curstream = next_stream_int (slconn, curstream);
 
   } /* End of stream and selector config (end of stream list). */
 
@@ -2191,6 +2440,154 @@ negotiate_multi_v3 (SLCD *slconn)
   return slconn->link;
 } /* End of negotiate_multi_v3() */
 
+/* A queued v4 negotiation command */
+struct v4cmd_s
+{
+  char cmd[100];
+  char nsid[22];
+  int tolerated; /* Errors are not fatal */
+  struct v4cmd_s *next;
+};
+
+/***************************************************************************
+ * free_v4cmds_int:
+ *
+ * Free a v4 command list and reset it to empty.
+ ***************************************************************************/
+static void
+free_v4cmds_int (struct v4cmd_s **cmdlist, struct v4cmd_s **cmdtail)
+{
+  struct v4cmd_s *next;
+
+  while (*cmdlist)
+  {
+    next = (*cmdlist)->next;
+    free (*cmdlist);
+    *cmdlist = next;
+  }
+
+  *cmdtail = NULL;
+} /* End of free_v4cmds_int() */
+
+/***************************************************************************
+ * add_v4cmd_int:
+ *
+ * Append an empty command for \a nsid to a v4 command list.
+ *
+ * Returns the new command or NULL on error.
+ ***************************************************************************/
+static struct v4cmd_s *
+add_v4cmd_int (SLCD *slconn, struct v4cmd_s **cmdlist, struct v4cmd_s **cmdtail, const char *nsid,
+               int tolerated)
+{
+  struct v4cmd_s *cmdptr;
+
+  if ((cmdptr = (struct v4cmd_s *)malloc (sizeof (struct v4cmd_s))) == NULL)
+  {
+    sl_log_r (slconn, 2, 0, "%s() Cannot allocate memory\n", __func__);
+    return NULL;
+  }
+
+  cmdptr->cmd[0] = '\0';
+  snprintf (cmdptr->nsid, sizeof (cmdptr->nsid), "%s", nsid);
+  cmdptr->tolerated = tolerated;
+  cmdptr->next = NULL;
+
+  if (*cmdtail)
+    (*cmdtail)->next = cmdptr;
+  else
+    *cmdlist = cmdptr;
+
+  *cmdtail = cmdptr;
+
+  return cmdptr;
+} /* End of add_v4cmd_int() */
+
+/***************************************************************************
+ * send_v4cmds_int:
+ *
+ * Send the commands in a v4 command list in groups of up to
+ * V4_PIPELINE_DEPTH, receiving and checking the responses to each group
+ * before sending the next, so unread responses cannot fill the socket
+ * buffers.  \a errorcnt is incremented for each error that is not
+ * tolerated.  The list is freed and reset to empty.
+ *
+ * Returns 0 on success or -1 on error.
+ ***************************************************************************/
+#define V4_PIPELINE_DEPTH 100
+
+static int
+send_v4cmds_int (SLCD *slconn, struct v4cmd_s **cmdlist, struct v4cmd_s **cmdtail, int *errorcnt)
+{
+  struct v4cmd_s *sendptr = *cmdlist;
+  struct v4cmd_s *cmdptr = *cmdlist;
+  char readbuf[200]; /* A buffer for responses */
+  char *cp;
+  int bytesread;
+  int sendcount;
+
+  while (cmdptr)
+  {
+    for (sendcount = 0; sendptr && sendcount < V4_PIPELINE_DEPTH;
+         sendptr = sendptr->next, sendcount++)
+    {
+      sl_log_r (slconn, 1, 2, "[%s] sending: %s\n", sendptr->nsid, sendptr->cmd);
+
+      bytesread = sl_senddata (slconn, (void *)sendptr->cmd, strlen (sendptr->cmd), sendptr->nsid,
+                               (void *)NULL, 0);
+
+      if (bytesread < 0)
+      {
+        free_v4cmds_int (cmdlist, cmdtail);
+        return -1;
+      }
+    }
+
+    for (; cmdptr != sendptr; cmdptr = cmdptr->next)
+    {
+      bytesread = sl_recvresp (slconn, readbuf, sizeof (readbuf), cmdptr->cmd, cmdptr->nsid);
+
+      if (bytesread < 0)
+      {
+        free_v4cmds_int (cmdlist, cmdtail);
+        return -1;
+      }
+
+      /* Terminate command and response at first carriage return */
+      if ((cp = strchr (cmdptr->cmd, '\r')))
+        *cp = '\0';
+      if ((cp = strchr (readbuf, '\r')))
+        *cp = '\0';
+
+      if (bytesread >= 2 && !strncmp (readbuf, "OK", 2))
+      {
+        sl_log_r (slconn, 1, 2, "[%s] Command OK (%s)\n", cmdptr->nsid, cmdptr->cmd);
+      }
+      else if (bytesread >= 5 && !strncmp (readbuf, "ERROR", 5) && cmdptr->tolerated)
+      {
+        sl_log_r (slconn, 1, 0, "[%s] Command not accepted (%s), continuing via wildcard: %s\n",
+                  cmdptr->nsid, cmdptr->cmd, readbuf);
+      }
+      else if (bytesread >= 5 && !strncmp (readbuf, "ERROR", 5))
+      {
+        sl_log_r (slconn, 2, 0, "[%s] Command not accepted (%s): %s\n", cmdptr->nsid, cmdptr->cmd,
+                  readbuf);
+        (*errorcnt)++;
+      }
+      else
+      {
+        sl_log_r (slconn, 2, 0, "[%s] invalid response to command (%s): %s\n", cmdptr->nsid,
+                  cmdptr->cmd, readbuf);
+        (*errorcnt)++;
+      }
+    }
+  }
+
+  free_v4cmds_int (cmdlist, cmdtail);
+
+  return 0;
+} /* End of send_v4cmds_int() */
+
 /***************************************************************************
  * negotiate_v4:
  *
@@ -2204,6 +2601,12 @@ negotiate_multi_v3 (SLCD *slconn)
  * be requested.  Otherwise, if it is not set to SL_UNSETSEQUENCE and the
  * SLCD.resume flag is true then data is requested starting at seqnum.
  *
+ * Entries without wildcards are configured before wildcarded entries.  A
+ * wildcarded entry that matches other entries requests the next available
+ * data, as each matched station resumes from its own sequence number.
+ * Errors for an entry that is also matched by a wildcarded entry are not
+ * fatal; data for that station is still requested via the wildcard.
+ *
  * Returns -1 on errors, otherwise returns the link descriptor.
  ***************************************************************************/
 static SOCKET
@@ -2211,29 +2614,23 @@ negotiate_v4 (SLCD *slconn)
 {
   int stationcnt = 0; /* Station count */
   int errorcnt = 0;   /* Error count */
-  int bytesread = 0;
+  int wildcard;
+  int overlaps;
+  int tolerated;
   size_t sellen = 0;
   char *selptr;
-  char *cp;
   char *cmd_selector;
   char selector[32] = {0};
   char v4selector[32] = {0};
   char start_time[31] = {0};
   char end_time[31] = {0};
-  char sendstr[32];  /* A buffer for small command strings */
-  char readbuf[200]; /* A buffer for responses */
+  char sendstr[32]; /* A buffer for small command strings */
   SLstream *curstream;
+  const SLstream *firstwild;
 
-  struct cmd_s
-  {
-    char cmd[100];
-    char nsid[22];
-    struct cmd_s *next;
-  };
-
-  struct cmd_s *cmdlist = NULL;
-  struct cmd_s *cmdtail = NULL;
-  struct cmd_s *cmdptr = NULL;
+  struct v4cmd_s *cmdlist = NULL;
+  struct v4cmd_s *cmdtail = NULL;
+  struct v4cmd_s *cmdptr = NULL;
 
   if (!slconn)
     return -1;
@@ -2285,41 +2682,24 @@ negotiate_v4 (SLCD *slconn)
               slconn->sladdr);
   }
 
-  curstream = slconn->streams;
+  firstwild = first_wildcard_int (slconn);
+  curstream = next_stream_int (slconn, NULL);
 
   /* Loop through the stream list */
   while (curstream != NULL)
   {
-    /* Allocate new command in list */
-    if ((cmdptr = (struct cmd_s *)malloc (sizeof (struct cmd_s))) == NULL)
-    {
-      sl_log_r (slconn, 2, 0, "%s() Cannot allocate memory\n", __func__);
-      while (cmdlist)
-      {
-        cmdptr = cmdlist->next;
-        free (cmdlist);
-        cmdlist = cmdptr;
-      }
+    wildcard = is_wildcard (curstream);
+    overlaps = stream_overlaps (slconn, firstwild, curstream);
+    tolerated = (!wildcard && overlaps);
 
+    if ((cmdptr = add_v4cmd_int (slconn, &cmdlist, &cmdtail, curstream->stationid, tolerated)) ==
+        NULL)
+    {
+      free_v4cmds_int (&cmdlist, &cmdtail);
       return -1;
     }
 
-    if (!cmdlist)
-    {
-      cmdlist = cmdptr;
-      cmdtail = cmdptr;
-    }
-    else
-    {
-      cmdtail->next = cmdptr;
-      cmdtail = cmdptr;
-    }
-
-    strcpy (cmdtail->nsid, curstream->stationid);
-    cmdtail->next = NULL;
-
-    /* Generate STATION command */
-    snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "STATION %s\r", curstream->stationid);
+    snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "STATION %s\r", curstream->stationid);
 
     stationcnt++;
 
@@ -2342,12 +2722,7 @@ negotiate_v4 (SLCD *slconn)
 
           slconn->config_error = 1;
 
-          while (cmdlist)
-          {
-            cmdptr = cmdlist->next;
-            free (cmdlist);
-            cmdlist = cmdptr;
-          }
+          free_v4cmds_int (&cmdlist, &cmdtail);
 
           return -1;
         }
@@ -2369,152 +2744,66 @@ negotiate_v4 (SLCD *slconn)
             cmd_selector = selector;
           }
 
-          /* Allocate new command in list */
-          if ((cmdptr = (struct cmd_s *)malloc (sizeof (struct cmd_s))) == NULL)
+          if ((cmdptr = add_v4cmd_int (slconn, &cmdlist, &cmdtail, curstream->stationid,
+                                       tolerated)) == NULL)
           {
-            sl_log_r (slconn, 2, 0, "%s() Cannot allocate memory\n", __func__);
-            while (cmdlist)
-            {
-              cmdptr = cmdlist->next;
-              free (cmdlist);
-              cmdlist = cmdptr;
-            }
-
+            free_v4cmds_int (&cmdlist, &cmdtail);
             return -1;
           }
 
-          cmdtail->next = cmdptr;
-          cmdtail = cmdptr;
-          strcpy (cmdtail->nsid, curstream->stationid);
-          cmdtail->next = NULL;
-
           /* Generate SELECT command */
-          snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "SELECT %s\r", cmd_selector);
+          snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "SELECT %s\r", cmd_selector);
         }
       }
     } /* End of selector processing */
 
-    /* Allocate new command in list */
-    if ((cmdptr = (struct cmd_s *)malloc (sizeof (struct cmd_s))) == NULL)
+    if ((cmdptr = add_v4cmd_int (slconn, &cmdlist, &cmdtail, curstream->stationid, tolerated)) ==
+        NULL)
     {
-      sl_log_r (slconn, 2, 0, "%s() Cannot allocate memory\n", __func__);
-      while (cmdlist)
-      {
-        cmdptr = cmdlist->next;
-        free (cmdlist);
-        cmdlist = cmdptr;
-      }
-
+      free_v4cmds_int (&cmdlist, &cmdtail);
       return -1;
     }
 
-    cmdtail->next = cmdptr;
-    cmdtail = cmdptr;
-    strcpy (cmdtail->nsid, curstream->stationid);
-    cmdtail->next = NULL;
-
-    /* Generate DATA command with _incremented_ sequence number */
+    /* Generate DATA command with _incremented_ sequence number.  A wildcarded
+     * entry matching other entries is not resumed from its sequence number,
+     * which may be from any of the stations it matches. */
     if (start_time[0])
     {
-      if (curstream->seqnum == SL_UNSETSEQUENCE || curstream->seqnum == SL_ALLDATASEQUENCE)
+      if (curstream->seqnum == SL_UNSETSEQUENCE || curstream->seqnum == SL_ALLDATASEQUENCE ||
+          (wildcard && overlaps))
       {
-        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "DATA ALL %s%s%s\r", start_time,
+        snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "DATA ALL %s%s%s\r", start_time,
                   (end_time[0]) ? " " : "", (end_time[0]) ? end_time : "");
       }
       else
       {
-        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "DATA %" PRIu64 " %s%s%s\r",
+        snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "DATA %" PRIu64 " %s%s%s\r",
                   (curstream->seqnum + 1), start_time, (end_time[0]) ? " " : "",
                   (end_time[0]) ? end_time : "");
       }
     }
     else
     {
-      if (curstream->seqnum == SL_UNSETSEQUENCE)
+      if (curstream->seqnum == SL_ALLDATASEQUENCE)
       {
-        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "DATA\r");
+        snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "DATA ALL\r");
       }
-      else if (curstream->seqnum == SL_ALLDATASEQUENCE)
+      else if (curstream->seqnum == SL_UNSETSEQUENCE || (wildcard && overlaps))
       {
-        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "DATA ALL\r");
+        snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "DATA\r");
       }
       else
       {
-        snprintf (cmdtail->cmd, sizeof (cmdtail->cmd), "DATA %" PRIu64 "\r",
-                  (curstream->seqnum + 1));
+        snprintf (cmdptr->cmd, sizeof (cmdptr->cmd), "DATA %" PRIu64 "\r", (curstream->seqnum + 1));
       }
     }
 
-    curstream = curstream->next;
+    curstream = next_stream_int (slconn, curstream);
   } /* End of stream and selector config */
 
-  /* Send all generated commands */
-  cmdptr = cmdlist;
-  while (cmdptr)
-  {
-    sl_log_r (slconn, 1, 2, "[%s] sending: %s\n", cmdptr->nsid, cmdptr->cmd);
-
-    bytesread = sl_senddata (slconn, (void *)cmdptr->cmd, strlen (cmdptr->cmd), cmdptr->nsid,
-                             (void *)NULL, 0);
-
-    if (bytesread < 0)
-    {
-      while (cmdlist)
-      {
-        cmdptr = cmdlist->next;
-        free (cmdlist);
-        cmdlist = cmdptr;
-      }
-
-      return -1;
-    }
-
-    cmdptr = cmdptr->next;
-  }
-
-  /* Receive all responses */
-  cmdptr = cmdlist;
-  while (cmdptr)
-  {
-    bytesread = sl_recvresp (slconn, readbuf, sizeof (readbuf), cmdptr->cmd, cmdptr->nsid);
-
-    if (bytesread < 0)
-    {
-      while (cmdlist)
-      {
-        cmdptr = cmdlist->next;
-        free (cmdlist);
-        cmdlist = cmdptr;
-      }
-
-      return -1;
-    }
-
-    /* Terminate command and response at first carriage return */
-    if ((cp = strchr (cmdptr->cmd, '\r')))
-      *cp = '\0';
-    if ((cp = strchr (readbuf, '\r')))
-      *cp = '\0';
-
-    if (bytesread >= 2 && !strncmp (readbuf, "OK", 2))
-    {
-      sl_log_r (slconn, 1, 2, "[%s] Command OK (%s)\n", cmdptr->nsid, cmdptr->cmd);
-    }
-    else if (bytesread >= 5 && !strncmp (readbuf, "ERROR", 5))
-    {
-      sl_log_r (slconn, 2, 0, "[%s] Command not accepted (%s): %s\n", cmdptr->nsid, cmdptr->cmd,
-                readbuf);
-      errorcnt++;
-    }
-    else
-    {
-      sl_log_r (slconn, 2, 0, "[%s] invalid response to command (%s): %s\n", cmdptr->nsid,
-                cmdptr->cmd, readbuf);
-      errorcnt++;
-    }
-
-    cmdptr = cmdptr->next;
-  }
+  /* Send all remaining commands */
+  if (send_v4cmds_int (slconn, &cmdlist, &cmdtail, &errorcnt) < 0)
+    return -1;
 
   if (errorcnt == 0)
   {
@@ -2532,14 +2821,6 @@ negotiate_v4 (SLCD *slconn)
       sl_log_r (slconn, 2, 0, "[%s] error sending END command\n", slconn->sladdr);
       errorcnt++;
     }
-  }
-
-  /* Free command list */
-  while (cmdlist)
-  {
-    cmdptr = cmdlist->next;
-    free (cmdlist);
-    cmdlist = cmdptr;
   }
 
   return (errorcnt) ? -1 : slconn->link;
@@ -2682,17 +2963,17 @@ setsocktimeo_int (SOCKET socket, int timeout)
  * CA certs are loaded from the following locations (in order):
  * - Environment variable LIBSLINK_CA_CERT_FILE
  * - Environment variable LIBSLINK_CA_CERT_PATH (all files in path)
- * - Known CA cert files and paths
+ * - Known CA cert files and paths, if neither variable is set
  *
- * Returns number of CA certs files/paths loaded.
+ * Returns number of CA certs files/paths loaded, 0 if no certificate
+ * was loaded.
  ***************************************************************************/
 static int
 load_ca_certs (SLCD *slconn)
 {
-  TLSCTX *tlsctx = (TLSCTX *)slconn->tlsctx;
   int ca_loaded = 0;
+  int env_set = 0;
   char *evalue = NULL;
-  int ret;
 
   /* Common locations for Certificate Authority files on Linux/BSD systems */
   char *ca_known_files[] = {"/etc/ssl/cert.pem",
@@ -2710,14 +2991,8 @@ load_ca_certs (SLCD *slconn)
     sl_log_r (slconn, 1, 2, "[%s] Reading TLS CA cert(s) [LIBSLINK_CA_CERT_FILE] from (%s)\n",
               slconn->sladdr, evalue);
 
-    if ((ret = mbedtls_x509_crt_parse_file (&tlsctx->cacert, evalue)) != 0)
-    {
-      sl_log_r (slconn, 2, 0, "[%s] mbedtls_x509_crt_parse_file() returned -0x%x\n", slconn->sladdr,
-                (unsigned int)-ret);
-      return -1;
-    }
-
-    ca_loaded += 1;
+    env_set = 1;
+    ca_loaded += parse_ca_int (slconn, evalue, 0);
   }
 
   /* Read trusted CA files from directory */
@@ -2726,20 +3001,14 @@ load_ca_certs (SLCD *slconn)
     sl_log_r (slconn, 1, 2, "[%s] Reading TLS CA cert(s) [LIBSLINK_CA_CERT_PATH] from path (%s)\n",
               slconn->sladdr, evalue);
 
-    if ((ret = mbedtls_x509_crt_parse_path (&tlsctx->cacert, evalue)) != 0)
-    {
-      sl_log_r (slconn, 2, 0, "[%s] mbedtls_x509_crt_parse_path() returned -0x%x\n", slconn->sladdr,
-                (unsigned int)-ret);
-      return -1;
-    }
-
-    ca_loaded += 1;
+    env_set = 1;
+    ca_loaded += parse_ca_int (slconn, evalue, 1);
   }
 
-  /* If no CA certs loaded yet, search for known locations and load */
-  if (ca_loaded == 0)
+  /* Without CA locations from the environment, search known locations */
+  if (!env_set)
   {
-    /* Search known CA file locations, stop after finding one */
+    /* Search known CA file locations, stop after loading one */
     for (size_t i = 0; i < sizeof (ca_known_files) / sizeof (ca_known_files[0]); i++)
     {
       if (access (ca_known_files[i], R_OK) != 0)
@@ -2750,15 +3019,11 @@ load_ca_certs (SLCD *slconn)
       sl_log_r (slconn, 1, 2, "[%s] Reading TLS CA cert file (%s)\n", slconn->sladdr,
                 ca_known_files[i]);
 
-      if ((ret = mbedtls_x509_crt_parse_file (&tlsctx->cacert, ca_known_files[i])) != 0)
+      if (parse_ca_int (slconn, ca_known_files[i], 0))
       {
-        sl_log_r (slconn, 2, 0, "[%s] mbedtls_x509_crt_parse_file(%s) returned -0x%x\n",
-                  slconn->sladdr, ca_known_files[i], (unsigned int)-ret);
-        return -1;
+        ca_loaded += 1;
+        break;
       }
-
-      ca_loaded += 1;
-      break;
     }
 
     /* Search known CA cert path locations, read all locations */
@@ -2772,16 +3037,65 @@ load_ca_certs (SLCD *slconn)
       sl_log_r (slconn, 1, 2, "[%s] Reading TLS CA cert files from path (%s)\n", slconn->sladdr,
                 ca_known_paths[i]);
 
-      if ((ret = mbedtls_x509_crt_parse_path (&tlsctx->cacert, ca_known_paths[i])) != 0)
-      {
-        sl_log_r (slconn, 2, 0, "[%s] mbedtls_x509_crt_parse_path(%s) returned -0x%x\n",
-                  slconn->sladdr, ca_known_paths[i], (unsigned int)-ret);
-        return -1;
-      }
-
-      ca_loaded += 1;
+      ca_loaded += parse_ca_int (slconn, ca_known_paths[i], 1);
     }
   }
 
+  /* Sources may be read without yielding a usable certificate */
+  if (((TLSCTX *)slconn->tlsctx)->cacert.version == 0)
+    return 0;
+
   return ca_loaded;
+}
+
+/***************************************************************************
+ * parse_ca_int:
+ *
+ * Parse CA certificates from a file, or all files in a directory if
+ * isdir is set, into the TLS context.  Certificates that cannot be
+ * parsed are skipped.
+ *
+ * Returns 1 if the source was read, otherwise 0.
+ ***************************************************************************/
+static int
+parse_ca_int (SLCD *slconn, const char *source, int isdir)
+{
+  TLSCTX *tlsctx = (TLSCTX *)slconn->tlsctx;
+  int ret;
+
+  ret = (isdir) ? mbedtls_x509_crt_parse_path (&tlsctx->cacert, source)
+                : mbedtls_x509_crt_parse_file (&tlsctx->cacert, source);
+
+  if (ret < 0)
+  {
+    sl_log_r (slconn, 2, 0, "[%s] cannot read TLS CA cert(s) from %s: -0x%x\n", slconn->sladdr,
+              source, (unsigned int)-ret);
+    return 0;
+  }
+
+  if (ret > 0)
+  {
+    sl_log_r (slconn, 1, 1, "[%s] skipped %d TLS CA cert(s) that could not be parsed in %s\n",
+              slconn->sladdr, ret, source);
+  }
+
+  return 1;
+}
+
+/***************************************************************************
+ * cmdlen_int:
+ *
+ * Returns the length of the first line in a buffer of buflen bytes that
+ * need not be NUL-terminated, for logging.
+ ***************************************************************************/
+static int
+cmdlen_int (const void *buffer, size_t buflen)
+{
+  const char *cp = (const char *)buffer;
+  size_t len;
+
+  for (len = 0; len < buflen && cp[len] != '\r' && cp[len] != '\n' && cp[len] != '\0'; len++)
+    ;
+
+  return (len > INT_MAX) ? INT_MAX : (int)len;
 }

@@ -1,622 +1,697 @@
+2026.318: v4.4.0
+  - Track each station received via a wildcard stream list entry, resuming
+    it from its own sequence number, for compatibility with servers that do
+    not support resuming from wildcarded station IDs
+    * Add a stream list entry for each such station, including in
+      all-station mode (not v3 uni-station mode), carrying the selectors of
+      the matching wildcard entries.  The stream list may now contain
+      entries the caller did not add, sl_set_allstation_params() keeps
+      entries after the all-station entry, and entries are never removed.
+    * Only track station IDs of letters, digits, underscores and dashes,
+      and not a station matched by multiple wildcard entries when any have
+      negated selectors.
+    * Save tracked stations to the state file and recover them.  In
+      multi-station mode wildcard entries are written as UNSET without a
+      time stamp, so stations that are not tracked resume from the next
+      available data.
+    * Negotiate stations before wildcard entries.  A wildcard entry that
+      matches a station entry requests the next available data, ignoring
+      its own sequence number, and a v4 negotiation does not fail when such
+      a station is rejected.
+    * Keep per-packet tracking and negotiation cost bounded with many
+      stations.
+  - Reject station IDs longer than SL_MAX_STATIONID - 1 characters in
+    sl_add_stream() instead of truncating them
+  - Reject over-long lines in stream list and state files instead of
+    splitting them; sl_add_streamlist_file() returns an error and
+    sl_recoverstate() returns an error after reading the remaining lines
+  - Return an error from sl_set_allstation_params() when copying the selectors fails
+  - Harden state file writing and recovery
+    * Write the state file via <statefile>.tmp, which replaces it when
+      complete; the containing directory must be writable and a symbolic
+      link at the state file path is replaced by a regular file.
+    * Recover nanosecond-resolution miniSEED 3 timestamps.
+    * Reject signed and out-of-range sequence numbers.
+    * Reject legacy NET STA pairs too long for a station ID.
+  - Unregister a connection from the termination handler and free its pending INFO
+    request in sl_freeslcd()
+  - Fix stalls and spins in the sl_collect() loop
+    * Wait on the socket, or return SLNOPACKET in non-blocking mode, while
+      a partial packet is buffered instead of spinning.
+    * Finish termination when buffered data cannot be completed without
+      further reads.
+    * Apply the reconnect delay, and do not reconnect after termination,
+      when the connection closed with its last packet already returned.
+    * End a pending INFO or keepalive query on a v4 JSON error response.
+    * Reject an oversized v4 station ID as soon as its header is received.
+    * Accept a socket descriptor of 0 from sl_connect(), which may now
+      return 0 on success.
+    * Accept a NULL payload buffer of size 0, as documented.
+  - Harden connection handling and negotiation
+    * Return an error instead of raising SIGPIPE when writing to a closed
+      connection, including over TLS.
+    * Discard the remainder of a server response line longer than the
+      buffer in sl_recvresp().
+    * Reject INFO requests and v3 selectors too long for a command, and
+      omit an over-long client name and version from USERAGENT.
+    * Continue when the server rejects CAPABILITIES or USERAGENT.
+    * Send pipelined v4 commands in groups, reading the responses to each
+      group before sending the next.
+    * Skip CA certificates that cannot be parsed and continue loading
+      the remaining CA files and paths.
+    * Detect a refused connection immediately on Windows.
+    * Map snprintf() and vsnprintf() to _snprintf() and _vsnprintf() in
+      libslink.h only for MSVC before 2015, which also applies to code
+      including libslink.h.
+  - Read miniSEED header fields through aligned copies, and leave the start
+    time empty for an invalid day-of-year in sl_payload_info()
+  - Normalize whitespace in stream lists
+    * Convert tabs between selectors in stream list files to spaces.
+    * Trim whitespace around streams and selectors in sl_add_streamlist().
+    * Return an error from sl_add_streamlist_file() on a read error.
+  - Keep the trailing newline of truncated log messages
+  - Leave the time window unchanged when sl_set_timewindow() fails
+  - Reject NULL variable names in sl_set_auth_envvars()
+  - Convert negated selectors in sl_v3to4selector()
+  - Turn off automatic TLS when sl_set_serveraddress() changes away from port 18500
+
 2026.224: v4.3.0
-	- Send all bytes in sl_senddata(), retrying on partial and blocked writes.
-	- Fix miniSEED payload length detection in detect().
-	- Return SLTERMINATE instead of reconnecting forever after END is
-	received outside dial-up mode.
-	- Stop freeing process-global PSA crypto state when a connection is
-	disconnected.
-	- Bound the TLS handshake with a deadline and honor connection
-	termination during it.
-	- Treat a zero-length v4 payload as complete and report it to the
-	caller, rather than waiting on bytes that will never arrive.
-	- Reset negotiated protocol state and HELLO capabilities on each
-	connection, unless the caller forced a protocol with sl_set_protocol().
-	- Parenthesize the SL_EPOCH2SLTIME and SL_SLTIME2EPOCH macros.
-	- Numerous correctness, memory-safety, and hardening fixes.
-	- Sync libslink.def with the public functions declared in libslink.h.
-	- Add a test suite for the public API, wire protocol, and TLS handshake.
-	- Update Mbed-TLS to v3.6.6.
+  - Send all bytes in sl_senddata(), retrying on partial and blocked writes.
+  - Fix miniSEED payload length detection in detect().
+  - Return SLTERMINATE instead of reconnecting forever after END is
+    received outside dial-up mode.
+  - Stop freeing process-global PSA crypto state when a connection is
+    disconnected.
+  - Bound the TLS handshake with a deadline and honor connection
+    termination during it.
+  - Treat a zero-length v4 payload as complete and report it to the
+    caller, rather than waiting on bytes that will never arrive.
+  - Reset negotiated protocol state and HELLO capabilities on each
+    connection, unless the caller forced a protocol with sl_set_protocol().
+  - Parenthesize the SL_EPOCH2SLTIME and SL_SLTIME2EPOCH macros.
+  - Numerous correctness, memory-safety, and hardening fixes.
+  - Sync libslink.def with the public functions declared in libslink.h.
+  - Add a test suite for the public API, wire protocol, and TLS handshake.
+  - Update Mbed-TLS to v3.6.6.
 
 2025.340: v4.2.0
-	- Fix re-connection logic in sl_collect().  The function will now
-	reconnect on most connection errors with a few exceptions such as
-	authentication failure, end of dial-up stream, and internal errors.
-	- Add new return status of `SLAUTHFAIL` for `sl_collect()` to indicate
-	a fatal error.  The caller can choose to reconnect if desired.
-	- Add `sl_set_protocol()` to allow caller specified protocol version.
-	- Many small fixes and improvements.
-	- Update Mbed-TLS to v3.6.5.
+  - Fix re-connection logic in sl_collect().  The function will now
+    reconnect on most connection errors with a few exceptions such as
+    authentication failure, end of dial-up stream, and internal errors.
+  - Add new return status of `SLAUTHFAIL` for `sl_collect()` to indicate
+    a fatal error.  The caller can choose to reconnect if desired.
+  - Add `sl_set_protocol()` to allow caller specified protocol version.
+  - Many small fixes and improvements.
+  - Update Mbed-TLS to v3.6.5.
 
 2025.130: v4.1.5
-	- Change authentication failures to fatal errors
-	- Add sl_set_auth_envvars() to set authentication of username and
-  password from specified environment variables.
+  - Change authentication failures to fatal errors
+  - Add sl_set_auth_envvars() to set authentication of username and
+    password from specified environment variables.
 
 2025.083: v4.1.4
-	- Update Mbed-TLS to v3.6.3.
-	- Change many sprintf() calls to snprintf() for safety.
-	- Fix miniSEED v2 payload sample rate calculation.
+  - Update Mbed-TLS to v3.6.3.
+  - Change many sprintf() calls to snprintf() for safety.
+  - Fix miniSEED v2 payload sample rate calculation.
 
 2024.350: v4.1.3
-	- Fix termination of ENDFETCH command.
+  - Fix termination of ENDFETCH command.
 
 2024.333: v4.1.1
-	- Handle payload lengths less than SL_MIN_PAYLOAD (64) bytes.
-	- Update packet tracking details just before returning the complete
-	packet to the calling program instead of when the initial
-	data is received.
-	- Rename SL_MAX_PAYLOAD to SL_RECV_BUFFER_SIZE for clarity.
-	- sl_ping(): make serverid and site string buffers optional.
-	- Do not print certificate verification warnings if
-	LIBSLINK_CERT_UNVERIFIED_OK is set.
-	- Update mbedtls to v3.6.2.
+  - Handle payload lengths less than SL_MIN_PAYLOAD (64) bytes.
+  - Update packet tracking details just before returning the complete
+    packet to the calling program instead of when the initial
+    data is received.
+  - Rename SL_MAX_PAYLOAD to SL_RECV_BUFFER_SIZE for clarity.
+  - sl_ping(): make serverid and site string buffers optional.
+  - Do not print certificate verification warnings if
+    LIBSLINK_CERT_UNVERIFIED_OK is set.
+  - Update mbedtls to v3.6.2.
 
 2024.243: v4.1.0
-	- Properly convert v3 style selectors to v4 without location code.
-	- Add sl_set_tlsmode() to enable/disable TLS on arbitrary ports.
-	By default port 18500 will use TLS and all others will not.
-	- Update mbedtls sources to release 3.6.1.  This enables
-	`LIBSLINK_CERT_UNVERIFIED_OK` control for TLS 1.3.
+  - Properly convert v3 style selectors to v4 without location code.
+  - Add sl_set_tlsmode() to enable/disable TLS on arbitrary ports.
+    By default port 18500 will use TLS and all others will not.
+  - Update mbedtls sources to release 3.6.1.  This enables
+    `LIBSLINK_CERT_UNVERIFIED_OK` control for TLS 1.3.
 
 2024.218: v4.0.0
-	A new major release that seamlessly supports both the new,
-	[SeedLink version 4 protocol](https://docs.fdsn.org/projects/seedlink),
-	and the previous protocol, referred to in this project as
-	version 3.x.  The protocol version will automatically be selected
-	during negotiation and the library will, in most cases, adapt
-	user-input as needed for the protocol needs.
+  A new major release that seamlessly supports both the new,
+  [SeedLink version 4 protocol](https://docs.fdsn.org/projects/seedlink),
+  and the previous protocol, referred to in this project as
+  version 3.x.  The protocol version will automatically be selected
+  during negotiation and the library will, in most cases, adapt
+  user-input as needed for the protocol needs.
 
-	Key features of SeedLink v4 include:
-	* Optional use of TLS (SSL) for encrypted connections and a default
-	port to use for TLS-based connections (18500).
-	* Optional capability to submit authentication credentials.  The
-	specification identifies user-password and JWT mechanisms, and
-	allows for others to be added in the future.
-	* Ability to transfer different payload types, with identifiers
-	for miniSEED versions 2 and 3, and allowing for future additions.
-	* Ability to use wildcards in station ID patterns.
+  Key features of SeedLink v4 include:
+    * Optional use of TLS (SSL) for encrypted connections and a default
+      port to use for TLS-based connections (18500).
+    * Optional capability to submit authentication credentials.  The
+      specification identifies user-password and JWT mechanisms, and
+      allows for others to be added in the future.
+    * Ability to transfer different payload types, with identifiers
+      for miniSEED versions 2 and 3, and allowing for future additions.
+    * Ability to use wildcards in station ID patterns.
 
-	This release supports all of those features.
+  This release supports all of those features.
 
-	A number of API changes were made to allow for new features and
-	improve usability.
+  A number of API changes were made to allow for new features and
+  improve usability.
 
   The full list of changes is as follows, API changes below:
 
-	- Add TLS (SSL) support for encrypted connections.  The following
-	environment variables allow for debugging and providing locations of
-	Certificate Authorities to use:
-	`LIBSLINK_CA_CERT_FILE` = location of a CA cert file to load
-	`LIBSLINK_CA_CERT_PATH` = path to CA cert files to load
-	`LIBSLINK_TLS_DEBUG` = TLS debugging output level (integer)
-	`LIBSLINK_CERT_UNVERIFIED_OK` = Allow unverified certs (for TLS 1.2)
-	- Update internal sequence numbers to unsigned 64-bit values.
-	- Header contains separate major, minor, patch versioning, thanks @yensoon2!
-	- Internal date-time representation now ISO compatible format,
-	conversion to-from legacy SeedLink time format included.
-	- Saved state file now using combined station ID syntax instead of
-	separte network and station. Both new and old formats are supported
-	when reading.
-	- Stream list file now uses a single station ID instead of separate
-  	newtork and station codes.  The old format is NOT supported.
-	- Convert v3 selector syntax to v4 when protocol v4 is negotiated.
-	- Sort the stream list alphanumerically and from more to less
-	specific regarding wildcards.  Ensuring that wildcards in station
-	ID selections are sent after those without wildcards.
-	- Add callback function hooks to support caller-provided
-	authorization with v4.
-	- Do not interpret the version following SeedLink in the HELLO
-	response as a protocol verison, instead parse SLPROTO declarations
-	and default to 3.x if no recognized protocols are found.
-	- Add special sequence number value `SL_ALLDATASEQEUNCE` to
-	request all data from a server for a stream (v4 only).  This value
-	is also used internally for v3 uni-station mode.
-	- Warning messages for non-support of features for ancient server
-	versions < 3 are removed.  Capabilty is not reduced, but the library
-	will not prevent issuing commands against very old servers, which
-	should return errors for unsupported commands.
-	- Add sl_payload_summary() and sl_payload_info() for extracting
-	basic details from recognized payload types.
-	- Add sl_set_serveraddress() to set the server address, with support
-	for parsing addresses like raw IPv6 enclosed in square brackets.
-	- Add sl_set_timewindow() to set time range for the streams.
-	- Add sl_set_auth_params() to set authentication parameters.
-	- Add sl_set_keepalive(), sl_set_iotimeout(), sl_set_idletimeout()
-	and sl_set_reconnectdelay().
-	- Add sl_set_blockingmode(), sl_setdialupmode(), and sl_setbachmode().
-	- Add sl_printslcd() to print SLCD details.
-	- Add sl_set_allstation_params() to replace sl_setuniparams().
-	- Add sl_set_termination_handler() to set signal handlers to trigger
-	connection termination for clean shutdown.  Not thread safe.
+  - Add TLS (SSL) support for encrypted connections.  The following
+    environment variables allow for debugging and providing locations of
+    Certificate Authorities to use:
+      `LIBSLINK_CA_CERT_FILE` = location of a CA cert file to load
+      `LIBSLINK_CA_CERT_PATH` = path to CA cert files to load
+      `LIBSLINK_TLS_DEBUG` = TLS debugging output level (integer)
+      `LIBSLINK_CERT_UNVERIFIED_OK` = Allow unverified certs (for TLS 1.2)
+  - Update internal sequence numbers to unsigned 64-bit values.
+  - Header contains separate major, minor, patch versioning, thanks @yensoon2!
+  - Internal date-time representation now ISO compatible format,
+    conversion to-from legacy SeedLink time format included.
+  - Saved state file now using combined station ID syntax instead of
+    separte network and station. Both new and old formats are supported
+    when reading.
+  - Stream list file now uses a single station ID instead of separate
+    newtork and station codes.  The old format is NOT supported.
+  - Convert v3 selector syntax to v4 when protocol v4 is negotiated.
+  - Sort the stream list alphanumerically and from more to less
+    specific regarding wildcards.  Ensuring that wildcards in station
+    ID selections are sent after those without wildcards.
+  - Add callback function hooks to support caller-provided
+    authorization with v4.
+  - Do not interpret the version following SeedLink in the HELLO
+    response as a protocol verison, instead parse SLPROTO declarations
+    and default to 3.x if no recognized protocols are found.
+  - Add special sequence number value `SL_ALLDATASEQEUNCE` to
+    request all data from a server for a stream (v4 only).  This value
+    is also used internally for v3 uni-station mode.
+  - Warning messages for non-support of features for ancient server
+    versions < 3 are removed.  Capabilty is not reduced, but the library
+    will not prevent issuing commands against very old servers, which
+    should return errors for unsupported commands.
+  - Add sl_payload_summary() and sl_payload_info() for extracting
+    basic details from recognized payload types.
+  - Add sl_set_serveraddress() to set the server address, with support
+    for parsing addresses like raw IPv6 enclosed in square brackets.
+  - Add sl_set_timewindow() to set time range for the streams.
+  - Add sl_set_auth_params() to set authentication parameters.
+  - Add sl_set_keepalive(), sl_set_iotimeout(), sl_set_idletimeout()
+    and sl_set_reconnectdelay().
+  - Add sl_set_blockingmode(), sl_setdialupmode(), and sl_setbachmode().
+  - Add sl_printslcd() to print SLCD details.
+  - Add sl_set_allstation_params() to replace sl_setuniparams().
+  - Add sl_set_termination_handler() to set signal handlers to trigger
+    connection termination for clean shutdown.  Not thread safe.
 
-	API changes:
-	* sl_newslcd() was replaced by sl_initslcd() and now takes two
-	arguments of client name and version.
-	* sl_collect() now takes a buffer provided by the caller as a
-	destination for received packet payload.
-	* sl_read_streamlist() is renamed sl_add_streamlist_file() and
-	reads a new format incompatible with the legacy stream list.
-	* sl_parse_streamlist() is renamed sl_add_streamlist() and updated
-	to recognized the combination of SeedLink v3 and v4 selections.
-	* sl_typestr() renamed sl_formatstr(), now takes a subformat argument.
-	* sl_addstream() replaced with sl_add_stream() and now takes a combined
-	station ID instead of separeate net and sta.
-	* sl_collect_nb() removed, non-blocking collection can be performed
-	using sl_collect() when SLCD.noblock is set.
-	* sl_packettype() and sl_sequence() removed, similar details are
-	provided in an SLpacketinfo strucuture.  The historic packet type
-	is no longer derived as the heuristic of blockette discovery is
-	unreliable.
-	* sl_checkversion() and sl_checkslcd() removed.
-	* sl_openfile() and sl_readline() removed.
-	* sl_strparse() removed.
-	* sl_gswap3() and all sl_gswapXa() routines removed.
-	* Remove all miniSEED specific routines and structures.
-	A few details from miniSEED payloads can be extracted using
-	sl_payload_info() but programs that need more details, or decoded
-	data samples should use a miniSEED parsing library.
+  API changes:
+    * sl_newslcd() was replaced by sl_initslcd() and now takes two
+      arguments of client name and version.
+    * sl_collect() now takes a buffer provided by the caller as a
+      destination for received packet payload.
+    * sl_read_streamlist() is renamed sl_add_streamlist_file() and
+      reads a new format incompatible with the legacy stream list.
+    * sl_parse_streamlist() is renamed sl_add_streamlist() and updated
+      to recognized the combination of SeedLink v3 and v4 selections.
+    * sl_typestr() renamed sl_formatstr(), now takes a subformat argument.
+    * sl_addstream() replaced with sl_add_stream() and now takes a combined
+      station ID instead of separeate net and sta.
+    * sl_collect_nb() removed, non-blocking collection can be performed
+      using sl_collect() when SLCD.noblock is set.
+    * sl_packettype() and sl_sequence() removed, similar details are
+      provided in an SLpacketinfo strucuture.  The historic packet type
+      is no longer derived as the heuristic of blockette discovery is
+      unreliable.
+    * sl_checkversion() and sl_checkslcd() removed.
+    * sl_openfile() and sl_readline() removed.
+    * sl_strparse() removed.
+    * sl_gswap3() and all sl_gswapXa() routines removed.
+    * Remove all miniSEED specific routines and structures.
+      A few details from miniSEED payloads can be extracted using
+      sl_payload_info() but programs that need more details, or decoded
+      data samples should use a miniSEED parsing library.
 
 2020.048:
-	- Support M SEED quality code.
-	- Fix segfault in sl_msr_print() when no record passed.
+  - Support M SEED quality code.
+  - Fix segfault in sl_msr_print() when no record passed.
 
 2020.047:
-	- Determine received record length automatically, a pre-determined
-	record length is no longer needed.
-	- Support for IPv6 connections, conversion to pure getaddrinfo() usage.
-	- Allow host and port to be separated with '@', e.g. host@port to
-	allow for numeric IPv6 address usage.
-	- Include socket level timeout that defaults to 60 seconds.
+  - Determine received record length automatically, a pre-determined
+    record length is no longer needed.
+  - Support for IPv6 connections, conversion to pure getaddrinfo() usage.
+  - Allow host and port to be separated with '@', e.g. host@port to
+    allow for numeric IPv6 address usage.
+  - Include socket level timeout that defaults to 60 seconds.
 
 2020.046:
-	- Incorporate platform-specific declarations into libslink.h
-	- Remove support for Watcom-related wmake files.
-	- Update Makefile to include an install method, common shared target.
-	- Change licensing to Apache License 2.
+  - Incorporate platform-specific declarations into libslink.h
+  - Remove support for Watcom-related wmake files.
+  - Update Makefile to include an install method, common shared target.
+  - Change licensing to Apache License 2.
 
 2016.290: version 2.6
-	- Change host name resolution to use getaddrinfo() on all platforms
-	except Windows.  Support is now nearly ubiquitous.  Still limited to
-	IPv4 addresses.
-	- Add Cygwin target to platforms and cleanup platform support.
+  - Change host name resolution to use getaddrinfo() on all platforms
+    except Windows.  Support is now nearly ubiquitous.  Still limited to
+    IPv4 addresses.
+  - Add Cygwin target to platforms and cleanup platform support.
 
 2016.288:
-	- Replace data sample unpacking routines from qlib2 with new routines
-	developed from scratch in libmseed.  All code is now LGPL licensed.
-	- Add sl_msr_srcname() function to generate "Net_Sta_Loc_Chan[_Qual]".
-	- Switch to simpler SOCKET type defined as needed by platform includes
-	or as int when not set.
-	- Clarify licensing to be LGPLv3.
-	- Cleanup Makefile (remove unused targets) and README, add INSTALL.
+  - Replace data sample unpacking routines from qlib2 with new routines
+    developed from scratch in libmseed.  All code is now LGPL licensed.
+  - Add sl_msr_srcname() function to generate "Net_Sta_Loc_Chan[_Qual]".
+  - Switch to simpler SOCKET type defined as needed by platform includes
+    or as int when not set.
+  - Clarify licensing to be LGPLv3.
+  - Cleanup Makefile (remove unused targets) and README, add INSTALL.
 
 2016.287: version 2.5
-	- Support data sample unpacking with byte order specified in Blockette 1000,
-	specifically allows little endian decoding.  Thanks to patch by Yen Soon.
-	- Port socket usage to portable SLP_SOCKET type, either int or SOCKET.
-	- Change default use of lastpkttime to true (1) in sl_newslcd().
-	- Quiet some MSVC warnings with a define suggested by Kevin Frechette.
+  - Support data sample unpacking with byte order specified in Blockette 1000,
+    specifically allows little endian decoding.  Thanks to patch by Yen Soon.
+  - Port socket usage to portable SLP_SOCKET type, either int or SOCKET.
+  - Change default use of lastpkttime to true (1) in sl_newslcd().
+  - Quiet some MSVC warnings with a define suggested by Kevin Frechette.
 
 2013.305: version 2.4b
-	- sl_read_streamlist(): Allow '!' character in selectors field, this
-	is allowed to negate selector(s).  This routine is only used when
-	parsing selections from a file.
+  - sl_read_streamlist(): Allow '!' character in selectors field, this
+    is allowed to negate selector(s).  This routine is only used when
+    parsing selections from a file.
 
 2012.152: version 2.4
-	- Integrate a patch from Jacob Crummey that adds support for data
-	record lengths other than 512-byte.  The client must know apriori
-	the record lengths to expect, by default 512-byte record lengths
-	are used and expected by all SeedLink clients, so this is only
-	useful in particular situations (e.g. low latency data collection).
+  - Integrate a patch from Jacob Crummey that adds support for data
+    record lengths other than 512-byte.  The client must know apriori
+    the record lengths to expect, by default 512-byte record lengths
+    are used and expected by all SeedLink clients, so this is only
+    useful in particular situations (e.g. low latency data collection).
 
 2010.075: version 2.3
-	- Add BATCH mode support, patch from Andres Heinloo/GFZ.
-	- Add protocol version check for BATCH command >= 3.1.
-	- Increase header search length and hostname resolution buffer (GFZ).
-	- Set protocol version to 3.1.
+  - Add BATCH mode support, patch from Andres Heinloo/GFZ.
+  - Add protocol version check for BATCH command >= 3.1.
+  - Increase header search length and hostname resolution buffer (GFZ).
+  - Set protocol version to 3.1.
 
 2009.318: version 2.2c
-	- Add proper string limit for snprintf() call in sl_msr_print().
+  - Add proper string limit for snprintf() call in sl_msr_print().
 
 2009.050: version 2.2b
-	- Add an include for sys/stat.h for Solaris in slplatform.h.
+  - Add an include for sys/stat.h for Solaris in slplatform.h.
 
 2008.078: version 2.2
-	- Use io.h header instead of unistd.h on Win32.
+  - Use io.h header instead of unistd.h on Win32.
 
 2008.028: version 2.1
-	- Convert all buffered IO file operations to unbuffered IO routines.
-	- Add sl_readline() to genutils.c to read and return a line, defined
-	by newline characters, from unbuffered IO, i.e. a file descriptor.
-	- Add slp_openfile() to slplatform.[ch] to portably open files.
-	- Change Makefile and src/Makefile to use user defined CC and CFLAGS.
+  - Convert all buffered IO file operations to unbuffered IO routines.
+  - Add sl_readline() to genutils.c to read and return a line, defined
+    by newline characters, from unbuffered IO, i.e. a file descriptor.
+  - Add slp_openfile() to slplatform.[ch] to portably open files.
+  - Change Makefile and src/Makefile to use user defined CC and CFLAGS.
 
 2007.284: version 2.0 (no version change)
-	- Use memchr() instead of strnstr() in network.c for portability.
-	- Add globmatch.obj to Makefile.wat and Makefile.win.
+  - Use memchr() instead of strnstr() in network.c for portability.
+  - Add globmatch.obj to Makefile.wat and Makefile.win.
 
 2007.282: version 2.0
-	- Add parsing of capability flags included with the server
-	version string which is now expected to be in the format:
-	"SeedLink v#.# <optional text> <:: capability flags>".
-	Currently recognized capability flags:
-	  SLPROTO:#.# == SeedLink protocol version
-	  CAP == Supports CAPABILITY command
-          EXTREPLY == Extended reply messages supported
-          NSWILDCARD == Network & station code wildcarding
-	- Add sending of CAPABILITY command after HELLO in say_hello()
-	if the server supports the CAPABILITY command.
-	- Add ability to recognize extended replies from the server,
-	these are in the form of "Reply\rExtended Message\r\n", for
-	example: "ERROR\rSTATION command requires 1 or 2 arguments\r\n".
+  - Add parsing of capability flags included with the server
+    version string which is now expected to be in the format:
+    "SeedLink v#.# <optional text> <:: capability flags>".
+    Currently recognized capability flags:
+      SLPROTO:#.# == SeedLink protocol version
+      CAP == Supports CAPABILITY command
+      EXTREPLY == Extended reply messages supported
+      NSWILDCARD == Network & station code wildcarding
+  - Add sending of CAPABILITY command after HELLO in say_hello()
+    if the server supports the CAPABILITY command.
+  - Add ability to recognize extended replies from the server,
+    these are in the form of "Reply\rExtended Message\r\n", for
+    example: "ERROR\rSTATION command requires 1 or 2 arguments\r\n".
 
 2007.179:
-	- Add globmatch.[ch], includes a function to do glob matching.
-	- Use glob matching in update_stream() when updating sequence
-	numbers of packet streams received.  This is needed to facilitate
-	the '*' and '?' wildcards in network and station codes.
-	- Change update_stream() to update all the entries in the stream
-	chain that match the given network and station code.  This allows
-	the situation where data from a given network-station pair is
-	selected in two or more selectors to work properly with state files.
+  - Add globmatch.[ch], includes a function to do glob matching.
+  - Use glob matching in update_stream() when updating sequence
+    numbers of packet streams received.  This is needed to facilitate
+    the '*' and '?' wildcards in network and station codes.
+  - Change update_stream() to update all the entries in the stream
+    chain that match the given network and station code.  This allows
+    the situation where data from a given network-station pair is
+    selected in two or more selectors to work properly with state files.
 
 2006.354: version 1.7
-	- No functionality changes since 1.6; only function, macro and
-	struct name changes to avoid collisions with other libraries.
+  - No functionality changes since 1.6; only function, macro and
+    struct name changes to avoid collisions with other libraries.
 
 2006.344: version 1.7rc2
-	- Add "sl_" prefix to sl_strparse, sl_strncpclean and sl_gswap
-	functions.
-	- Add "SL" prefix to SLstrlist typedef and SL_SWAPBTIME macro.
-	No functionality changes, symbol renaming only.
+  - Add "sl_" prefix to sl_strparse, sl_strncpclean and sl_gswap
+    functions.
+  - Add "SL" prefix to SLstrlist typedef and SL_SWAPBTIME macro.
+    No functionality changes, symbol renaming only.
 
 2006.336: version 1.7rc1
-	- Add "sl_" prefix to SEED structures to avoid collision,
-	changed structs: sl_blkt_head_s, sl_btime_s, sl_blkt_100_s,
-	sl_blkt_1000_s, sl_blkt_1001_s, sl_fsdh_s.
-	- Add "sl_" prefix to the following routines to avoid
-	collision with libmseed functions: sl_msr_new, sl_msr_free,
-	sl_msr_parse, sl_msr_print, sl_msr_dsamprate,
-	sl_msr_dnomsamprate, sl_msr_depochstime.
-	- Add "SL" to the record structure and typedef which are
-	now: struct SLMSrecord_s, typedef SLMSrecord.
-	No functionality changes, symbol renaming only.
+  - Add "sl_" prefix to SEED structures to avoid collision,
+    changed structs: sl_blkt_head_s, sl_btime_s, sl_blkt_100_s,
+    sl_blkt_1000_s, sl_blkt_1001_s, sl_fsdh_s.
+  - Add "sl_" prefix to the following routines to avoid
+    collision with libmseed functions: sl_msr_new, sl_msr_free,
+    sl_msr_parse, sl_msr_print, sl_msr_dsamprate,
+    sl_msr_dnomsamprate, sl_msr_depochstime.
+  - Add "SL" to the record structure and typedef which are
+    now: struct SLMSrecord_s, typedef SLMSrecord.
+    No functionality changes, symbol renaming only.
 
 2006.028: version 1.6
-	- No changes, only update version.
+  - No changes, only update version.
 
 2005.342: version 1.6rc1
-	- Test for NULL pointers int logging.c routines and handle
-	them as best as possible.
-	- Add 'b' to the mode of all fopen() calls; WIN32 then does
-	not try to translate line endings.
-	- Add createlinks.sh in doc directory to re-create symbolic
-	links after CVS checkout.
+  - Test for NULL pointers int logging.c routines and handle
+    them as best as possible.
+  - Add 'b' to the mode of all fopen() calls; WIN32 then does
+    not try to translate line endings.
+  - Add createlinks.sh in doc directory to re-create symbolic
+    links after CVS checkout.
 
 2005.103: version 1.5
-	- Fixup some in-line comments.
-	- Add an SLP_PACKED defined to __attribute__ ((packed))
-	to slplatform.h when using the GCC compiler.
-	- Use the SLP_PACKED attribute where needed for portability
-	to the XScale (ARM) architecture.  Thanks Andres.
+  - Fixup some in-line comments.
+  - Add an SLP_PACKED defined to __attribute__ ((packed))
+    to slplatform.h when using the GCC compiler.
+  - Use the SLP_PACKED attribute where needed for portability
+    to the XScale (ARM) architecture.  Thanks Andres.
 
 2005.097: version 1.5pre2
-	- Modify sl_addstream() to NOT check for duplicate streams.
-	- Change Makefile and example/Makefile to include specific
-	targets for 'gcc'.  By default $CC is used with the '-O' flag.
+  - Modify sl_addstream() to NOT check for duplicate streams.
+  - Change Makefile and example/Makefile to include specific
+    targets for 'gcc'.  By default $CC is used with the '-O' flag.
 
 2005.089: version 1.5pre1
-	- Add msr_dnomsamprate() to calculate the nominal sampling
-	rate for an MSrecord, use it in msr_dsamprate().
-	- Include calculated sample rate in Hz in msr_print() output.
-	- Support for microsecond precision in record start time,
-	including msr_print() and msr_depochstime().
-	- 'host:port' parsing extended to include possibility of a single
-	colon translating to 'localhost:18000'.  The parsing is now:
-	  ':'       => 'localhost:18000'
-	  '<host>'  => '<host>:18000'
-	  ':<port>' => 'localhost:<port>'
-	- Better checking for termination during connection opening and
-	negotiation, termination should occur without timeout experation.
-	- Use gswap routines instead of tswap routines.
+  - Add msr_dnomsamprate() to calculate the nominal sampling
+    rate for an MSrecord, use it in msr_dsamprate().
+  - Include calculated sample rate in Hz in msr_print() output.
+  - Support for microsecond precision in record start time,
+    including msr_print() and msr_depochstime().
+  - 'host:port' parsing extended to include possibility of a single
+    colon translating to 'localhost:18000'.  The parsing is now:
+      ':'       => 'localhost:18000'
+      '<host>'  => '<host>:18000'
+      ':<port>' => 'localhost:<port>'
+  - Better checking for termination during connection opening and
+    negotiation, termination should occur without timeout experation.
+  - Use gswap routines instead of tswap routines.
 
 2004.222: version 1.4
-	- sl_connect will set the SLCD->terminate flag if a permanent
-	error (invalid port specified) was detected.  This way the
-	sl_collect routines will not re-connect endlessly.
-	- String termination bug fixed in the new sladdr parsing.
-	- Remove sleep call in sl_collect().
-	- Update the slclient example program.
+  - sl_connect will set the SLCD->terminate flag if a permanent
+    error (invalid port specified) was detected.  This way the
+    sl_collect routines will not re-connect endlessly.
+  - String termination bug fixed in the new sladdr parsing.
+  - Remove sleep call in sl_collect().
+  - Update the slclient example program.
 
 2004.219:
-	- Add sl_ping which connects to server, issues HELLO, receives
-	response lines and disconnects.
-	- sl_connect now does it's own parsing of the sladdr string and
-	fills in default hostname *and* port (localhost and 18000).
-	- sl_connect now takes one more argument (int sayhello) which
-	controls whether sl_sayhello is called after making the connection.
+  - Add sl_ping which connects to server, issues HELLO, receives
+    response lines and disconnects.
+  - sl_connect now does it's own parsing of the sladdr string and
+    fills in default hostname *and* port (localhost and 18000).
+  - sl_connect now takes one more argument (int sayhello) which
+    controls whether sl_sayhello is called after making the connection.
 
 2004.196: version 1.3
-	- Add a new class of log level for a total of three levels:
-	0  : Normal log messages, defaulting to stdout with logprefix
-	1  : Diagnostic messages, defaulting to stderr with logprefix
-	2+ : Error messages, defaulting to stderr with errprefix
-	- Go through library and change most log output to the diagnostic
-	level, meaning most output will go to stderr with the exception
-	of the msr_print() output which is logged at the 0 level.
+  - Add a new class of log level for a total of three levels:
+      0  : Normal log messages, defaulting to stdout with logprefix
+      1  : Diagnostic messages, defaulting to stderr with logprefix
+      2+ : Error messages, defaulting to stderr with errprefix
+  - Go through library and change most log output to the diagnostic
+    level, meaning most output will go to stderr with the exception
+    of the msr_print() output which is logged at the 0 level.
 
 2004.174:
-	- sl_log_main: use fprintf instead of printf and change default
-	desitination for error messages to stderr.  Log messages still go
-	to stdout.
-	- Change SLCD->server_version to SLCD->protocol_ver to better
-	reflect what that value is or at least supposed to be.
-	- Update Windows Makefile's for the previous source file renaming
-	changes.
+  - sl_log_main: use fprintf instead of printf and change default
+    desitination for error messages to stderr.  Log messages still go
+    to stdout.
+  - Change SLCD->server_version to SLCD->protocol_ver to better
+    reflect what that value is or at least supposed to be.
+  - Update Windows Makefile's for the previous source file renaming
+    changes.
 
 2004.170: version 1.2a
-	- sl_recvresp: cast buffer to type (char *) so pointer arithmetic
-	will work under compilers that do not assume void* is char size
-	(e.g. Sun cc).
+  - sl_recvresp: cast buffer to type (char *) so pointer arithmetic
+    will work under compilers that do not assume void* is char size
+    (e.g. Sun cc).
 
 2004.168: version 1.2
-	- sl_collect[_nb]: process data in receive buffer even if connection
-	is not in SL_DATA state, this means the buffer will be emptied even
-	when the connection is not up.
-	- sl_collect[_nb]: reset keepalive_trig after successfully
-	connecting so a keepalive will not be sent directly after a
-	re-connection.
-	- sl_collect[_nb]: update timing variables every time unless data
-	is received, termination is triggered or other early exit
-	conditions appear; previously this was only done when more than a
-	1/4 second had elapsed.
-	- libslink.h: remove the previous_time element from the SLstat
-	type.
-	- sl_collect: handle a failure of select() more elegantly by
-	resetting the connection.
-	- sl_collect: change strerror() to slp_strerror() for any errors
-	with select() so the error will be correct under Win32.
-	- msr_parse: free allocated MSrecord and set *ppmsr to NULL on
-	errors in addition to returning NULL.
-	- Change some boolean values to type int8_t.
+  - sl_collect[_nb]: process data in receive buffer even if connection
+    is not in SL_DATA state, this means the buffer will be emptied even
+    when the connection is not up.
+  - sl_collect[_nb]: reset keepalive_trig after successfully
+    connecting so a keepalive will not be sent directly after a
+    re-connection.
+  - sl_collect[_nb]: update timing variables every time unless data
+    is received, termination is triggered or other early exit
+    conditions appear; previously this was only done when more than a
+    1/4 second had elapsed.
+  - libslink.h: remove the previous_time element from the SLstat
+    type.
+  - sl_collect: handle a failure of select() more elegantly by
+    resetting the connection.
+  - sl_collect: change strerror() to slp_strerror() for any errors
+    with select() so the error will be correct under Win32.
+  - msr_parse: free allocated MSrecord and set *ppmsr to NULL on
+    errors in addition to returning NULL.
+  - Change some boolean values to type int8_t.
 
 2004.166:
-	- Correctly reset sendpacket flag in sl_collect[_nb].  Previously
-	it might have been possible that data packets would be skipped if
-	heartbeats were received while receiving a high rate of data
-	packets.  This behaviour was never reported with this codebase;
-        nevertheless it might be possible to exercise this bug with
-	particularly written client code.  Thanks Anthony Lomax.
-	- Changed the sendpacket and terminator variables in
-	sl_collect[_nb] to type int8_t as they're only boolean values.
-	- Rename sendpacket to retpacket in sl_collect[_nb] for clarity.
-	- Rename source file slutils.c->genutils.c and main.c->slutils.c
+  - Correctly reset sendpacket flag in sl_collect[_nb].  Previously
+    it might have been possible that data packets would be skipped if
+    heartbeats were received while receiving a high rate of data
+    packets.  This behaviour was never reported with this codebase;
+    nevertheless it might be possible to exercise this bug with
+    particularly written client code.  Thanks Anthony Lomax.
+  - Changed the sendpacket and terminator variables in
+    sl_collect[_nb] to type int8_t as they're only boolean values.
+  - Rename sendpacket to retpacket in sl_collect[_nb] for clarity.
+  - Rename source file slutils.c->genutils.c and main.c->slutils.c
 
 2004.142:
-        - Do not send terminating NULL characters in command strings sent
-        to the server.  The protocol stipulates that commands must be
-        terminated with a carriage return (\r) followed by an optional
-        new line (\n).  The library now strictly terminates commands
-        with only a carriage return.  Thanks Ernesto Del Prete.
-        - Add sl_recvresp() to robustly receive responses from the server
-        that are terminated with '\r\n'.  This should improve usage when
-        the server responds slowly or with longer responses to commands.
-        - Use sl_recvresp() in say_hello() to get the two response lines
-        and report them both.
-        - Change argument 'code' to 'ident' in sl_*data() routines.
+  - Do not send terminating NULL characters in command strings sent
+    to the server.  The protocol stipulates that commands must be
+    terminated with a carriage return (\r) followed by an optional
+    new line (\n).  The library now strictly terminates commands
+    with only a carriage return.  Thanks Ernesto Del Prete.
+  - Add sl_recvresp() to robustly receive responses from the server
+    that are terminated with '\r\n'.  This should improve usage when
+    the server responds slowly or with longer responses to commands.
+  - Use sl_recvresp() in say_hello() to get the two response lines
+    and report them both.
+  - Change argument 'code' to 'ident' in sl_*data() routines.
 
 2004.131:
-	- Removed space from 'error sending' message in sl_senddata().
-	- Add define for LIBSLINK_RELEASE with the date of release,
-	e.g. "2004.131".
+  - Removed space from 'error sending' message in sl_senddata().
+  - Add define for LIBSLINK_RELEASE with the date of release,
+    e.g. "2004.131".
 
 2004.125: version 1.1
-	- Make parsing of server version more generic and robust with
-	a patch from Andres.  The server response to HELLO is expected
-	to be in the format 'seedlink v#.# <optional text>', if it's
-	not the server_version is set to 0.0 and the library will not
-	check the server version when using advanced protocol features.
+  - Make parsing of server version more generic and robust with
+    a patch from Andres.  The server response to HELLO is expected
+    to be in the format 'seedlink v#.# <optional text>', if it's
+    not the server_version is set to 0.0 and the library will not
+    check the server version when using advanced protocol features.
 
 2004.118:
-	- Port and test under Mac OS X (Darwin) and add SLP_DARWIN define.
-	- sl_request_info(): Print INFO request type when request is
-	denied due to a pending request.
-	- Update Makefile usage of ar to include the -s flag, this
-	was needed under Darwin to build an index into the static
-	library and is a good idea anyway.
-	- Update Makefile to create symbolic links when shared/dynamic
-	libraries are built.
-	- Consolidate INSTALL and README files into just README.
+  - Port and test under Mac OS X (Darwin) and add SLP_DARWIN define.
+  - sl_request_info(): Print INFO request type when request is
+    denied due to a pending request.
+  - Update Makefile usage of ar to include the -s flag, this
+    was needed under Darwin to build an index into the static
+    library and is a good idea anyway.
+  - Update Makefile to create symbolic links when shared/dynamic
+    libraries are built.
+  - Consolidate INSTALL and README files into just README.
 
 2003.309: version 1.0 (Yay!)
-	- Add a missing include for Solaris.
+  - Add a missing include for Solaris.
 
 2003.307: version 1.0pre1
-	- Change slp_getaddrinfo() to use the reentrant gethostbyname_r()
-	under glibc2 and Solaris.  getaddrinfo() is only supported under
-	Solaris 8 and later, and early glibc2 does strange things.
-	- In slplatform.h define SLP_GLIBC2, SLP_SOLARIS or SLP_WIN32
-	based on the architecture.
-	- Add a Makefile.wat (also for the example) for Open Watcom's
-	wmake utility.
-	- Documentation updates.
+  - Change slp_getaddrinfo() to use the reentrant gethostbyname_r()
+    under glibc2 and Solaris.  getaddrinfo() is only supported under
+    Solaris 8 and later, and early glibc2 does strange things.
+  - In slplatform.h define SLP_GLIBC2, SLP_SOLARIS or SLP_WIN32
+    based on the architecture.
+  - Add a Makefile.wat (also for the example) for Open Watcom's
+    wmake utility.
+  - Documentation updates.
 
 2003.280: version 0.9.6
-	- Add two new functions sl_log_rl() and sl_loginit_rl(); these are
-	versions of the logging facility that work directly on a SLlog
-	struct.  If no SLlog is given to sl_log_rl() it will use the
-	global logging parameters.  If no SLlog is given to
-	sl_loginit_rt() it will allocated space before initializing the
-	parameters.
-	- Update msr_parse() and msr_print() to take an SLlog
-	(instead of an SLCD) for logging parameters and use the new
-	sl_log_rl() internally.
-	- Change the verbosity level of two messages as suggested by
-	Andres.
+  - Add two new functions sl_log_rl() and sl_loginit_rl(); these are
+    versions of the logging facility that work directly on a SLlog
+    struct.  If no SLlog is given to sl_log_rl() it will use the
+    global logging parameters.  If no SLlog is given to
+    sl_loginit_rt() it will allocated space before initializing the
+    parameters.
+  - Update msr_parse() and msr_print() to take an SLlog
+    (instead of an SLCD) for logging parameters and use the new
+    sl_log_rl() internally.
+  - Change the verbosity level of two messages as suggested by
+    Andres.
 
 2003.276: version 0.9.5a
-	- Add two new functions sl_log_r() and sl_loginit_r(); these are
-	reentrant versions of the previous functions.  Intended for use
-	in threaded programs where the each thread can use it's own
-	logging scheme.
-	- Updated most of the library logging to use sl_log_r with the
-	appropriate SLCD, this required a small bit of re-arrangement
-	including a change to the arguments for msr_parse() and
-	msr_print() which now need a SLCD.
+  - Add two new functions sl_log_r() and sl_loginit_r(); these are
+    reentrant versions of the previous functions.  Intended for use
+    in threaded programs where the each thread can use it's own
+    logging scheme.
+  - Updated most of the library logging to use sl_log_r with the
+    appropriate SLCD, this required a small bit of re-arrangement
+    including a change to the arguments for msr_parse() and
+    msr_print() which now need a SLCD.
 
 2003.274: version 0.9.4
-	- Create slp_getaddrinfo(), this will use gethostbyname() on
-	Win32 and getaddrinfo() on others.  getaddrinfo is only
-	supported in very recent Win32 platforms.
-	- A few other tweaks for compiling under Win32.
+  - Create slp_getaddrinfo(), this will use gethostbyname() on
+    Win32 and getaddrinfo() on others.  getaddrinfo is only
+    supported in very recent Win32 platforms.
+  - A few other tweaks for compiling under Win32.
 
 2003.273: version 0.9.3
-	Making things thread safe/friendly:
-	- Make a new SLstat struct to hold all persistent (static) state
-	variables used in sl_collect[_nb]().  Added a pointer to one of
-	these in the SLCD.  Also updated sl_newslcd() and sl_freeslcd()
-	to support this.
-	- Use getaddrinfo() instead of gethostbyname() in sl_connect().
-	- Change update_stream() to extract FSDH information without
-	using msr_parse().  Both faster and thread safe.
-	- Change encoding_hash() to be reentrant and modify msr_print()
-	to use it.
+  Making things thread safe/friendly:
+  - Make a new SLstat struct to hold all persistent (static) state
+    variables used in sl_collect[_nb]().  Added a pointer to one of
+    these in the SLCD.  Also updated sl_newslcd() and sl_freeslcd()
+    to support this.
+  - Use getaddrinfo() instead of gethostbyname() in sl_connect().
+  - Change update_stream() to extract FSDH information without
+    using msr_parse().  Both faster and thread safe.
+  - Change encoding_hash() to be reentrant and modify msr_print()
+    to use it.
 
 2003.272: version 0.9.2
-	- Fix bug in slp_usleep().
-	- Minor changes to strtoul() usage in sl_connect().
-	- Add -lrt to the Solaris LDLIBS to get nanosleep().
+  - Fix bug in slp_usleep().
+  - Minor changes to strtoul() usage in sl_connect().
+  - Add -lrt to the Solaris LDLIBS to get nanosleep().
 
 2003.262: version 0.9.1
-	- New portability function slp_usleep() sleeps for given micro
-	seconds.  Uses SleepEx under Win32 and nanosleep() for others.
-	- Update sl_collect() and sl_collect_nb() to always return
-	SLPACKET, SLTERMINATE or SLNOPACKET.
-	- Reset some verbosity flags for uni-sta. negotiation, now
-	it's like multi-sta. negotiation.
-	- Update to example/slclient.c, standard flag usage.
+  - New portability function slp_usleep() sleeps for given micro
+    seconds.  Uses SleepEx under Win32 and nanosleep() for others.
+  - Update sl_collect() and sl_collect_nb() to always return
+    SLPACKET, SLTERMINATE or SLNOPACKET.
+  - Reset some verbosity flags for uni-sta. negotiation, now
+    it's like multi-sta. negotiation.
+  - Update to example/slclient.c, standard flag usage.
 
 2003.237:
-	- Change Makefile to use GCC by default and use -O2 optimization.
-	- Fix some variable initializations.
-	- Minor cleanups, move MAX_LOG_MSG_LENGTH to libslink.h.
+  - Change Makefile to use GCC by default and use -O2 optimization.
+  - Fix some variable initializations.
+  - Minor cleanups, move MAX_LOG_MSG_LENGTH to libslink.h.
 
 2003.182: version 0.9
-	- Move sl_sequence and sl_packettype into main.c from slutils.c.
-	- Move doy2md() from main.c to sl_doy2md() in slutils.c and
-	"export" it (i.e. declare it in libslink.h).
-	- Add sl_doy2md() and strncpclean() to utils man page.
-	- Remove barely used constants from libslink.h.
+  - Move sl_sequence and sl_packettype into main.c from slutils.c.
+  - Move doy2md() from main.c to sl_doy2md() in slutils.c and
+    "export" it (i.e. declare it in libslink.h).
+  - Add sl_doy2md() and strncpclean() to utils man page.
+  - Remove barely used constants from libslink.h.
 
 2003.181: version 0.8.4
-	- Use only a single error indicator for bad Steim compression
-	flags regardless of compression level.  If the caller needs
-	to know the level it is in the FSDH.
-	- Rename the MSrecord element from unpackflag to unpackerr to
-	avoid confusion with the argument to msr_parse().
-	- Update the documentation to describe the new unpackerr flag.
-	- Update a few non-standard func. declarations in slplatform.h
+  - Use only a single error indicator for bad Steim compression
+    flags regardless of compression level.  If the caller needs
+    to know the level it is in the FSDH.
+  - Rename the MSrecord element from unpackflag to unpackerr to
+    avoid confusion with the argument to msr_parse().
+  - Update the documentation to describe the new unpackerr flag.
+  - Update a few non-standard func. declarations in slplatform.h
 
 2003.177: version 0.8.2
-	- Rename the MSheader struct to MSrecord to reflect the fact
-	that the mini-system processes more than just the header.
-	- Add an element to the MSrecord struct, 'unpackflag' that
-	will be set by the unpacking routines to indicates errors.
-	- Rename all the MSrecord related functions, now they are
-	prefixed with 'msr_' for clarify/uniformity.
-	- Change RECSIZE declaration in libslink.h to SLRECSIZE.
-	- Remove unneeded main loop in sl_collect_nb(), it never loops.
+  - Rename the MSheader struct to MSrecord to reflect the fact
+    that the mini-system processes more than just the header.
+  - Add an element to the MSrecord struct, 'unpackflag' that
+    will be set by the unpacking routines to indicates errors.
+  - Rename all the MSrecord related functions, now they are
+    prefixed with 'msr_' for clarify/uniformity.
+  - Change RECSIZE declaration in libslink.h to SLRECSIZE.
+  - Remove unneeded main loop in sl_collect_nb(), it never loops.
 
 2003.174:
-	- Change char *'s to const char *'s in save/recover state
-	routines (patch from Andres).
+  - Change char *'s to const char *'s in save/recover state
+    routines (patch from Andres).
 
 2003.169: version 0.8
-	- Minor updates to Makefile.win.
-	- Change requested Windows Sockets version to 2.2.
+  - Minor updates to Makefile.win.
+  - Change requested Windows Sockets version to 2.2.
 
 2003.168:
-	- Include a man page for sl_dtime().
-	- Many more small changes for portability to WIN32.
-	- Include an Nmake compatible Makefile.win for building on WIN32.
-	- Update the slclient.c example and include a Makefile.win to
-	build it on a WIN32 platform.
+  - Include a man page for sl_dtime().
+  - Many more small changes for portability to WIN32.
+  - Include an Nmake compatible Makefile.win for building on WIN32.
+  - Update the slclient.c example and include a Makefile.win to
+    build it on a WIN32 platform.
 
 2003.167:
-	- Change sl_readdata() and sl_writedata() to sl_recvdata() and
-	sl_senddata() respectively.  These new functions use the recv()
-	and send() system calls for network socket operation; they
-	are much more portable than read/write.
-	- Create slplatform.c to hold portable functions, basically
-	these are functions to provide a common interface to differing
-	system implementations.
-	- Rename slstdint.h to slplatform.h and use it for including
-	platform specific headers.
+  - Change sl_readdata() and sl_writedata() to sl_recvdata() and
+    sl_senddata() respectively.  These new functions use the recv()
+    and send() system calls for network socket operation; they
+    are much more portable than read/write.
+  - Create slplatform.c to hold portable functions, basically
+    these are functions to provide a common interface to differing
+    system implementations.
+  - Rename slstdint.h to slplatform.h and use it for including
+    platform specific headers.
 
 2003.163: version 0.7.2
-	- Include and use a slstdint.h header file to help deal with
-	portability of the standard integer types.  It's a bit sparse
-	right now.
-	- Add 'resume' flag to the SLCD to control the usage of sequence
-	numbers with DATA/FETCH commands.  Default is true.
-	- Change char *'s in logging routines to const char *'s.
-	- Change default use of lastpkttime to false in new_slcd().
+  - Include and use a slstdint.h header file to help deal with
+    portability of the standard integer types.  It's a bit sparse
+    right now.
+  - Add 'resume' flag to the SLCD to control the usage of sequence
+    numbers with DATA/FETCH commands.  Default is true.
+  - Change char *'s in logging routines to const char *'s.
+  - Change default use of lastpkttime to false in new_slcd().
 
 2003.162: version 0.7.1
-	- Change host_latency(), to use the new helper functions.
-	- Add helper functions double_samprate() and depoch_starttime() to
-	msheader.c
-	- Change msrecord pointer (MSheader struct) to a const char pointer
-	- Change argument for print_MSheader() from 'header' to 'msheader'
-	for consistency with related functions.
-	- Change sl_log() calls in print_MSheader() to use a verbosity
-	level of 0 instead of 1.  If print_MSheader() is called the ouput
-	should be printed, period (the only exception is when the logging
-	verbosity is less than 0).
+  - Change host_latency(), to use the new helper functions.
+  - Add helper functions double_samprate() and depoch_starttime() to
+    msheader.c
+  - Change msrecord pointer (MSheader struct) to a const char pointer
+  - Change argument for print_MSheader() from 'header' to 'msheader'
+    for consistency with related functions.
+  - Change sl_log() calls in print_MSheader() to use a verbosity
+    level of 0 instead of 1.  If print_MSheader() is called the ouput
+    should be printed, period (the only exception is when the logging
+    verbosity is less than 0).
 
 2003.157: version 0.7
-	- Changed the declaration of sl_collect().  Now a pointer to a
-	pointer for an SLpacket is passed, when a packet is received
-	this pointer is updated.  sl_collect() now returns an integer
-	giving more possibilities for return values.  When a packet is
-	received SLPACKET is returned (a positive integer), when an error
-	or termination is occurs 0 is returned.
-	- Added a non-blocking version of sl_collect() called, creatively,
-	sl_collect_nb().  This acts the same as sl_collect() but, instead
-	of blocking, will return SLNOPACKET (defined in libslink.h) when
-	no data is available.  This routine is considered experimental
-	and not documented.
+  - Changed the declaration of sl_collect().  Now a pointer to a
+    pointer for an SLpacket is passed, when a packet is received
+    this pointer is updated.  sl_collect() now returns an integer
+    giving more possibilities for return values.  When a packet is
+    received SLPACKET is returned (a positive integer), when an error
+    or termination is occurs 0 is returned.
+  - Added a non-blocking version of sl_collect() called, creatively,
+    sl_collect_nb().  This acts the same as sl_collect() but, instead
+    of blocking, will return SLNOPACKET (defined in libslink.h) when
+    no data is available.  This routine is considered experimental
+    and not documented.
 
 2003.156:
-	- Add 'terminate' flag to the SLCD and include a sl_terminate()
-	function to set it.  Modify sl_connect() to close the connection,
-	send remaining packets in buffer and finish with a NULL when
-	this flag is set.  Also modified the example client to use this
-	new shutdown technique.
-	- Add 'lastpkttime' flag to the SLCD to indicate if the last
-	packet time should be appended to the FETCH/DATA command during
-	negotiation.  Default is 1 (true).
-	- Add 'numsamples' element to the MSheader data type to indicate
-	the actual number of data samples unpacked.  If no unpacking
-	is requested this is set to -1.
-	- Declare unpack_* routines in unpack.c as static to avoid
-	function name collision.
-	- Use the 'const' qualifier for char and SLCD types when no
-	modification is done.
-	- Standardize sl_freeslcd() function name.
+  - Add 'terminate' flag to the SLCD and include a sl_terminate()
+    function to set it.  Modify sl_connect() to close the connection,
+    send remaining packets in buffer and finish with a NULL when
+    this flag is set.  Also modified the example client to use this
+    new shutdown technique.
+  - Add 'lastpkttime' flag to the SLCD to indicate if the last
+    packet time should be appended to the FETCH/DATA command during
+    negotiation.  Default is 1 (true).
+  - Add 'numsamples' element to the MSheader data type to indicate
+    the actual number of data samples unpacked.  If no unpacking
+    is requested this is set to -1.
+  - Declare unpack_* routines in unpack.c as static to avoid
+    function name collision.
+  - Use the 'const' qualifier for char and SLCD types when no
+    modification is done.
+  - Standardize sl_freeslcd() function name.
 
 2003.083: version 0.6
-	- Fix memory leaks in parse_streamlist().
+  - Fix memory leaks in parse_streamlist().
 
 2003.073: version 0.5
-	- Renaming for consistency and many cleanups.
+  - Renaming for consistency and many cleanups.
 
 Early 2003: version 0.1
-	- Re-fit utility functions from slinktool for library usage.
+  - Re-fit utility functions from slinktool for library usage.
 
-	- Add lots of other useful functions including config (stream
-	list) file reading, state file functions, Mini-SEED record parsing
-	and data sample unpacking/decompressing, etc.
+  - Add lots of other useful functions including config (stream
+    list) file reading, state file functions, Mini-SEED record parsing
+    and data sample unpacking/decompressing, etc.
 
-	- Write a short Users Guide and some man pages.
-
-
+  - Write a short Users Guide and some man pages.

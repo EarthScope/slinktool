@@ -117,6 +117,16 @@ test_message_truncation (void)
   SLT_EQ_INT ((int)strlen (captured_log), MAX_LOG_MSG_LENGTH - 1,
              "a message longer than MAX_LOG_MSG_LENGTH is truncated to exactly MAX_LOG_MSG_LENGTH - 1 characters");
 
+  longmsg[sizeof (longmsg) - 2] = '\0';
+
+  reset_capture ();
+  sl_log_rl (log, 0, 0, "%s\n", longmsg);
+
+  SLT_EQ_INT ((int)strlen (captured_log), MAX_LOG_MSG_LENGTH - 1,
+             "a truncated message with a newline-terminated format keeps its length");
+  SLT_EQ_INT (captured_log[MAX_LOG_MSG_LENGTH - 2], '\n',
+             "a truncated message with a newline-terminated format ends with a newline");
+
   free (log);
 }
 

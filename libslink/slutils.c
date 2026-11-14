@@ -30,12 +30,16 @@
 #include "globmatch.h"
 #include "libslink.h"
 #include "mseedformat.h"
+#include "slinternal.h"
 
 /* Function(s) only used in this source file */
 static int receive_header (SLCD *slconn, uint8_t *buffer, uint32_t bytesavailable);
 static int64_t receive_payload (SLCD *slconn, char *plbuffer, uint32_t plbuffersize,
                                 uint8_t *buffer, uint32_t bytesavailable);
 static int update_stream (SLCD *slconn, const char *payload);
+static SLstream *add_stream_int (SLCD *slconn, const char *stationid, const char *selectors,
+                                 uint64_t seqnum, const char *isotime);
+static char *wildcard_selectors (SLCD *slconn, const char *stationid, int *matched);
 static int64_t detect (const char *record, uint64_t recbuflen, char *payloadformat);
 static const char *internal_auth_value_data (const char *server, void *auth_data);
 static void free_internal_auth_data (SLCD *slconn);
@@ -107,6 +111,8 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
   int was_keepalive;
   int payload_completed;
   int payload_pending;
+  int progress;
+  uint32_t payloadlength;
 
   if (!slconn || !packetinfo || (plbuffersize > 0 && !plbuffer))
     return SLTERMINATE;
@@ -119,6 +125,13 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
 
       if (slconn->link == -1 && slconn->recvdatalen == 0)
       {
+        /* Connection closed after the last buffered packet was returned */
+        if (slconn->stat->conn_state == STREAMING)
+        {
+          sl_log_r (slconn, 2, 0, "[%s] %s(): connection closed\n", slconn->sladdr, __func__);
+          break;
+        }
+
         slconn->stat->conn_state = DOWN;
       }
 
@@ -130,7 +143,8 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
       }
 
       /* Connect to server if disconnected */
-      if (slconn->stat->conn_state == DOWN && slconn->stat->netdly_time < current_time)
+      if (slconn->stat->conn_state == DOWN && slconn->stat->netdly_time < current_time &&
+          slconn->terminate == 0)
       {
         int connect_status = sl_connect (slconn, 1);
 
@@ -139,7 +153,7 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
           return SLAUTHFAIL;
         }
 
-        if (connect_status > 0)
+        if (connect_status >= 0)
         {
           slconn->stat->conn_state = UP;
           slconn->stat->netto_time = 0;
@@ -218,6 +232,8 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
         slconn->info = NULL;
       }
 
+      progress = 0;
+
       /* Read incoming data stream */
       if (slconn->stat->conn_state == STREAMING)
       {
@@ -239,6 +255,7 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
           else if (bytesread > 0)
           {
             slconn->recvdatalen += bytesread;
+            progress = 1;
           }
           else if (slconn->recvdatalen == 0) /* bytesread == 0 */
           {
@@ -307,6 +324,19 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
             }
             else if (bytesread > 0)
             {
+              if (slconn->stat->packetinfo.stationidlength >
+                  (sizeof (slconn->stat->packetinfo.stationid) - 1))
+              {
+                sl_log_r (slconn, 2, 0,
+                          "[%s] %s(): received station ID is too large (%u) for buffer (%zu)\n",
+                          slconn->sladdr, __func__, slconn->stat->packetinfo.stationidlength,
+                          sizeof (slconn->stat->packetinfo.stationid) - 1);
+
+                sl_disconnect (slconn);
+                *packetinfo = NULL;
+                return SLTERMINATE;
+              }
+
               /* Set state for station ID or payload collection */
               if (slconn->stat->packetinfo.stationidlength > 0)
               {
@@ -329,31 +359,16 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
             slconn->stat->packetinfo.stationidlength > 0 &&
             (slconn->recvdatalen - bytesconsumed) >= slconn->stat->packetinfo.stationidlength)
         {
-          if (slconn->stat->packetinfo.stationidlength >
-              (sizeof (slconn->stat->packetinfo.stationid) - 1))
-          {
-            sl_log_r (slconn, 2, 0,
-                      "[%s] %s(): received station ID is too large (%u) for buffer (%zu)\n",
-                      slconn->sladdr, __func__, slconn->stat->packetinfo.stationidlength,
-                      sizeof (slconn->stat->packetinfo.stationid) - 1);
+          memcpy (slconn->stat->packetinfo.stationid, slconn->recvbuffer + bytesconsumed,
+                  slconn->stat->packetinfo.stationidlength);
 
-            sl_disconnect (slconn);
-            *packetinfo = NULL;
-            return SLTERMINATE;
-          }
-          else
-          {
-            memcpy (slconn->stat->packetinfo.stationid, slconn->recvbuffer + bytesconsumed,
-                    slconn->stat->packetinfo.stationidlength);
+          slconn->stat->packetinfo.stationid[slconn->stat->packetinfo.stationidlength] = '\0';
 
-            slconn->stat->packetinfo.stationid[slconn->stat->packetinfo.stationidlength] = '\0';
+          /* Set state for payload collection */
+          slconn->stat->packetinfo.payloadcollected = 0;
+          slconn->stat->stream_state = PAYLOAD;
 
-            /* Set state for payload collection */
-            slconn->stat->packetinfo.payloadcollected = 0;
-            slconn->stat->stream_state = PAYLOAD;
-
-            bytesconsumed += slconn->stat->packetinfo.stationidlength;
-          }
+          bytesconsumed += slconn->stat->packetinfo.stationidlength;
         } /* Done reading station ID */
 
         /* Read payload */
@@ -379,8 +394,14 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
             return SLTOOLARGE;
           }
 
+          payloadlength = slconn->stat->packetinfo.payloadlength;
+
           bytesread = receive_payload (slconn, plbuffer, plbuffersize,
                                        slconn->recvbuffer + bytesconsumed, bytesavailable);
+
+          /* A newly detected v3 payload length is progress, e.g. toward SLTOOLARGE */
+          if (slconn->stat->packetinfo.payloadlength != payloadlength)
+            progress = 1;
 
           if (bytesread < 0)
           {
@@ -420,10 +441,12 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
             /* Set state for header collection if payload is complete */
             slconn->stat->stream_state = HEADER;
 
-            /* INFO response payload, terminated if the last (only, for v4) packet */
+            /* INFO response payload, terminated if the last (only, for v4) packet.
+             * A v4 JSON error is the complete response to a failed INFO request. */
             info_terminated = (slconn->stat->packetinfo.payloadformat == SLPAYLOAD_MSEED2INFOTERM ||
                                (slconn->stat->packetinfo.payloadformat == SLPAYLOAD_JSON &&
-                                slconn->stat->packetinfo.payloadsubformat == SLPAYLOAD_JSON_INFO));
+                                (slconn->stat->packetinfo.payloadsubformat == SLPAYLOAD_JSON_INFO ||
+                                 slconn->stat->packetinfo.payloadsubformat == SLPAYLOAD_JSON_ERROR)));
             info_payload =
                 (info_terminated || slconn->stat->packetinfo.payloadformat == SLPAYLOAD_MSEED2INFO);
 
@@ -478,6 +501,9 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
 
         slconn->recvdatalen -= bytesconsumed;
 
+        if (bytesconsumed > 0 || payload_completed)
+          progress = 1;
+
         /* Connection closed and buffer exhausted or can't progress - break to
          * reconnect. A payload completed this pass also zeroes bytesconsumed
          * (above) after shifting it out, so that alone is not "can't
@@ -490,10 +516,26 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
           break;
         }
 
-        /* Set termination flag to level 2 if buffer has little/no viable data */
-        if (slconn->terminate == 1 && slconn->recvdatalen <= SL_MIN_PAYLOAD)
+        /* Set termination flag to level 2 if buffer has little/no viable data,
+         * or nothing more can be processed without further reads */
+        if (slconn->terminate == 1 && (slconn->recvdatalen <= SL_MIN_PAYLOAD || !progress))
         {
           slconn->terminate = 2;
+        }
+
+        /* Wait for the rest of a partially buffered packet; the empty-buffer
+         * case waits on the socket before processing */
+        if (!progress && !slconn->noblock && slconn->terminate == 0 && slconn->link != -1 &&
+            slconn->recvdatalen > 0)
+        {
+          poll_state = sl_poll (slconn, 1, 0, 500);
+
+          if (poll_state < 0 && slconn->terminate == 0)
+          {
+            sl_log_r (slconn, 2, 0, "[%s] %s(): polling error: %s\n", slconn->sladdr, __func__,
+                      sl_strerror ());
+            break;
+          }
         }
       } /* Done reading data in STREAMING state */
 
@@ -539,8 +581,9 @@ sl_collect (SLCD *slconn, const SLpacketinfo **packetinfo, char *plbuffer, uint3
         slconn->stat->keepalive_time = current_time + SL_EPOCH2SLTIME (slconn->keepalive);
       }
 
-      /* Return if not waiting for data and no data in internal buffer */
-      if (slconn->noblock && slconn->recvdatalen == 0)
+      /* Return if not waiting for data and no complete packet is buffered */
+      if (slconn->noblock &&
+          (slconn->recvdatalen == 0 || (slconn->stat->conn_state == STREAMING && !progress)))
       {
         *packetinfo = NULL;
         return SLNOPACKET;
@@ -723,7 +766,7 @@ receive_payload (SLCD *slconn, char *plbuffer, uint32_t plbuffersize, uint8_t *b
   int64_t detectedlength;
   char payloadformat = SLPAYLOAD_UNKNOWN;
 
-  if (!slconn || !plbuffer)
+  if (!slconn || (!plbuffer && plbuffersize > 0))
     return -1;
 
   packetinfo = &slconn->stat->packetinfo;
@@ -799,7 +842,8 @@ receive_payload (SLCD *slconn, char *plbuffer, uint32_t plbuffersize, uint8_t *b
   }
 
   /* Copy payload data from internal buffer to payload buffer */
-  memcpy (plbuffer + packetinfo->payloadcollected, buffer, bytestoconsume);
+  if (bytestoconsume > 0)
+    memcpy (plbuffer + packetinfo->payloadcollected, buffer, bytestoconsume);
   packetinfo->payloadcollected += bytestoconsume;
 
   return bytestoconsume;
@@ -822,6 +866,8 @@ update_stream (SLCD *slconn, const char *payload)
   SLpacketinfo *packetinfo = NULL;
   SLstream *curstream;
   int updates = 0;
+  int allstation;
+  int exact = 0;
 
   char timestamp[32] = {0};
   char sourceid[64] = {0};
@@ -888,29 +934,31 @@ update_stream (SLCD *slconn, const char *payload)
 
   curstream = slconn->streams;
 
-  /* For all-station mode */
-  if (curstream != NULL && strcmp (curstream->stationid, "*") == 0)
-  {
-    curstream->seqnum = packetinfo->seqnum;
+  /* The all-station mode entry is always first and accepts any station */
+  allstation = (curstream != NULL && strcmp (curstream->stationid, "*") == 0);
 
-    if (timestamp[0])
-      strcpy (curstream->timestamp, timestamp);
-
-    return 0;
-  }
-
-  /* For multi-station mode, search the stream list and update all matching entries */
+  /* Update all matching entries, using glob matching for wildcarded station IDs.
+   * Entries for the station itself sort before any wildcarded entries, which
+   * are not resumed from their own sequence numbers when such an entry
+   * exists, so the search ends at the first non-matching entry after it. */
   while (curstream != NULL)
   {
-    /* Use glob matching to match wildcarded station ID codes */
-    if (sl_globmatch (packetinfo->stationid, curstream->stationid))
+    if ((allstation && curstream == slconn->streams) ||
+        sl_globmatch (packetinfo->stationid, curstream->stationid))
     {
       curstream->seqnum = packetinfo->seqnum;
 
       if (timestamp[0])
         strcpy (curstream->timestamp, timestamp);
 
+      if (strcmp (packetinfo->stationid, curstream->stationid) == 0)
+        exact = 1;
+
       updates++;
+    }
+    else if (exact)
+    {
+      break;
     }
 
     curstream = curstream->next;
@@ -918,11 +966,186 @@ update_stream (SLCD *slconn, const char *payload)
 
   /* If no updates then no match was found */
   if (updates == 0)
+  {
     sl_log_r (slconn, 2, 0, "[%s] unexpected data received: %s\n", slconn->sladdr,
               packetinfo->stationid);
+    return -1;
+  }
 
-  return (updates == 0) ? -1 : 0;
+  /* Track each station received via a wildcard entry with its own entry,
+   * to resume each station from its own sequence number.  Not done in v3
+   * uni-station mode, which negotiates only the all-station entry. */
+  if (!exact && (slconn->multistation || !(slconn->protocol & SLPROTO3X)))
+    sli_add_matchedstream (slconn, packetinfo->stationid, packetinfo->seqnum, timestamp);
+
+  return 0;
 } /* End of update_stream() */
+
+/***************************************************************************
+ * wildcard_selectors:
+ *
+ * Combine the selectors of all wildcarded stream list entries matching
+ * \a stationid, removing duplicates.  If any matching entry has no
+ * selectors, i.e. all streams, the result is NULL.
+ *
+ * Negated selectors of one entry would also exclude streams selected by
+ * another, so selectors of multiple entries are not combined when any
+ * are negated; \a matched is then set to 0.
+ *
+ * \a matched is set to the count of matching wildcarded entries.
+ *
+ * Returns an allocated selector string or NULL if none (or on error,
+ * with \a matched set to -1).
+ ***************************************************************************/
+static char *
+wildcard_selectors (SLCD *slconn, const char *stationid, int *matched)
+{
+  SLstream *curstream;
+  char *selectors = NULL;
+  char *selptr;
+  char *found;
+  size_t sellen;
+  size_t maxlen = 0;
+  size_t length = 0;
+  int allselected = 0;
+  int negated = 0;
+
+  *matched = 0;
+
+  for (curstream = slconn->streams; curstream; curstream = curstream->next)
+  {
+    if (!strpbrk (curstream->stationid, "*?") || !sl_globmatch (stationid, curstream->stationid))
+      continue;
+
+    (*matched)++;
+
+    if (!curstream->selectors || curstream->selectors[strspn (curstream->selectors, " ")] == '\0')
+    {
+      allselected = 1;
+    }
+    else
+    {
+      maxlen += strlen (curstream->selectors) + 1;
+
+      if (curstream->selectors[strspn (curstream->selectors, " ")] == '!' ||
+          strstr (curstream->selectors, " !"))
+        negated = 1;
+    }
+  }
+
+  if (*matched == 0 || allselected)
+    return NULL;
+
+  if (*matched > 1 && negated)
+  {
+    sl_log_r (slconn, 1, 3,
+              "[%s] not tracking %s, negated selectors of multiple wildcard entries\n",
+              slconn->sladdr, stationid);
+    *matched = 0;
+    return NULL;
+  }
+
+  if ((selectors = (char *)malloc (maxlen + 1)) == NULL)
+  {
+    sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
+    *matched = -1;
+    return NULL;
+  }
+
+  selectors[0] = '\0';
+
+  for (curstream = slconn->streams; curstream; curstream = curstream->next)
+  {
+    if (!strpbrk (curstream->stationid, "*?") || !sl_globmatch (stationid, curstream->stationid))
+      continue;
+
+    /* Append each space-separated selector not already present */
+    for (selptr = curstream->selectors; *selptr; selptr += sellen)
+    {
+      selptr += strspn (selptr, " ");
+      sellen = strcspn (selptr, " ");
+
+      if (sellen == 0)
+        break;
+
+      for (found = selectors; *found; found += strcspn (found, " "), found += strspn (found, " "))
+      {
+        if (strcspn (found, " ") == sellen && strncmp (found, selptr, sellen) == 0)
+          break;
+      }
+
+      if (*found)
+        continue;
+
+      if (length > 0)
+        selectors[length++] = ' ';
+
+      memcpy (selectors + length, selptr, sellen);
+      length += sellen;
+      selectors[length] = '\0';
+    }
+  }
+
+  return selectors;
+} /* End of wildcard_selectors() */
+
+/***************************************************************************
+ * sli_add_matchedstream:
+ *
+ * Add a stream list entry for \a stationid if it has no entry of its own
+ * and matches one or more wildcarded entries.  The new entry carries the
+ * combined selectors of the matching wildcarded entries.
+ *
+ * Only station IDs of letters, digits, underscores and dashes are added;
+ * others cannot be safely written to a state file, sent in a STATION
+ * command or used as a glob pattern.
+ *
+ * Not part of the public API.
+ *
+ * Returns 1 if an entry was added, 0 if not needed and -1 on error.
+ ***************************************************************************/
+int
+sli_add_matchedstream (SLCD *slconn, const char *stationid, uint64_t seqnum, const char *isotime)
+{
+  static const char validchars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                   "abcdefghijklmnopqrstuvwxyz"
+                                   "0123456789_-";
+  SLstream *curstream;
+  char *selectors;
+  int matched;
+
+  if (!slconn || !stationid || stationid[0] == '\0' || strlen (stationid) >= SL_MAX_STATIONID)
+    return 0;
+
+  if (stationid[strspn (stationid, validchars)] != '\0')
+  {
+    sl_log_r (slconn, 1, 3, "[%s] not tracking station ID with unsupported characters: '%s'\n",
+              slconn->sladdr, stationid);
+    return 0;
+  }
+
+  for (curstream = slconn->streams; curstream; curstream = curstream->next)
+  {
+    if (strcmp (curstream->stationid, stationid) == 0)
+      return 0;
+  }
+
+  selectors = wildcard_selectors (slconn, stationid, &matched);
+
+  if (matched <= 0)
+    return matched;
+
+  curstream = add_stream_int (slconn, stationid, selectors, seqnum, isotime);
+
+  free (selectors);
+
+  if (curstream == NULL)
+    return -1;
+
+  sl_log_r (slconn, 1, 2, "[%s] added stream list entry for %s\n", slconn->sladdr, stationid);
+
+  return 1;
+} /* End of sli_add_matchedstream() */
 
 /** ************************************************************************
  * @brief Initialize a new ::SLCD
@@ -1057,6 +1280,9 @@ sl_freeslcd (SLCD *slconn)
     curstream = nextstream;
   }
 
+  if (global_termination_SLCD == slconn)
+    global_termination_SLCD = NULL;
+
   free (slconn->sladdr);
   free (slconn->slhost);
   free (slconn->slport);
@@ -1066,6 +1292,7 @@ sl_freeslcd (SLCD *slconn)
   free (slconn->caparray);
   free (slconn->clientname);
   free (slconn->clientversion);
+  free (slconn->info);
   free (slconn->stat);
   free (slconn->log);
   free_internal_auth_data (slconn);
@@ -1151,8 +1378,9 @@ sl_set_clientname (SLCD *slconn, const char *name, const char *version)
  * [2607:f8b0:400a:805::200e]:18000
  * ```
  *
- * This routine will also set the \a tls flag if the port is the default
- * for a secure connection, aka \a SL_SECURE_PORT.
+ * This routine enables TLS if the port is \a SL_SECURE_PORT, and disables
+ * it when changing from \a SL_SECURE_PORT to another port.  TLS enabled
+ * with sl_set_tlsmode() for any other port is left unchanged.
  *
  * @param slconn          SeedLink connection description
  * @param server_address  Server address in \c HOST:PORT format
@@ -1173,6 +1401,7 @@ sl_set_serveraddress (SLCD *slconn, const char *server_address)
   char *new_sladdr = NULL;
   char *new_slhost = NULL;
   char *new_slport = NULL;
+  int wassecure;
 
   if (!slconn || !server_address)
     return -1;
@@ -1278,16 +1507,22 @@ sl_set_serveraddress (SLCD *slconn, const char *server_address)
     slconn->sladdr = new_sladdr;
   }
 
+  wassecure = (slconn->slport && strcmp (slconn->slport, SL_SECURE_PORT) == 0);
+
   free (slconn->slhost);
   free (slconn->slport);
 
   slconn->slhost = new_slhost;
   slconn->slport = new_slport;
 
-  /* Set TLS flag if port is the TLS default */
+  /* TLS follows the secure port; TLS set explicitly for other ports is kept */
   if (strcmp (slconn->slport, SL_SECURE_PORT) == 0)
   {
     sl_set_tlsmode (slconn, 1);
+  }
+  else if (wassecure)
+  {
+    sl_set_tlsmode (slconn, 0);
   }
 
   return 0;
@@ -1314,25 +1549,25 @@ sl_set_serveraddress (SLCD *slconn, const char *server_address)
 int
 sl_set_timewindow (SLCD *slconn, const char *start_time, const char *end_time)
 {
+  char *new_start = NULL;
+  char *new_end = NULL;
+
   if (!slconn || (!start_time && !end_time))
     return -1;
 
+  /* The time window is left unchanged on error */
+  if ((start_time && (new_start = strdup (start_time)) == NULL) ||
+      (end_time && (new_end = strdup (end_time)) == NULL))
+  {
+    sl_log_r (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
+    free (new_start);
+    return -1;
+  }
+
   free (slconn->start_time);
   free (slconn->end_time);
-  slconn->start_time = NULL;
-  slconn->end_time = NULL;
-
-  if (start_time && (slconn->start_time = strdup (start_time)) == NULL)
-  {
-    sl_log_r (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
-    return -1;
-  }
-
-  if (end_time && (slconn->end_time = strdup (end_time)) == NULL)
-  {
-    sl_log_r (NULL, 2, 0, "%s(): error allocating memory\n", __func__);
-    return -1;
-  }
+  slconn->start_time = new_start;
+  slconn->end_time = new_end;
 
   return 0;
 } /* End of sl_set_timewindow() */
@@ -1437,7 +1672,7 @@ sl_set_auth_params (SLCD *slconn, const char *(*auth_value) (const char *server,
 int
 sl_set_auth_envvars (SLCD *slconn, const char *uservar, const char *passvar)
 {
-  if (!slconn)
+  if (!slconn || !uservar || !passvar)
   {
     return -1;
   }
@@ -1728,9 +1963,17 @@ sl_set_protocol (SLCD *slconn, LIBPROTOCOL protocol)
  * available data.  The \a seqnum be ::SL_ALLDATASEQUENCE to request
  * all available data from the server (v4 only).
  *
+ * The \a stationid must be shorter than ::SL_MAX_STATIONID characters.
+ *
  * The stream list is sorted alphanumerically by station ID,
  * and partitioned by the presence of wildcard characters in the
  * station ID, starting with more specific entries first.
+ *
+ * When data is received for a station that matches only wildcarded
+ * entries, an entry for that station is added to the stream list,
+ * carrying the selectors of the matching wildcarded entries.  Each such
+ * station is resumed from its own sequence number on reconnection, and
+ * the wildcarded entries request data for any other stations.
  *
  * @param[in] slconn     SeedLink connection description
  * @param[in] stationid  Station ID
@@ -1745,15 +1988,17 @@ int
 sl_add_stream (SLCD *slconn, const char *stationid, const char *selectors, uint64_t seqnum,
                const char *timestamp)
 {
-  SLstream *curstream;
-  SLstream *newstream;
-  SLstream *followstream = NULL;
-  int newparitition = 0;
-  int partition = 0;
   char isotime[32] = {0};
 
   if (!slconn || !stationid)
     return -1;
+
+  if (strlen (stationid) >= SL_MAX_STATIONID)
+  {
+    sl_log_r (slconn, 2, 0, "%s(): station ID is too long (max %d characters): '%s'\n", __func__,
+              SL_MAX_STATIONID - 1, stationid);
+    return -1;
+  }
 
   /* Sanity, check for a all-station mode entry */
   if (slconn->streams)
@@ -1787,12 +2032,42 @@ sl_add_stream (SLCD *slconn, const char *stationid, const char *selectors, uint6
     }
   }
 
+  if (add_stream_int (slconn, stationid, selectors, seqnum, isotime) == NULL)
+    return -1;
+
+  slconn->multistation = 1;
+
+  return 0;
+} /* End of sl_add_stream() */
+
+/***************************************************************************
+ * add_stream_int:
+ *
+ * Allocate a stream list entry and insert it into the stream list,
+ * which is sorted alphanumerically by station ID and partitioned by the
+ * presence of wildcard characters, starting with more specific entries.
+ * An all-station mode entry remains first in the list.
+ *
+ * \a isotime must already be ISO-compatible, or NULL.
+ *
+ * Returns the new entry or NULL on error.
+ ***************************************************************************/
+static SLstream *
+add_stream_int (SLCD *slconn, const char *stationid, const char *selectors, uint64_t seqnum,
+                const char *isotime)
+{
+  SLstream *curstream;
+  SLstream *newstream;
+  SLstream *followstream = NULL;
+  int newparitition = 0;
+  int partition = 0;
+
   newstream = (SLstream *)malloc (sizeof (SLstream));
 
   if (newstream == NULL)
   {
     sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
-    return -1;
+    return NULL;
   }
 
   memset (newstream, 0, sizeof (SLstream));
@@ -1806,12 +2081,16 @@ sl_add_stream (SLCD *slconn, const char *stationid, const char *selectors, uint6
   {
     sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
     free (newstream);
-    return -1;
+    return NULL;
   }
 
   newstream->seqnum = seqnum;
 
-  strcpy (newstream->timestamp, isotime);
+  if (isotime)
+  {
+    strncpy (newstream->timestamp, isotime, sizeof (newstream->timestamp) - 1);
+    newstream->timestamp[sizeof (newstream->timestamp) - 1] = '\0';
+  }
 
   /* Search the stream list to find the proper insertion point.
    * The resulting list is sorted alphanumerically and partitioned by:
@@ -1820,6 +2099,14 @@ sl_add_stream (SLCD *slconn, const char *stationid, const char *selectors, uint6
    * 3) * wildcards in NET_STA. */
   newparitition = (strchr (stationid, '*')) ? 3 : (strchr (stationid, '?')) ? 2 : 1;
   curstream = slconn->streams;
+
+  /* The all-station mode entry remains first */
+  if (curstream && strcmp (curstream->stationid, "*") == 0)
+  {
+    followstream = curstream;
+    curstream = curstream->next;
+  }
+
   while (curstream)
   {
     /* Determine wildcard partition */
@@ -1861,10 +2148,8 @@ sl_add_stream (SLCD *slconn, const char *stationid, const char *selectors, uint6
     slconn->streams = newstream;
   }
 
-  slconn->multistation = 1;
-
-  return 0;
-} /* End of sl_add_stream() */
+  return newstream;
+} /* End of add_stream_int() */
 
 /** ************************************************************************
  * @brief Set the parameters for an all-station mode connection
@@ -1876,6 +2161,11 @@ sl_add_stream (SLCD *slconn, const char *stationid, const char *selectors, uint6
  * For SeedLink v3 this is "uni-station" mode.
  *
  * Also set the multistation flag to false (0).
+ *
+ * The all-station entry is always first in the stream list.  When data is
+ * received for a station, an entry for that station is added after it
+ * so the station can be resumed from its own sequence number (not
+ * supported by v3 uni-station mode).
  *
  * @param[in] slconn     SeedLink connection description
  * @param[in] selectors  Selectors for the station ID, NULL if none
@@ -1890,6 +2180,7 @@ sl_set_allstation_params (SLCD *slconn, const char *selectors, uint64_t seqnum,
                           const char *timestamp)
 {
   SLstream *newstream;
+  char *newselectors = NULL;
   char isotime[32] = {0};
 
   if (!slconn)
@@ -1918,6 +2209,19 @@ sl_set_allstation_params (SLCD *slconn, const char *selectors, uint64_t seqnum,
 
   newstream = slconn->streams;
 
+  if (newstream != NULL && strcmp (newstream->stationid, "*") != 0)
+  {
+    sl_log_r (slconn, 2, 0, "[%s] %s(): multi-station mode already configured!\n", slconn->sladdr,
+              __func__);
+    return -1;
+  }
+
+  if (selectors && (newselectors = strdup (selectors)) == NULL)
+  {
+    sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
+    return -1;
+  }
+
   if (newstream == NULL)
   {
     newstream = (SLstream *)malloc (sizeof (SLstream));
@@ -1925,32 +2229,22 @@ sl_set_allstation_params (SLCD *slconn, const char *selectors, uint64_t seqnum,
     if (newstream == NULL)
     {
       sl_log_r (slconn, 2, 0, "%s(): error allocating memory\n", __func__);
+      free (newselectors);
       return -1;
     }
 
     memset (newstream, 0, sizeof (SLstream));
-  }
-  else if (strcmp (newstream->stationid, "*") != 0)
-  {
-    sl_log_r (slconn, 2, 0, "[%s] %s(): multi-station mode already configured!\n", slconn->sladdr,
-              __func__);
-    return -1;
   }
 
   /* Set the station ID to an all-matching, single wildcard */
   strncpy (newstream->stationid, "*", sizeof (newstream->stationid));
 
   free (newstream->selectors);
-  if (selectors)
-    newstream->selectors = strdup (selectors);
-  else
-    newstream->selectors = NULL;
+  newstream->selectors = newselectors;
 
   newstream->seqnum = seqnum;
 
   strcpy (newstream->timestamp, isotime);
-
-  newstream->next = NULL;
 
   slconn->streams = newstream;
 
@@ -2231,11 +2525,20 @@ detect (const char *buffer, uint64_t buflen, char *payloadformat)
   uint16_t next_blkt;
   const char *nextfsdh;
 
+  /* Aligned copy of the fixed header for multi-byte field access */
+  union
+  {
+    char bytes[SL_MIN_PAYLOAD];
+    uint64_t align;
+  } fsdh;
+
   if (!buffer || !payloadformat)
     return -1;
 
   if (buflen < SL_MIN_PAYLOAD)
     return -1;
+
+  memcpy (fsdh.bytes, buffer, SL_MIN_PAYLOAD);
 
   /* Check for valid header, set format version */
   *payloadformat = SLPAYLOAD_UNKNOWN;
@@ -2246,13 +2549,13 @@ detect (const char *buffer, uint64_t buflen, char *payloadformat)
     if (!sl_littleendianhost ())
       swapflag = 1;
 
-    uint16_t extralength = HO2u (*pMS3FSDH_EXTRALENGTH (buffer), swapflag);
-    uint32_t datalength = HO4u (*pMS3FSDH_DATALENGTH (buffer), swapflag);
+    uint16_t extralength = HO2u (*pMS3FSDH_EXTRALENGTH (fsdh.bytes), swapflag);
+    uint32_t datalength = HO4u (*pMS3FSDH_DATALENGTH (fsdh.bytes), swapflag);
 
-    reclen = MS3FSDH_LENGTH                 /* Length of fixed portion of header */
-             + *pMS3FSDH_SIDLENGTH (buffer) /* Length of source identifier */
-             + extralength                  /* Length of extra headers */
-             + datalength;                  /* Length of data payload */
+    reclen = MS3FSDH_LENGTH                     /* Length of fixed portion of header */
+             + *pMS3FSDH_SIDLENGTH (fsdh.bytes) /* Length of source identifier */
+             + extralength                      /* Length of extra headers */
+             + datalength;                      /* Length of data payload */
 
     /* Reject a record length that cannot survive the narrowing assignment
      * to payloadlength's uint32_t below, e.g. one that would wrap to 0. */
@@ -2268,10 +2571,10 @@ detect (const char *buffer, uint64_t buflen, char *payloadformat)
     reclen = 0;
 
     /* Check to see if byte swapping is needed by checking for sane year and day */
-    if (!MS_ISVALIDYEARDAY (*pMS2FSDH_YEAR (buffer), *pMS2FSDH_DAY (buffer)))
+    if (!MS_ISVALIDYEARDAY (*pMS2FSDH_YEAR (fsdh.bytes), *pMS2FSDH_DAY (fsdh.bytes)))
       swapflag = 1;
 
-    blkt_offset = HO2u (*pMS2FSDH_BLOCKETTEOFFSET (buffer), swapflag);
+    blkt_offset = HO2u (*pMS2FSDH_BLOCKETTEOFFSET (fsdh.bytes), swapflag);
 
     /* Loop through blockettes as long as number is non-zero and viable */
     while (blkt_offset != 0 && blkt_offset > 47 && (blkt_offset + 4) <= buflen)

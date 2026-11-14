@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2025:
+ * Copyright (C) 2026:
  * @author Chad Trabant, EarthScope Data Services
  ***************************************************************************/
 
@@ -28,9 +28,9 @@
 extern "C" {
 #endif
 
-#define LIBSLINK_RELEASE "2026.224"    /**< libslink release date */
+#define LIBSLINK_RELEASE "2026.318"    /**< libslink release date */
 #define LIBSLINK_VERSION_MAJOR  4      /**< libslink major version */
-#define LIBSLINK_VERSION_MINOR  3      /**< libslink minor version */
+#define LIBSLINK_VERSION_MINOR  4      /**< libslink minor version */
 #define LIBSLINK_VERSION_PATCH  0      /**< libslink patch version */
 #define LIBSLINK_STRINGIFY(a)   LIBSLINK_XSTRINGIFY(a)
 #define LIBSLINK_XSTRINGIFY(a)  #a
@@ -95,8 +95,11 @@ extern "C" {
     #define write _write
     #define open _open
     #define close _close
-    #define snprintf _snprintf
-    #define vsnprintf _vsnprintf
+    /* MSVC before 2015 lacks snprintf(); _snprintf() does not terminate truncated output */
+    #if _MSC_VER < 1900
+      #define snprintf _snprintf
+      #define vsnprintf _vsnprintf
+    #endif
     #define strncasecmp _strnicmp
     #define access _access
     #define strcasecmp _stricmp

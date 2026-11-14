@@ -1,3 +1,21 @@
+2026.318:
+- Update libslink to v4.4.0 with these major changes:
+  * Stations received via wildcarded stream list entries (e.g. `-S 'US_*'`)
+    and in all-station mode are tracked individually, saved to the state
+    file (-x) and resumed from their own sequence numbers.
+  * State file is written via <statefile>.tmp and then renamed, so the
+    containing directory must be writable.
+  * Over-long lines in stream list (-l) and state files are rejected
+    instead of being split; tabs and surrounding whitespace in stream
+    lists are normalized.
+  * Station IDs that are too long are rejected instead of truncated.
+  * Fix stalls, spins and reconnect issues in the collection loop, and
+    return an error instead of raising SIGPIPE on a closed connection.
+  * Continue when a server rejects CAPABILITIES or USERAGENT; send
+    pipelined v4 commands in groups.
+  * Skip unparseable CA certificates when loading TLS CA files.
+- Exit with an error when the stream list file cannot be read
+
 2026.224: version 5.0.0
 - Major new version based on libslink v4 with support for
   SeedLink protocols 3 and 4.

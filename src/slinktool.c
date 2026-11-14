@@ -744,8 +744,8 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     ppackets = 1;
 
   /* Load the stream list from a file if specified */
-  if (streamfile)
-    sl_add_streamlist_file (slconn, streamfile, selectors);
+  if (streamfile && sl_add_streamlist_file (slconn, streamfile, selectors) < 0)
+    return -1;
 
   if (timestart)
   {

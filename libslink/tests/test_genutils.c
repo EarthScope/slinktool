@@ -210,6 +210,12 @@ test_v3to4selector (void)
   SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "--BHZ"), "_B_H_Z", "leading dashes become an empty location code");
   SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "EH?.D"), "*_E_H_?.D", "wildcard component and a type suffix are preserved");
   SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "0BHZ"), "0_B_H_Z", "4-char selector (single-char location)");
+  SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "!BHZ"), "!*_B_H_Z", "negated 3-char selector keeps its '!'");
+  SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "!00BHZ"), "!00_B_H_Z", "negated 5-char selector keeps its '!'");
+  SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "!--BHZ"), "!_B_H_Z", "negated selector with an empty location code");
+  SLT_EQ_STR (sl_v3to4selector (out, sizeof (out), "!EH?.D"), "!*_E_H_?.D", "negated selector with a type suffix");
+  SLT_NULL (sl_v3to4selector (out, sizeof (out), "!"), "a bare '!' has no recognized conversion");
+  SLT_NULL (sl_v3to4selector (out, sizeof (out), "!!BHZ"), "a doubled '!' is rejected");
   SLT_NULL (sl_v3to4selector (out, sizeof (out), NULL), "NULL selector returns NULL");
   SLT_NULL (sl_v3to4selector (NULL, sizeof (out), "BHZ"), "NULL output buffer returns NULL");
   SLT_NULL (sl_v3to4selector (out, sizeof (out), "BH"), "a 2-character selector has no recognized conversion");
@@ -218,6 +224,11 @@ test_v3to4selector (void)
   {
     char tiny[4];
     SLT_NULL (sl_v3to4selector (tiny, sizeof (tiny), "00BHZ"), "an output buffer too small to hold the result returns NULL");
+  }
+
+  {
+    char shortbuf[9];
+    SLT_NULL (sl_v3to4selector (shortbuf, sizeof (shortbuf), "!00BHZ"), "the '!' counts toward the output length");
   }
 }
 

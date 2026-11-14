@@ -104,6 +104,13 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
 {
   uint8_t swapflag = 0; /* byte swapping flag */
 
+  /* Aligned copy of the fixed header for multi-byte field access */
+  union
+  {
+    char bytes[48];
+    uint64_t align;
+  } fsdh;
+
   if (!packetinfo || !plbuffer || plbuffer_size == 0)
   {
     sl_log_rl (log, 2, 1, "%s(): invalid input parameters\n", __func__);
@@ -118,6 +125,8 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
       sl_log_rl (log, 2, 1, "%s(): payload too short for miniSEEDv2\n", __func__);
       return -1;
     }
+
+    memcpy (fsdh.bytes, plbuffer, 48);
 
     if (sourceid)
     {
@@ -144,7 +153,7 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
     /* Check to see if byte swapping is needed by checking for sane year and day */
     if (starttimestr || samplerate || samplecount)
     {
-      if (!MS_ISVALIDYEARDAY (*pMS2FSDH_YEAR (plbuffer), *pMS2FSDH_DAY (plbuffer)))
+      if (!MS_ISVALIDYEARDAY (*pMS2FSDH_YEAR (fsdh.bytes), *pMS2FSDH_DAY (fsdh.bytes)))
         swapflag = 1;
     }
 
@@ -159,18 +168,24 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
       int month = 0;
       int mday = 0;
 
-      year = HO2u (*pMS2FSDH_YEAR (plbuffer), swapflag);
-      yday = HO2u (*pMS2FSDH_DAY (plbuffer), swapflag);
+      year = HO2u (*pMS2FSDH_YEAR (fsdh.bytes), swapflag);
+      yday = HO2u (*pMS2FSDH_DAY (fsdh.bytes), swapflag);
       hour = *pMS2FSDH_HOUR (plbuffer);
       min = *pMS2FSDH_MIN (plbuffer);
       sec = *pMS2FSDH_SEC (plbuffer);
-      fsec = HO2u (*pMS2FSDH_FSEC (plbuffer), swapflag);
+      fsec = HO2u (*pMS2FSDH_FSEC (fsdh.bytes), swapflag);
 
-      sl_doy2md (year, yday, &month, &mday);
-
-      /* Construct time string */
-      snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%04dZ", year, month,
-                mday, hour, min, sec, fsec);
+      /* Start time is empty if the day-of-year is invalid */
+      if (sl_doy2md (year, yday, &month, &mday))
+      {
+        if (starttimestr_size > 0)
+          starttimestr[0] = '\0';
+      }
+      else
+      {
+        snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%04dZ", year,
+                  month, mday, hour, min, sec, fsec);
+      }
     }
 
     if (samplerate)
@@ -178,8 +193,8 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
       int16_t samprate_fact;
       int16_t samprate_mult;
 
-      samprate_fact = HO2d (*pMS2FSDH_SAMPLERATEFACT (plbuffer), swapflag);
-      samprate_mult = HO2d (*pMS2FSDH_SAMPLERATEMULT (plbuffer), swapflag);
+      samprate_fact = HO2d (*pMS2FSDH_SAMPLERATEFACT (fsdh.bytes), swapflag);
+      samprate_mult = HO2d (*pMS2FSDH_SAMPLERATEMULT (fsdh.bytes), swapflag);
 
       *samplerate = 0.0;
 
@@ -196,7 +211,7 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
 
     if (samplecount)
     {
-      *samplecount = HO2u (*pMS2FSDH_NUMSAMPLES (plbuffer), swapflag);
+      *samplecount = HO2u (*pMS2FSDH_NUMSAMPLES (fsdh.bytes), swapflag);
     }
   }
   /* Parse requested details from miniSEED v3 */
@@ -210,6 +225,8 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
       sl_log_rl (log, 2, 1, "%s(): payload too short for miniSEEDv3\n", __func__);
       return -1;
     }
+
+    memcpy (fsdh.bytes, plbuffer, MS3FSDH_LENGTH);
 
     if (packetinfo->payloadlength < MS3FSDH_LENGTH + *pMS3FSDH_SIDLENGTH (plbuffer) ||
         plbuffer_size < MS3FSDH_LENGTH + *pMS3FSDH_SIDLENGTH (plbuffer))
@@ -240,28 +257,34 @@ sl_payload_info (const SLlog *log, const SLpacketinfo *packetinfo, const char *p
       int month = 0;
       int mday = 0;
 
-      year = HO2u (*pMS3FSDH_YEAR (plbuffer), swapflag);
-      yday = HO2u (*pMS3FSDH_DAY (plbuffer), swapflag);
+      year = HO2u (*pMS3FSDH_YEAR (fsdh.bytes), swapflag);
+      yday = HO2u (*pMS3FSDH_DAY (fsdh.bytes), swapflag);
       hour = *pMS3FSDH_HOUR (plbuffer);
       min = *pMS3FSDH_MIN (plbuffer);
       sec = *pMS3FSDH_SEC (plbuffer);
-      nsec = HO4u (*pMS3FSDH_NSEC (plbuffer), swapflag);
+      nsec = HO4u (*pMS3FSDH_NSEC (fsdh.bytes), swapflag);
 
-      sl_doy2md (year, yday, &month, &mday);
-
-      /* Construct time string */
-      snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%09dZ", year, month,
-                mday, hour, min, sec, nsec);
+      /* Start time is empty if the day-of-year is invalid */
+      if (sl_doy2md (year, yday, &month, &mday))
+      {
+        if (starttimestr_size > 0)
+          starttimestr[0] = '\0';
+      }
+      else
+      {
+        snprintf (starttimestr, starttimestr_size, "%04d-%02d-%02dT%02d:%02d:%02d.%09dZ", year,
+                  month, mday, hour, min, sec, nsec);
+      }
     }
 
     if (samplerate)
     {
-      *samplerate = HO8f (*pMS3FSDH_SAMPLERATE (plbuffer), swapflag);
+      *samplerate = HO8f (*pMS3FSDH_SAMPLERATE (fsdh.bytes), swapflag);
     }
 
     if (samplecount)
     {
-      *samplecount = HO4u (*pMS3FSDH_NUMSAMPLES (plbuffer), swapflag);
+      *samplecount = HO4u (*pMS3FSDH_NUMSAMPLES (fsdh.bytes), swapflag);
     }
   }
   else

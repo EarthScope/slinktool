@@ -199,6 +199,7 @@ main (int argc, char **argv)
   const char *cap_checks[MAX_CAP_CHECKS];
   int cap_check_count        = 0;
   int max_packets            = 20;
+  int terminate_after        = 0;
   double timeout_seconds     = 10.0;
   int protocol                = 0; /* 0 = unset/auto */
   int nonblock                = 0;
@@ -231,6 +232,8 @@ main (int argc, char **argv)
       timeout_seconds = atof (argv[++argi]);
     else if (strcmp (a, "--nonblock") == 0)
       nonblock = 1;
+    else if (strcmp (a, "--terminate-after-packets") == 0 && argi + 1 < argc)
+      terminate_after = atoi (argv[++argi]);
     else if (strcmp (a, "--stop-on-nopacket") == 0)
       stop_on_nopacket = 1;
     else if (strcmp (a, "--dialup") == 0)
@@ -452,6 +455,10 @@ main (int argc, char **argv)
         fflush (stdout);
 
         packets_seen++;
+
+        /* Request termination and keep collecting until sl_collect() returns SLTERMINATE */
+        if (terminate_after > 0 && packets_seen == terminate_after)
+          sl_terminate (slconn);
 
         if (packets_seen >= max_packets)
         {

@@ -304,6 +304,16 @@ sl_log_rl (const SLlog *log, int level, int verb, const char *format, ...)
   return retval;
 } /* End of sl_log_rl() */
 
+/* Keep the trailing newline of a message truncated to MAX_LOG_MSG_LENGTH */
+static void
+truncnewline_int (char *message, int presize, int formatted, const char *format)
+{
+  size_t fmtlen = strlen (format);
+
+  if (formatted >= MAX_LOG_MSG_LENGTH - presize && fmtlen > 0 && format[fmtlen - 1] == '\n')
+    message[MAX_LOG_MSG_LENGTH - 2] = '\n';
+}
+
 /** ************************************************************************
  * @brief Central log messge facility, emit formatted log messages
  *
@@ -376,6 +386,7 @@ sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list
       retvalue = vsnprintf (&message[presize], MAX_LOG_MSG_LENGTH - presize, format, *varlist);
 
       message[MAX_LOG_MSG_LENGTH - 1] = '\0';
+      truncnewline_int (message, presize, retvalue, format);
 
       if (logp->diag_print != NULL)
       {
@@ -398,6 +409,7 @@ sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list
       retvalue = vsnprintf (&message[presize], MAX_LOG_MSG_LENGTH - presize, format, *varlist);
 
       message[MAX_LOG_MSG_LENGTH - 1] = '\0';
+      truncnewline_int (message, presize, retvalue, format);
 
       if (logp->diag_print != NULL)
       {
@@ -420,6 +432,7 @@ sl_log_main (const SLlog *logp, int level, int verb, const char *format, va_list
       retvalue = vsnprintf (&message[presize], MAX_LOG_MSG_LENGTH - presize, format, *varlist);
 
       message[MAX_LOG_MSG_LENGTH - 1] = '\0';
+      truncnewline_int (message, presize, retvalue, format);
 
       if (logp->log_print != NULL)
       {

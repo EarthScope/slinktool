@@ -22,6 +22,7 @@ from slmock import mseed, spec
 from slmock.server import (
     ConnectionClosed,
     error_v4,
+    respond,
     serve_hello,
     serve_precommands,
     serve_v3_uni,
@@ -830,6 +831,114 @@ class TestInfo(ProtocolTestCase):
         self.assertEqual(pkt["format"], "J")
         self.assertEqual(pkt["subformat"], "I")
         self.assertEqual(pkt["length"], 0)
+
+
+class TestResumeWildcard(ProtocolTestCase):
+    """protocol.html, "Examples": a connection using a wildcard STATION is
+    resumed with the current sequence number of each known station,
+    followed by the wildcard to request data of any additional stations:
+
+        STATION A / DATA 3 / STATION B / DATA 5 / STATION * / DATA / END
+    """
+
+    def _first_connection(self, reader, conn):
+        """Negotiate, then deliver two packets each for XX_A (seq 1, 2)
+        and XX_B (seq 3, 4) before the connection breaks."""
+        serve_hello(reader, conn)
+        cmd = serve_precommands(reader, conn)
+        serve_v4(reader, conn, cmd)
+        for seq, sta in ((1, "A"), (2, "A"), (3, "B"), (4, "B")):
+            record = mseed.build_ms3(sid="FDSN:XX_%s_00_B_H_Z" % sta, samplerate=100.0)
+            conn.sendall(mseed.frame_v4_data(seq, "XX_" + sta, record))
+
+    def _resume_commands(self, station_args, wildcard):
+        captured = {}
+
+        def handler(conn, reader, server, idx):
+            if idx == 1:
+                self._first_connection(reader, conn)
+                return
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            captured["commands"], _ = serve_v4(reader, conn, cmd)
+            record = mseed.build_ms3(sid="FDSN:XX_C_00_B_H_Z", samplerate=100.0)
+            conn.sendall(mseed.frame_v4_data(1, "XX_C", record))
+
+        events = self.run_scenario(
+            handler,
+            ["--v4"]
+            + station_args
+            + ["--reconnectdelay", "1", "--max-packets", "5", "--timeout-seconds", "12"],
+        )
+        self.assertEqual(len(events["packets"]), 5, events)
+
+        commands = [c for c in captured["commands"] if not c.startswith("SELECT")]
+        self.assertEqual(
+            commands,
+            ["STATION XX_A", "DATA 3", "STATION XX_B", "DATA 5", "STATION " + wildcard, "DATA"],
+            captured["commands"],
+        )
+        return captured["commands"]
+
+    def test_wildcard_station_resumes_each_station(self):
+        commands = self._resume_commands(["--station", "XX_*:BHZ"], "XX_*")
+        # Each station carries the selectors of the wildcard entry
+        self.assertEqual(sum(1 for c in commands if c.startswith("SELECT")), 3, commands)
+
+    def test_all_station_mode_resumes_each_station(self):
+        self._resume_commands(["--allstation", ""], "*")
+
+    def test_rejected_resumed_station_is_not_fatal(self):
+        """A station that is no longer available on the server must not
+        cause every reconnection to fail; its data, if any, is still
+        requested via the wildcard."""
+        histories = {}
+
+        def handler(conn, reader, server, idx):
+            if idx == 1:
+                self._first_connection(reader, conn)
+                return
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            station = None
+            while cmd.startswith(("STATION", "SELECT", "DATA")):
+                if cmd.startswith("STATION"):
+                    station = cmd.split(" ", 1)[1]
+                if station == "XX_A":
+                    error_v4(conn, "ARGUMENTS", "station not found")
+                else:
+                    respond(conn, "OK")
+                cmd = reader.read_command()
+            histories[idx] = [c for c, _ in reader.history]
+            if cmd != "END":
+                raise AssertionError("expected END, got %r" % cmd)
+            record = mseed.build_ms3(sid="FDSN:XX_C_00_B_H_Z", samplerate=100.0)
+            conn.sendall(mseed.frame_v4_data(1, "XX_C", record))
+
+        events = self.run_scenario(
+            handler,
+            [
+                "--v4",
+                "--station",
+                "XX_*",
+                "--reconnectdelay",
+                "1",
+                "--max-packets",
+                "5",
+                "--timeout-seconds",
+                "12",
+            ],
+        )
+        self.assertEqual(len(events["packets"]), 5, events)
+        self.assertNotIn(3, histories)
+
+        # All commands are pipelined, including those of the rejected station
+        commands = [c for c in histories[2] if c.startswith(("STATION", "SELECT", "DATA"))]
+        self.assertEqual(
+            commands,
+            ["STATION XX_A", "DATA 3", "STATION XX_B", "DATA 5", "STATION XX_*", "DATA"],
+            histories[2],
+        )
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "libslink.h"
+#include "slinternal.h"
 
 /** ************************************************************************
  * @brief Add a list of streams and selectors from a file to the ::SLCD
@@ -92,6 +93,14 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile, const char *defsel
     memset (stationid, 0, sizeof (stationid));
     memset (selectors, 0, sizeof (selectors));
 
+    if (sli_linetoolong (fp, line))
+    {
+      sl_log_r (slconn, 2, 0, "line too long (max %d characters) in %s: %.40s...\n",
+                (int)sizeof (line) - 1, streamfile, line);
+      fclose (fp);
+      return -1;
+    }
+
     /* Terminate string at first carriage return or newline */
     if ((cp = strchr (line, '\r')) != NULL || (cp = strchr (line, '\n')) != NULL)
       *cp = '\0';
@@ -102,6 +111,11 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile, const char *defsel
     /* Skip blank or comment lines */
     if (fields <= 0 || stationid[0] == '#')
       continue;
+
+    /* Selectors are separated by single spaces when sent */
+    for (cp = selectors; *cp; cp++)
+      if (isspace ((unsigned char)*cp))
+        *cp = ' ';
 
     /* Trim trailing whitespace from the selectors */
     cp = selectors + strlen (selectors);
@@ -123,6 +137,8 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile, const char *defsel
   if (ferror (fp))
   {
     sl_log_r (slconn, 2, 0, "file read error for %s\n", streamfile);
+    fclose (fp);
+    return -1;
   }
 
   if (streamcount == 0)
@@ -143,6 +159,26 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile, const char *defsel
   return streamcount;
 } /* End of sl_read_streamlist() */
 
+/* Trim leading and trailing whitespace in place, converting other
+ * whitespace to spaces, returning the start of the trimmed string */
+static char *
+trim_int (char *str)
+{
+  char *cp;
+
+  while (isspace ((unsigned char)*str))
+    str++;
+
+  for (cp = str; *cp; cp++)
+    if (isspace ((unsigned char)*cp))
+      *cp = ' ';
+
+  while (cp > str && cp[-1] == ' ')
+    *--cp = '\0';
+
+  return str;
+}
+
 /** ************************************************************************
  * @brief Add a list of streams and selectors from a string to the ::SLCD
  *
@@ -155,6 +191,8 @@ sl_add_streamlist_file (SLCD *slconn, const char *streamfile, const char *defsel
  * For example:
  * "IU_COLA:*_B_H_? *_L_H_?"
  * "IU_KONO:B_H_E B_H_N,GE_WLF,MN_AQU:H_H_?"
+ *
+ * Whitespace around each stream and its selectors is ignored.
  *
  * @param slconn The ::SLCD to which to add streams
  * @param streamlist A string bufffer containing the stream list
@@ -198,7 +236,10 @@ sl_add_streamlist (SLCD *slconn, const char *streamlist, const char *defselect)
     {
       *selectors = '\0';
       selectors++;
+      selectors = trim_int (selectors);
     }
+
+    stream = trim_int (stream);
 
     /* Add non-empty streams to list, using default selectors if none parsed */
     if (strlen (stream) > 0)

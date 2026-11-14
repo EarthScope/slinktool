@@ -4,6 +4,7 @@
  * without any network I/O.
  ***************************************************************************/
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,7 @@ static void trigger_host_boundary (void);
 static void trigger_clientname_version_then_free (void);
 static void trigger_request_info_null_slconn (void);
 static void trigger_request_info_null_infostr (void);
+static void trigger_termination_handler_after_free (void);
 
 static const FxProbe PROBES[] = {
     {"freeslcd_minimal", trigger_freeslcd_minimal},
@@ -36,6 +38,7 @@ static const FxProbe PROBES[] = {
     {"clientname_dangling", trigger_clientname_version_then_free},
     {"request_info_null_slconn", trigger_request_info_null_slconn},
     {"request_info_null_infostr", trigger_request_info_null_infostr},
+    {"termination_handler_after_free", trigger_termination_handler_after_free},
 };
 
 static void
@@ -120,8 +123,22 @@ test_serveraddress (void)
   SLT_EQ_INT (sl_set_serveraddress (slconn, "example.org:18500"), 0, "TLS port: accepted");
   SLT_EQ_INT (slconn->tls, 1, "port 18500 enables TLS automatically");
 
+  SLT_EQ_INT (sl_set_serveraddress (slconn, "example.org:18500"), 0, "TLS port again: accepted");
+  SLT_EQ_INT (slconn->tls, 1, "re-setting port 18500 keeps TLS");
+
   SLT_EQ_INT (sl_set_serveraddress (slconn, "example.org:18000"), 0, "non-TLS port: accepted");
-  SLT_EQ_INT (slconn->tls, 1, "tls is sticky once set; sl_set_tlsmode() is the only way to turn it back off");
+  SLT_EQ_INT (slconn->tls, 0, "changing from port 18500 to another port disables TLS");
+
+  sl_set_serveraddress (slconn, "example.org:18500");
+  sl_set_tlsmode (slconn, 0);
+  SLT_EQ_INT (slconn->tls, 0, "sl_set_tlsmode() after the address disables TLS on port 18500");
+
+  sl_set_serveraddress (slconn, "example.org:18000");
+  sl_set_tlsmode (slconn, 1);
+  SLT_EQ_INT (sl_set_serveraddress (slconn, "example.org:443"), 0, "explicit TLS port: accepted");
+  SLT_EQ_INT (slconn->tls, 1, "TLS enabled explicitly is kept for a non-18500 port");
+  SLT_EQ_INT (sl_set_serveraddress (slconn, "example.org:19000"), 0, "another non-TLS port: accepted");
+  SLT_EQ_INT (slconn->tls, 1, "TLS enabled explicitly is kept when changing between non-18500 ports");
 
   SLT_EQ_INT (sl_set_serveraddress (NULL, "example.org"), -1, "NULL connection is rejected");
   SLT_EQ_INT (sl_set_serveraddress (slconn, NULL), -1, "NULL address is rejected");
@@ -373,6 +390,32 @@ test_request_info_null_guards (void)
              "sl_request_info(slconn, NULL) returns an error instead of crashing");
 }
 
+/* A connection freed after being registered with sl_set_termination_handler()
+ * is no longer signalled.  The second connection usually reuses the freed
+ * allocation, so a stale handler pointer shows up as its terminate flag. */
+static void
+trigger_termination_handler_after_free (void)
+{
+  SLCD *first = sl_initslcd ("t", NULL);
+  SLCD *second;
+
+  sl_request_info (first, "ID");
+  sl_set_termination_handler (first);
+  sl_freeslcd (first);
+
+  second = sl_initslcd ("t", NULL);
+  raise (SIGTERM);
+
+  _exit (second->terminate == 0 ? 0 : 1);
+}
+
+static void
+test_freeslcd_clears_termination_handler (void)
+{
+  SLT_ASSERT (fx_probe_survives (g_argv0, "termination_handler_after_free"),
+             "a freed connection is not signalled by the termination handler");
+}
+
 /* Exercises sl_set_auth_envvars(), including that the constructed auth_data
  * string is released by a subsequent authentication call and by
  * sl_freeslcd(); leak-freedom itself is only observable under a
@@ -405,6 +448,11 @@ test_auth_envvars (void)
              "sl_set_auth_params() clears the authentication parameters");
   SLT_NULL (slconn->auth_data, "auth_data is released, not left dangling, when parameters are cleared");
 
+  SLT_EQ_INT (sl_set_auth_envvars (slconn, NULL, "SLTEST_PASS"), -1,
+             "sl_set_auth_envvars() rejects a NULL user variable name");
+  SLT_EQ_INT (sl_set_auth_envvars (slconn, "SLTEST_USER", NULL), -1,
+             "sl_set_auth_envvars() rejects a NULL password variable name");
+
   unsetenv ("SLTEST_USER");
   unsetenv ("SLTEST_PASS");
   sl_freeslcd (slconn);
@@ -428,6 +476,7 @@ main (int argc, char **argv)
   SLT_RUN (test_hascapability);
   SLT_RUN (test_printslcd);
   SLT_RUN (test_request_info_null_guards);
+  SLT_RUN (test_freeslcd_clears_termination_handler);
   SLT_RUN (test_auth_envvars);
 
   return SLT_REPORT ();

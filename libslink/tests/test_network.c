@@ -10,6 +10,7 @@
  ***************************************************************************/
 
 #include "../network.c"
+#include "../slinternal.h"
 
 #include "slt.h"
 
@@ -216,6 +217,68 @@ test_negotiate_uni_v3_no_streams (void)
   sl_freeslcd (slconn);
 }
 
+static SLstream *
+net_find_stream (SLCD *slconn, const char *stationid)
+{
+  SLstream *s;
+
+  for (s = slconn->streams; s; s = s->next)
+    if (strcmp (s->stationid, stationid) == 0)
+      return s;
+
+  return NULL;
+}
+
+static void
+test_stream_overlaps_multistation (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  const SLstream *firstwild;
+
+  sl_add_stream (slconn, "XX_*", NULL, SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "XX_S1", NULL, SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "ZZ_S?", NULL, SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "YY_S1", NULL, SL_UNSETSEQUENCE, NULL);
+
+  firstwild = first_wildcard_int (slconn);
+  SLT_ASSERT (firstwild && strcmp (firstwild->stationid, "ZZ_S?") == 0,
+              "the first wildcarded entry follows all entries without wildcards");
+
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, net_find_stream (slconn, "XX_S1")), 1,
+              "a station matched by a wildcard overlaps");
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, net_find_stream (slconn, "YY_S1")), 0,
+              "a station matched by no wildcard does not overlap");
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, net_find_stream (slconn, "XX_*")), 1,
+              "a wildcard matching a station overlaps");
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, net_find_stream (slconn, "ZZ_S?")), 0,
+              "a wildcard matching no station does not overlap");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_stream_overlaps_all_station (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  const SLstream *firstwild;
+
+  sl_set_allstation_params (slconn, NULL, SL_UNSETSEQUENCE, NULL);
+
+  firstwild = first_wildcard_int (slconn);
+  SLT_NULL (firstwild, "the leading all-station entry is not part of the wildcard partition");
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, slconn->streams), 0,
+              "the all-station entry alone does not overlap");
+
+  SLT_EQ_INT (sli_add_matchedstream (slconn, "XX_S1", 1, NULL), 1, "a station entry is added");
+
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, net_find_stream (slconn, "XX_S1")), 1,
+              "a station overlaps the all-station entry");
+  SLT_EQ_INT (stream_overlaps (slconn, firstwild, slconn->streams), 1,
+              "the all-station entry overlaps a station");
+
+  sl_freeslcd (slconn);
+}
+
 static void
 test_sl_configlink_null (void)
 {
@@ -274,6 +337,8 @@ main (void)
   SLT_RUN (test_negotiate_uni_v3_start_time_too_long_sets_config_error);
   SLT_RUN (test_negotiate_uni_v3_unparsable_start_time_sets_config_error);
   SLT_RUN (test_negotiate_uni_v3_no_streams);
+  SLT_RUN (test_stream_overlaps_multistation);
+  SLT_RUN (test_stream_overlaps_all_station);
   SLT_RUN (test_sl_configlink_null);
   SLT_RUN (test_sl_configlink_unset_protocol);
   SLT_RUN (test_sl_configlink_resets_config_error);

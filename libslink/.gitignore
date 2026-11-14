@@ -47,6 +47,9 @@ __pycache__/
 .venv/
 venv/
 
+# Example program
+example/slclient
+
 TODO
 TODO.txt
 CLAUDE.md

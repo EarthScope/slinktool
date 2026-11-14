@@ -7,7 +7,7 @@ libslink for TLS support.
 
 The Mbed-TLS build system is not used in libslink.
 
-Only a minimal number of the Mbed-TLS release files are needed by ringserver.
+Only a minimal number of the Mbed-TLS release files are needed.
 
 Steps to update Mbed-TLS to a newer release:
 

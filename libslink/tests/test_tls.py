@@ -167,6 +167,43 @@ class TestTLS(unittest.TestCase):
 
         self.assertEqual(len(events["packets"]), 1, events)
 
+    def test_ca_cert_path_with_unparsable_file(self):
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            serve_v4(reader, conn, cmd)
+            record = mseed.build_ms3(sid="FDSN:XX_TEST_00_B_H_Z", samplerate=100.0)
+            conn.sendall(mseed.frame_v4_data(1, "XX_TEST", record))
+
+        capath = os.path.join(self.tmpdir.name, "ca_dir")
+        os.mkdir(capath)
+        self.ca.cert_pem.write_to_path(os.path.join(capath, "ca.pem"))
+        with open(os.path.join(capath, "aaa-not-a-cert.crt"), "w") as fp:
+            fp.write("not a certificate\n")
+
+        events, _ = self.run_tls_scenario(
+            handler,
+            [
+                "--v4",
+                "--ca-path",
+                capath,
+                "--station",
+                "XX_TEST:BHZ",
+                "--max-packets",
+                "1",
+                "--timeout-seconds",
+                "8",
+            ],
+        )
+
+        self.assertEqual(len(events["packets"]), 1, events)
+        self.assertTrue(
+            any("skipped 1 TLS CA cert(s)" in line for line in events["log"]), events["log"]
+        )
+        self.assertFalse(
+            any("No trusted CA certificates found" in line for line in events["log"]), events["log"]
+        )
+
     def test_untrusted_certificate_is_rejected(self):
         other_ca = trustme.CA()
         untrusted_leaf = other_ca.issue_cert("localhost", "127.0.0.1")

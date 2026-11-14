@@ -75,7 +75,7 @@ test_add_stream_sort_order (void)
 }
 
 static void
-test_add_stream_truncation (void)
+test_add_stream_too_long (void)
 {
   SLCD *slconn = sl_initslcd ("t", NULL);
   char longid[64];
@@ -84,9 +84,20 @@ test_add_stream_truncation (void)
   longid[sizeof (longid) - 1] = '\0';
 
   SLT_EQ_INT (sl_add_stream (slconn, longid, NULL, SL_UNSETSEQUENCE, NULL),
-             0, "an over-long station id is still accepted");
+             -1, "an over-long station id is rejected");
+  SLT_NULL (slconn->streams, "no entry is added for an over-long station id");
+
+  /* A trailing wildcard beyond the limit would otherwise be dropped */
+  longid[SL_MAX_STATIONID - 1] = '*';
+  longid[SL_MAX_STATIONID] = '\0';
+  SLT_EQ_INT (sl_add_stream (slconn, longid, NULL, SL_UNSETSEQUENCE, NULL),
+             -1, "a station id one character over the limit is rejected");
+
+  longid[SL_MAX_STATIONID - 1] = '\0';
+  SLT_EQ_INT (sl_add_stream (slconn, longid, NULL, SL_UNSETSEQUENCE, NULL),
+             0, "a station id of SL_MAX_STATIONID - 1 characters is accepted");
   SLT_EQ_INT ((int)strlen (slconn->streams->stationid), SL_MAX_STATIONID - 1,
-             "the stored station id is truncated to SL_MAX_STATIONID - 1 characters");
+             "the stored station id is complete");
 
   sl_freeslcd (slconn);
 }
@@ -284,12 +295,60 @@ test_streamlist_file_trailing_whitespace (void)
   sl_freeslcd (slconn);
 }
 
+static void
+test_streamlist_whitespace_separators (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  char *path = fx_write_tempfile ("XX_TST6\tBH?\tHH?\n");
+  SLstream *s;
+
+  SLT_EQ_INT (sl_add_streamlist_file (slconn, path, NULL), 1, "a tab-separated line is read");
+  s = fx_find_stream (slconn, "XX_TST6");
+  SLT_NOT_NULL (s, "XX_TST6 was read from the file");
+  SLT_EQ_STR (s->selectors, "BH? HH?", "tabs between selectors become spaces");
+
+  SLT_EQ_INT (sl_add_streamlist (slconn, " XX_TST7 , XX_TST8 : BHZ ", NULL), 2,
+             "a stream list with spaces around entries is parsed");
+  SLT_NOT_NULL (fx_find_stream (slconn, "XX_TST7"), "leading space is trimmed from a station ID");
+  s = fx_find_stream (slconn, "XX_TST8");
+  SLT_NOT_NULL (s, "spaces around a station ID are trimmed");
+  SLT_EQ_STR (s->selectors, "BHZ", "spaces around selectors are trimmed");
+
+  fx_unlink (path);
+  sl_freeslcd (slconn);
+}
+
+static void
+test_streamlist_file_long_line (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  char content[512];
+  char *path;
+  int len;
+
+  /* A line of 199 characters fits */
+  len = snprintf (content, sizeof (content), "XX_TST1%*s\n", 199 - 7, "BHZ");
+  SLT_EQ_INT (len, 200, "the test line is 199 characters plus a newline");
+  path = fx_write_tempfile (content);
+  SLT_EQ_INT (sl_add_streamlist_file (slconn, path, NULL), 1, "a 199 character line is accepted");
+  fx_unlink (path);
+
+  /* A longer line is not split into separate entries */
+  snprintf (content, sizeof (content), "XX_TST2%*sXX_BOGUS\nXX_TST3\n", 200, "");
+  path = fx_write_tempfile (content);
+  SLT_EQ_INT (sl_add_streamlist_file (slconn, path, NULL), -1, "an over-long line is an error");
+  SLT_NULL (fx_find_stream (slconn, "XX_BOGUS"), "the remainder of an over-long line is not an entry");
+  fx_unlink (path);
+
+  sl_freeslcd (slconn);
+}
+
 int
 main (void)
 {
   SLT_RUN (test_add_stream_basic);
   SLT_RUN (test_add_stream_sort_order);
-  SLT_RUN (test_add_stream_truncation);
+  SLT_RUN (test_add_stream_too_long);
   SLT_RUN (test_add_stream_timestamp_bounds);
   SLT_RUN (test_add_stream_all_station_conflict);
   SLT_RUN (test_allstation_params);
@@ -298,6 +357,8 @@ main (void)
   SLT_RUN (test_add_streamlist_file);
   SLT_RUN (test_add_streamlist_file_errors);
   SLT_RUN (test_streamlist_file_trailing_whitespace);
+  SLT_RUN (test_streamlist_whitespace_separators);
+  SLT_RUN (test_streamlist_file_long_line);
 
   return SLT_REPORT ();
 }

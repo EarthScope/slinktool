@@ -468,5 +468,55 @@ class TestInfo(ProtocolTestCase):
         self.assertEqual(events["packets"][0]["seq"], (2**64) - 1)
 
 
+class TestResumeWildcard(ProtocolTestCase):
+    """Multi-station mode with a wildcard STATION: each station received
+    via the wildcard is resumed from its own sequence number, followed by
+    the wildcard to request data of any additional stations."""
+
+    def test_wildcard_station_resumes_each_station(self):
+        histories = {}
+
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            serve_v3_multi(reader, conn, cmd)
+            histories[idx] = [c for c, _ in reader.history]
+            if idx == 1:
+                for seq, sta in ((1, "A"), (2, "A"), (3, "B"), (4, "B")):
+                    conn.sendall(
+                        mseed.frame_v3_data(seq, mseed.build_ms2(network="XX", station=sta))
+                    )
+                return
+            conn.sendall(mseed.frame_v3_data(1, mseed.build_ms2(network="XX", station="C")))
+
+        events = self.run_scenario(
+            handler,
+            [
+                "--v3",
+                "--station",
+                "XX_*:BHZ",
+                "--reconnectdelay",
+                "1",
+                "--max-packets",
+                "5",
+                "--timeout-seconds",
+                "12",
+            ],
+        )
+        self.assertEqual(len(events["packets"]), 5, events)
+
+        # DATA may carry a trailing last-packet time; compare up to the sequence
+        commands = [
+            c if c.startswith("STATION") else " ".join(c.split(" ")[:2])
+            for c in histories[2]
+            if c.startswith(("STATION", "DATA"))
+        ]
+        self.assertEqual(
+            commands,
+            ["STATION A XX", "DATA 000003", "STATION B XX", "DATA 000005", "STATION * XX", "DATA"],
+            histories[2],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -281,6 +281,49 @@ test_ms3_basic (void)
 }
 
 static void
+test_ms3_unaligned_and_invalid_day (void)
+{
+  uint8_t buf[129] = {0};
+  uint8_t *rec = buf + 1; /* odd address */
+  MS3Fields f;
+  SLpacketinfo pi;
+  size_t hdrlen;
+  char starttime[40];
+  double samplerate;
+  uint32_t samplecount;
+
+  memset (&f, 0, sizeof (f));
+  f.sid        = "FDSN:XX_TEST_00_B_H_Z";
+  f.year       = 2024;
+  f.day        = 216;
+  f.hour       = 17;
+  f.min        = 23;
+  f.sec        = 18;
+  f.nsec       = 123456789;
+  f.samplerate = 100.0;
+  f.numsamples = 200;
+  f.pubversion = 1;
+
+  hdrlen = fx_ms3_fixed (rec, sizeof (buf) - 1, &f, 0);
+  pi     = mkinfo (SLPAYLOAD_MSEED3, 0, (uint32_t)hdrlen);
+
+  SLT_EQ_INT (sl_payload_info (NULL, &pi, (char *)rec, sizeof (buf) - 1, NULL, 0,
+                               starttime, sizeof (starttime), &samplerate, &samplecount),
+             0, "sl_payload_info() succeeds for a header at an unaligned address");
+  SLT_EQ_STR (starttime, "2024-08-03T17:23:18.123456789Z", "unaligned miniSEED3 start time");
+  SLT_EQ_DBL (samplerate, 100.0, 0.0001, "unaligned miniSEED3 sample rate");
+  SLT_EQ_UINT (samplecount, 200, "unaligned miniSEED3 sample count");
+
+  f.day = 400;
+  fx_ms3_fixed (rec, sizeof (buf) - 1, &f, 0);
+
+  SLT_EQ_INT (sl_payload_info (NULL, &pi, (char *)rec, sizeof (buf) - 1, NULL, 0,
+                               starttime, sizeof (starttime), NULL, NULL),
+             0, "sl_payload_info() succeeds for an invalid day-of-year");
+  SLT_EQ_STR (starttime, "", "the start time is empty for an invalid day-of-year");
+}
+
+static void
 test_ms3_errors (void)
 {
   uint8_t buf[128] = {0};
@@ -363,6 +406,7 @@ main (void)
   SLT_RUN (test_ms2_truncation);
   SLT_RUN (test_ms2_errors);
   SLT_RUN (test_ms3_basic);
+  SLT_RUN (test_ms3_unaligned_and_invalid_day);
   SLT_RUN (test_ms3_errors);
   SLT_RUN (test_summary);
 

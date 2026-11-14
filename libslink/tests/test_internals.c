@@ -471,6 +471,10 @@ test_receive_payload_v4_zero_length (void)
   SLT_EQ_UINT (slconn->stat->packetinfo.payloadcollected, 0,
               "payloadcollected stays 0 for a declared 0-byte v4 payload");
 
+  rv = receive_payload (slconn, NULL, 0, wire, sizeof (wire));
+
+  SLT_EQ_INT ((int)rv, 0, "a 0-byte v4 payload is accepted without a payload buffer");
+
   sl_freeslcd (slconn);
 }
 
@@ -695,6 +699,259 @@ test_update_stream_info_packet_skipped (void)
   sl_freeslcd (slconn);
 }
 
+
+static SLstream *
+find_stream (SLCD *slconn, const char *stationid)
+{
+  SLstream *s;
+
+  for (s = slconn->streams; s; s = s->next)
+    if (strcmp (s->stationid, stationid) == 0)
+      return s;
+
+  return NULL;
+}
+
+static void
+test_update_stream_wildcard_adds_station_entry (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  SLstream *s;
+
+  sl_add_stream (slconn, "XX_*", "BHZ", SL_UNSETSEQUENCE, NULL);
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 2,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  SLT_EQ_INT (update_stream (slconn, (const char *)buf), 0, "update_stream() matches the wildcard entry");
+
+  s = find_stream (slconn, "XX_S1");
+  SLT_NOT_NULL (s, "an entry is added for the station received via the wildcard");
+  if (!s)
+  {
+    sl_freeslcd (slconn);
+    return;
+  }
+  SLT_EQ_UINT (s->seqnum, 2, "the added entry carries the packet sequence number");
+  SLT_EQ_STR (s->selectors, "BHZ", "the added entry carries the wildcard entry's selectors");
+  SLT_ASSERT (strlen (s->timestamp) > 0, "the added entry carries the packet timestamp");
+  SLT_ASSERT (slconn->streams == s, "the added entry sorts before the wildcard entry");
+  SLT_EQ_UINT (find_stream (slconn, "XX_*")->seqnum, 2, "the wildcard entry is still updated");
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S2", "00", "BHZ", 4,
+                     &slconn->stat->packetinfo, 5, "XX_S2");
+  update_stream (slconn, (const char *)buf);
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 3,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  update_stream (slconn, (const char *)buf);
+
+  SLT_EQ_UINT (find_stream (slconn, "XX_S1")->seqnum, 3, "a later packet updates the added entry");
+  SLT_EQ_UINT (find_stream (slconn, "XX_S2")->seqnum, 4, "each station keeps its own sequence number");
+
+  s = slconn->streams;
+  SLT_ASSERT (s && s->next && s->next->next && !s->next->next->next, "exactly one entry is added per station");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_wildcard_invalid_station_id_not_added (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  const char *invalid[] = {"XX_S 1", "XX_S\r1", "XX_S[12]", "XX_S\\1", "XX_S.1"};
+  size_t idx;
+
+  sl_add_stream (slconn, "XX_*", NULL, SL_UNSETSEQUENCE, NULL);
+
+  for (idx = 0; idx < sizeof (invalid) / sizeof (invalid[0]); idx++)
+  {
+    setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 2,
+                       &slconn->stat->packetinfo, (uint8_t)strlen (invalid[idx]), invalid[idx]);
+    SLT_EQ_INT (update_stream (slconn, (const char *)buf), 0,
+                "a packet with an unsupported station ID is still accepted via the wildcard");
+  }
+
+  SLT_ASSERT (slconn->streams && !slconn->streams->next,
+              "no entry is added for station IDs with unsupported characters");
+
+  SLT_EQ_INT (sli_add_matchedstream (slconn, "XX_A B", 1, NULL), 0,
+              "a recovered station ID with a space is not added");
+  SLT_EQ_INT (sli_add_matchedstream (slconn, "XX_A-1", 1, NULL), 1,
+              "a station ID with a dash is added");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_wildcard_merges_selectors (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  SLstream *s;
+
+  sl_add_stream (slconn, "XX_*", "BHZ HHZ", SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "*_S1", "HHZ LHZ", SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "YY_*", NULL, SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "Y?_S1", "BHZ", SL_UNSETSEQUENCE, NULL);
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 10,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  update_stream (slconn, (const char *)buf);
+
+  s = find_stream (slconn, "XX_S1");
+  SLT_NOT_NULL (s, "an entry is added for a station matching two wildcard entries");
+  SLT_EQ_STR (s ? s->selectors : NULL, "HHZ LHZ BHZ", "selectors of all matching wildcard entries are combined without duplicates");
+
+  setup_ms2_payload (buf, sizeof (buf), "YY", "S1", "00", "BHZ", 11,
+                     &slconn->stat->packetinfo, 5, "YY_S1");
+  update_stream (slconn, (const char *)buf);
+
+  s = find_stream (slconn, "YY_S1");
+  SLT_NOT_NULL (s, "an entry is added for a station matching an entry without selectors");
+  SLT_ASSERT (s && s->selectors == NULL, "a matching entry without selectors selects all streams");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_wildcard_negated_selectors (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  SLstream *s;
+
+  sl_add_stream (slconn, "XX_*", "!LOG", SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "*_S1", "BHZ", SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "YY_*", "BH? !BHE", SL_UNSETSEQUENCE, NULL);
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 10,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  SLT_EQ_INT (update_stream (slconn, (const char *)buf), 0, "the packet is accepted via the wildcards");
+  SLT_NULL (find_stream (slconn, "XX_S1"),
+            "no entry is added when negated selectors of multiple entries would be combined");
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S2", "00", "BHZ", 11,
+                     &slconn->stat->packetinfo, 5, "XX_S2");
+  update_stream (slconn, (const char *)buf);
+  s = find_stream (slconn, "XX_S2");
+  SLT_EQ_STR (s ? s->selectors : NULL, "!LOG", "a single matching entry's negated selectors are kept");
+
+  setup_ms2_payload (buf, sizeof (buf), "YY", "S2", "00", "BHZ", 12,
+                     &slconn->stat->packetinfo, 5, "YY_S2");
+  update_stream (slconn, (const char *)buf);
+  s = find_stream (slconn, "YY_S2");
+  SLT_EQ_STR (s ? s->selectors : NULL, "BH? !BHE", "a negated selector after a positive one is kept");
+
+  setup_ms2_payload (buf, sizeof (buf), "YY", "S1", "00", "BHZ", 13,
+                     &slconn->stat->packetinfo, 5, "YY_S1");
+  update_stream (slconn, (const char *)buf);
+  SLT_NULL (find_stream (slconn, "YY_S1"), "a negated selector after a positive one is detected");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_explicit_entry_not_duplicated (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  int count = 0;
+  SLstream *s;
+
+  sl_add_stream (slconn, "XX_S1", "LHZ", SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "XX_*", "BHZ", SL_UNSETSEQUENCE, NULL);
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 7,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  update_stream (slconn, (const char *)buf);
+
+  for (s = slconn->streams; s; s = s->next)
+    count++;
+
+  SLT_EQ_INT (count, 2, "no entry is added for a station that already has one");
+  SLT_EQ_STR (find_stream (slconn, "XX_S1")->selectors, "LHZ", "the existing entry's selectors are unchanged");
+  SLT_EQ_UINT (find_stream (slconn, "XX_S1")->seqnum, 7, "the existing entry is updated");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_v3_uni_station_no_station_entries (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+
+  sl_set_allstation_params (slconn, NULL, SL_UNSETSEQUENCE, NULL);
+  slconn->protocol = SLPROTO3X;
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 3,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  SLT_EQ_INT (update_stream (slconn, (const char *)buf), 0, "update_stream() accepts the packet");
+
+  SLT_EQ_UINT (slconn->streams->seqnum, 3, "the all-station entry is updated");
+  SLT_NULL (slconn->streams->next, "no station entry is added in v3 uni-station mode");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_duplicate_exact_entries_updated (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  SLstream *s;
+
+  sl_add_stream (slconn, "XX_*", NULL, SL_UNSETSEQUENCE, NULL);
+  sl_add_stream (slconn, "XX_S1", NULL, 1, NULL);
+  sl_add_stream (slconn, "XX_S1", NULL, 1, NULL);
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 7,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  SLT_EQ_INT (update_stream (slconn, (const char *)buf), 0, "update_stream() matches");
+
+  s = slconn->streams;
+  SLT_ASSERT (s && s->next && strcmp (s->next->stationid, "XX_S1") == 0, "duplicate entries are adjacent");
+  SLT_ASSERT (s && s->seqnum == 7 && s->next && s->next->seqnum == 7,
+              "every entry for the station is updated");
+
+  sl_freeslcd (slconn);
+}
+
+static void
+test_update_stream_all_station_adds_station_entry (void)
+{
+  SLCD *slconn = sl_initslcd ("t", NULL);
+  uint8_t buf[64] = {0};
+  SLstream *s;
+
+  sl_set_allstation_params (slconn, "BHZ", SL_UNSETSEQUENCE, NULL);
+
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S2", "00", "BHZ", 5,
+                     &slconn->stat->packetinfo, 5, "XX_S2");
+  update_stream (slconn, (const char *)buf);
+  setup_ms2_payload (buf, sizeof (buf), "XX", "S1", "00", "BHZ", 3,
+                     &slconn->stat->packetinfo, 5, "XX_S1");
+  update_stream (slconn, (const char *)buf);
+
+  SLT_EQ_STR (slconn->streams->stationid, "*", "the all-station entry remains first");
+  SLT_EQ_UINT (slconn->streams->seqnum, 3, "the all-station entry is still updated");
+  SLT_EQ_INT (slconn->multistation, 0, "all-station mode is retained");
+
+  s = slconn->streams->next;
+  SLT_ASSERT (s && strcmp (s->stationid, "XX_S1") == 0 && s->seqnum == 3, "XX_S1 follows the all-station entry");
+  s = (s) ? s->next : NULL;
+  SLT_ASSERT (s && strcmp (s->stationid, "XX_S2") == 0 && s->seqnum == 5, "XX_S2 follows in sorted order");
+  SLT_EQ_STR (s ? s->selectors : NULL, "BHZ", "the added entry carries the all-station selectors");
+
+  /* Reconfiguring all-station mode retains the added entries */
+  SLT_EQ_INT (sl_set_allstation_params (slconn, "HHZ", SL_UNSETSEQUENCE, NULL), 0, "all-station mode can be reconfigured");
+  SLT_NOT_NULL (find_stream (slconn, "XX_S1"), "added entries survive reconfiguring all-station mode");
+  SLT_EQ_STR (slconn->streams->selectors, "HHZ", "the all-station entry is reconfigured");
+
+  sl_freeslcd (slconn);
+}
+
 int
 main (void)
 {
@@ -727,6 +984,14 @@ main (void)
   SLT_RUN (test_update_stream_all_station);
   SLT_RUN (test_update_stream_v3_stationid_extraction);
   SLT_RUN (test_update_stream_info_packet_skipped);
+  SLT_RUN (test_update_stream_wildcard_adds_station_entry);
+  SLT_RUN (test_update_stream_wildcard_invalid_station_id_not_added);
+  SLT_RUN (test_update_stream_wildcard_merges_selectors);
+  SLT_RUN (test_update_stream_wildcard_negated_selectors);
+  SLT_RUN (test_update_stream_explicit_entry_not_duplicated);
+  SLT_RUN (test_update_stream_all_station_adds_station_entry);
+  SLT_RUN (test_update_stream_v3_uni_station_no_station_entries);
+  SLT_RUN (test_update_stream_duplicate_exact_entries_updated);
 
   return SLT_REPORT ();
 }

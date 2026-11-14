@@ -16,6 +16,11 @@ import threading
 import time
 import unittest
 
+try:
+    import resource
+except ImportError:  # POSIX only
+    resource = None
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from slmock import mseed
@@ -742,6 +747,33 @@ class TestConfigurationErrorsAreFatal(ProtocolTestCase):
         self.assertEqual(len(events["packets"]), 0, events)
         self.assertEqual(events["result"], "0")  # SLTERMINATE
 
+    def test_v3_oversized_selector_is_fatal(self):
+        attempts = []
+
+        def handler(conn, reader, server, idx):
+            attempts.append(idx)
+            serve_hello(reader, conn, server_id="SeedLink v3.1 (test)")
+            serve_precommands(reader, conn)
+
+        events = self.run_scenario(
+            handler,
+            [
+                "--v3",
+                "--allstation",
+                "A" * 100,
+                "--reconnectdelay",
+                "1",
+                "--max-packets",
+                "1",
+                "--timeout-seconds",
+                "8",
+            ],
+        )
+
+        self.assertEqual(len(attempts), 1, "expected no reconnect after a local configuration error")
+        self.assertEqual(len(events["packets"]), 0, events)
+        self.assertEqual(events["result"], "0")  # SLTERMINATE
+
     def test_v4_oversized_selector_is_fatal(self):
         attempts = []
 
@@ -1207,13 +1239,12 @@ class TestUnterminatedResponseRegression(ProtocolTestCase):
                 if cmd != "HELLO":
                     raise AssertionError("expected HELLO, got %r" % cmd)
 
-                # servstr/sitestr are each 200 bytes; sl_recvresp() now
-                # always reserves the last byte for a forced NUL, so
-                # exactly 199 bytes with no '\r' fills each read
-                # completely without blocking for more (nothing is left
-                # over in the stream for the next read to trip over).
-                conn.sendall(b"X" * 199)
-                conn.sendall(b"Y" * 199)
+                # servstr/sitestr are each 200 bytes; sl_recvresp() always
+                # reserves the last byte for a forced NUL, so 199 bytes
+                # with no '\r' fill each buffer completely.  The line
+                # terminators that follow are read and discarded.
+                conn.sendall(b"X" * 199 + b"\r\n")
+                conn.sendall(b"Y" * 199 + b"\r\n")
 
                 try:
                     serve_precommands(reader, conn)
@@ -1259,6 +1290,7 @@ class TestUnterminatedResponseRegression(ProtocolTestCase):
                 # completely fills negotiate_v4()'s own 200-byte readbuf
                 # with no '\r' anywhere -- the exact trigger for the
                 # out-of-bounds write this is regression coverage for.
+                # The line terminators that follow are read and discarded.
                 commands = [cmd]
                 while True:
                     more = reader.try_read_command(0.3)
@@ -1267,7 +1299,7 @@ class TestUnterminatedResponseRegression(ProtocolTestCase):
                     commands.append(more)
 
                 for _ in commands:
-                    conn.sendall(b"Z" * 199)
+                    conn.sendall(b"Z" * 199 + b"\r\n")
             else:
                 # A malformed first connection must not wedge the client;
                 # confirm it still reconnects and streams normally.
@@ -1293,6 +1325,275 @@ class TestUnterminatedResponseRegression(ProtocolTestCase):
 
         self.assertEqual(events["returncode"], 0, events)
         self.assertEqual(len(events["packets"]), 1, events)
+
+
+def _ms2_without_b1000(**kwargs):
+    """A miniSEED2 record with no blockettes; its length can only be
+    detected from the start of the record that follows it."""
+    buf = bytearray(mseed.build_ms2(**kwargs))
+    buf[39] = 0  # numblockettes
+    struct.pack_into("<H", buf, 46, 0)  # blocketteoffset
+    return bytes(buf)
+
+
+class TestCollectLoop(ProtocolTestCase):
+    @unittest.skipIf(resource is None, "resource.getrusage() is POSIX only")
+    def test_partial_header_waits_without_spinning(self):
+        record = mseed.build_ms3(sid="FDSN:XX_TEST_00_B_H_Z", samplerate=100.0, numsamples=50)
+        frame = mseed.frame_v4_data(1, "XX_TEST", record)
+
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            serve_v4(reader, conn, cmd)
+
+            conn.sendall(frame[:10])
+            time.sleep(2)
+            conn.sendall(frame[10:])
+
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
+        events = self.run_scenario(
+            handler,
+            ["--v4", "--station", "XX_TEST:BHZ", "--max-packets", "1", "--timeout-seconds", "8"],
+        )
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
+
+        self.assertEqual(len(events["packets"]), 1, events)
+        cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+        self.assertLess(cpu, 1.0, "client used %.2fs of CPU waiting for a split header" % cpu)
+
+    def test_terminate_with_undetectable_v3_record_pending(self):
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn, server_id="SeedLink v3.1 (test)")
+            cmd = serve_precommands(reader, conn)
+            serve_v3_uni(reader, conn, cmd)
+
+            conn.sendall(
+                mseed.frame_v3_data(1, mseed.build_ms2(network="XX", station="TEST", channel="BHZ"))
+                + mseed.frame_v3_data(2, _ms2_without_b1000(network="XX", station="TEST"))
+            )
+            time.sleep(6)
+
+        start = time.monotonic()
+        events = self.run_scenario(
+            handler,
+            [
+                "--v3",
+                "--allstation",
+                "BHZ",
+                "--idletimeout",
+                "0",
+                "--terminate-after-packets",
+                "1",
+                "--max-packets",
+                "5",
+                "--timeout-seconds",
+                "4",
+            ],
+        )
+        elapsed = time.monotonic() - start
+
+        self.assertEqual(len(events["packets"]), 1, events)
+        self.assertEqual(events["result"], str(0), events)  # SLTERMINATE
+        self.assertLess(elapsed, 4, "termination waited on a record that cannot complete")
+
+    def test_close_after_last_buffered_packet_waits_reconnect_delay(self):
+        connections = []
+
+        def handler(conn, reader, server, idx):
+            connections.append(idx)
+            serve_hello(reader, conn, server_id="SeedLink v3.1 (test)")
+            cmd = serve_precommands(reader, conn)
+            serve_v3_uni(reader, conn, cmd)
+
+            if idx == 1:
+                # Both packets in one write, then close: the closure is seen
+                # while the second packet is still buffered.
+                conn.sendall(
+                    mseed.frame_v3_data(1, mseed.build_ms2(network="XX", station="TEST"))
+                    + mseed.frame_v3_data(2, mseed.build_ms2(network="XX", station="TEST"))
+                )
+                return
+
+            time.sleep(3)
+
+        events = self.run_scenario_bounded(
+            handler,
+            [
+                "--v3",
+                "--allstation",
+                "BHZ",
+                "--reconnectdelay",
+                "10",
+                "--max-packets",
+                "5",
+                "--timeout-seconds",
+                "20",
+            ],
+            observe_seconds=2.5,
+        )
+
+        self.assertNotCrashed(events["returncode"])
+        self.assertEqual(len(events["packets"]), 2, events)
+        self.assertEqual(connections, [1], "reconnected without waiting for the reconnect delay")
+        self.assertTrue(
+            any("reconnecting in 10 seconds" in line for line in events["log"]), events["log"]
+        )
+
+    def test_v4_oversized_station_id_is_fatal_before_it_arrives(self):
+        connections = []
+
+        def handler(conn, reader, server, idx):
+            connections.append(idx)
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            serve_v4(reader, conn, cmd)
+
+            header = bytearray(mseed.frame_v4_data(1, None, b""))
+            header[16] = 200  # station ID length
+            conn.sendall(bytes(header) + b"X" * 100)
+            time.sleep(1)
+
+        events = self.run_scenario(
+            handler,
+            [
+                "--v4",
+                "--station",
+                "XX_TEST:BHZ",
+                "--reconnectdelay",
+                "1",
+                "--max-packets",
+                "1",
+                "--timeout-seconds",
+                "4",
+            ],
+        )
+
+        self.assertEqual(events["result"], str(0), events)  # SLTERMINATE
+        self.assertEqual(connections, [1], "an oversized station ID must not cause a reconnect")
+        self.assertTrue(any("station ID is too large" in line for line in events["log"]), events)
+
+    def test_v4_info_error_ends_the_pending_query(self):
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            serve_v4(reader, conn, cmd)
+
+            cmd = reader.read_command()
+            self.assertEqual(cmd, "INFO BOGUS")
+            conn.sendall(mseed.frame_v4_json_error(0, None, b'{"error":"unknown INFO level"}'))
+
+            # A keepalive can only be sent once the failed INFO request has ended
+            reader.timeout = 5
+            cmd = reader.read_command()
+            self.assertEqual(cmd, "INFO ID")
+            conn.sendall(mseed.frame_v4_info(0, b'{"software":"mock"}'))
+
+            record = mseed.build_ms3(sid="FDSN:XX_TEST_00_B_H_Z", samplerate=100.0, numsamples=50)
+            conn.sendall(mseed.frame_v4_data(1, "XX_TEST", record))
+
+        events = self.run_scenario(
+            handler,
+            [
+                "--v4",
+                "--station",
+                "XX_TEST:BHZ",
+                "--info",
+                "BOGUS",
+                "--keepalive",
+                "1",
+                "--max-packets",
+                "2",
+                "--timeout-seconds",
+                "10",
+            ],
+        )
+
+        self.assertEqual(len(events["packets"]), 2, events)
+        self.assertEqual(events["packets"][0]["format"], "J")
+        self.assertEqual(events["packets"][0]["subformat"], "E")
+        self.assertEqual(events["packets"][1]["seq"], 1, "the keepalive response is not returned")
+
+
+class TestOptionalCommandsRejected(ProtocolTestCase):
+    def test_v3_rejected_capabilities_is_not_fatal(self):
+        commands = []
+
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn, accept_capabilities=False)
+            commands.extend(text for text, _ in reader.history)
+            serve_v3_uni(reader, conn, cmd)
+            conn.sendall(mseed.frame_v3_data(1, mseed.build_ms2(network="XX", station="TEST")))
+
+        events = self.run_scenario(
+            handler,
+            ["--v3", "--allstation", "BHZ", "--max-packets", "1", "--timeout-seconds", "8"],
+        )
+
+        self.assertIn("CAPABILITIES EXTREPLY", commands)
+        self.assertEqual(len(events["packets"]), 1, events)
+
+    def test_v4_rejected_useragent_is_not_fatal(self):
+        commands = []
+
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn, accept_useragent=False)
+            commands.extend(text for text, _ in reader.history)
+            serve_v4(reader, conn, cmd)
+            record = mseed.build_ms3(sid="FDSN:XX_TEST_00_B_H_Z", samplerate=100.0, numsamples=50)
+            conn.sendall(mseed.frame_v4_data(1, "XX_TEST", record))
+
+        events = self.run_scenario(
+            handler,
+            ["--v4", "--station", "XX_TEST:BHZ", "--max-packets", "1", "--timeout-seconds", "8"],
+        )
+
+        self.assertTrue(any(c.startswith("USERAGENT") for c in commands), commands)
+        self.assertEqual(len(events["packets"]), 1, events)
+
+
+class TestV4CommandPipelining(ProtocolTestCase):
+    def test_commands_are_sent_in_bounded_groups(self):
+        batches = []
+        selectors = " ".join("BH%X" % i for i in range(15))
+        stations = ["XX_S%02d" % i for i in range(16)]
+
+        def handler(conn, reader, server, idx):
+            serve_hello(reader, conn)
+            cmd = serve_precommands(reader, conn)
+            reader.strict_protocol = 4
+            pending = [cmd]
+
+            while True:
+                more = reader.try_read_command(0.5)
+                if more is None:
+                    batches.append(len(pending))
+                    for _ in pending:
+                        conn.sendall(b"OK\r\n")
+                    pending = []
+                    continue
+                if more in ("END", "ENDFETCH"):
+                    if pending:
+                        batches.append(len(pending))
+                    break
+                pending.append(more)
+
+            record = mseed.build_ms3(sid="FDSN:XX_S00_00_B_H_Z", samplerate=100.0, numsamples=50)
+            conn.sendall(mseed.frame_v4_data(1, "XX_S00", record))
+
+        args = ["--v4"]
+        for sta in stations:
+            args += ["--station", "%s:%s" % (sta, selectors)]
+        args += ["--max-packets", "1", "--timeout-seconds", "20"]
+
+        events = self.run_scenario(handler, args, timeout=30)
+
+        self.assertEqual(len(events["packets"]), 1, events)
+        self.assertEqual(sum(batches), len(stations) * (1 + 15 + 1), batches)
+        self.assertLessEqual(max(batches), 100, batches)
+        self.assertGreater(len(batches), 1, batches)
 
 
 if __name__ == "__main__":

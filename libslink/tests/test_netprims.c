@@ -312,6 +312,36 @@ test_recvdata_on_closed_connection (void)
   sl_freeslcd (slconn);
 }
 
+/* Writing to a connection the peer has reset returns an error instead of
+ * raising SIGPIPE, whose default action would end this process. */
+static void
+test_senddata_to_reset_peer (void)
+{
+  int port, listenfd, serverfd = -1;
+  struct linger lin = {1, 0};
+  SLCD *slconn;
+  int rv1, rv2;
+
+  listenfd = start_listener (&port);
+  SLT_ASSERT (listenfd >= 0, "test listener created for the reset-peer test");
+  slconn   = connect_to (listenfd, port, &serverfd);
+  SLT_NOT_NULL (slconn, "connected for the reset-peer test");
+
+  setsockopt (serverfd, SOL_SOCKET, SO_LINGER, &lin, sizeof (lin));
+  close (serverfd); /* server resets the connection */
+  sl_usleep (50000);
+
+  rv1 = sl_senddata (slconn, (void *)"PING\r\n", 6, "id", NULL, 0);
+  rv2 = sl_senddata (slconn, (void *)"PING\r\n", 6, "id", NULL, 0);
+  (void)rv1;
+
+  SLT_EQ_INT (rv2, -1, "sl_senddata() to a reset connection returns -1 without SIGPIPE");
+
+  close (listenfd);
+  sl_disconnect (slconn);
+  sl_freeslcd (slconn);
+}
+
 static void
 test_recvresp (void)
 {
@@ -357,6 +387,36 @@ test_recvresp_split_across_reads (void)
   SLT_EQ_INT (sl_recvresp (slconn, resp, sizeof (resp), "CMD\r\n", "id"), 4,
              "sl_recvresp() assembles a response delivered across multiple TCP segments");
   SLT_EQ_INT (memcmp (resp, "OK\r\n", 4), 0, "the assembled response is correct");
+
+  close (serverfd);
+  close (listenfd);
+  sl_disconnect (slconn);
+  sl_freeslcd (slconn);
+}
+
+static void
+test_recvresp_overlong_line_discarded (void)
+{
+  int port, listenfd, serverfd = -1;
+  SLCD *slconn;
+  char resp[16];
+  char line[64];
+
+  listenfd = start_listener (&port);
+  SLT_ASSERT (listenfd >= 0, "test listener created for the over-long response test");
+  slconn   = connect_to (listenfd, port, &serverfd);
+  SLT_NOT_NULL (slconn, "connected for the over-long response test");
+
+  memset (line, 'A', sizeof (line));
+  memcpy (line + sizeof (line) - 2, "\r\n", 2);
+  send (serverfd, line, sizeof (line), 0);
+  send (serverfd, "OK\r\n", 4, 0);
+
+  SLT_EQ_INT (sl_recvresp (slconn, resp, sizeof (resp), "CMD\r\n", "id"), (int)sizeof (resp) - 1,
+             "an over-long response is truncated to the buffer");
+  SLT_EQ_INT (sl_recvresp (slconn, resp, sizeof (resp), "CMD\r\n", "id"), 4,
+             "the next response follows the over-long line");
+  SLT_EQ_INT (memcmp (resp, "OK\r\n", 4), 0, "the rest of the over-long line is discarded");
 
   close (serverfd);
   close (listenfd);
@@ -535,8 +595,10 @@ main (int argc, char **argv)
   SLT_RUN (test_senddata_partial_write);
   SLT_RUN (test_recvdata);
   SLT_RUN (test_recvdata_on_closed_connection);
+  SLT_RUN (test_senddata_to_reset_peer);
   SLT_RUN (test_recvresp);
   SLT_RUN (test_recvresp_split_across_reads);
+  SLT_RUN (test_recvresp_overlong_line_discarded);
   SLT_RUN (test_poll_timeout);
   SLT_RUN (test_connect_refused);
   SLT_RUN (test_ping_disconnects_after_failed_hello_response);
