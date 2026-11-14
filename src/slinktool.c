@@ -2,8 +2,8 @@
  * A SeedLink client for data stream inspection, data collection and server
  * testing.
  *
- * Connects to a SeedLink server, configures a connection using either
- * and collects data and/or server details (INFO).  Detailed
+ * Connects to a SeedLink server, configures a connection in uni-station
+ * or multi-station mode and collects data and/or server details (INFO).  Detailed
  * information about the data received can be printed and the data can
  * be saved to files.
  *
@@ -17,6 +17,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifndef _WIN32
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 #include <libmseed.h>
 #include <libslink.h>
@@ -35,6 +40,7 @@ static int stateint        = 0;    /* packet interval to save statefile */
 static char *statefile     = NULL; /* state file for saving/restoring the seq. no. */
 static char *dumpfile      = NULL; /* output file for data dump */
 static FILE *outfile       = NULL; /* the descriptor for the dumpfile */
+static FILE *infofile      = NULL; /* destination for INFO output */
 
 static SLCD *slconn; /* connection parameters */
 
@@ -51,11 +57,13 @@ static enum {
 static void packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
                             const char *payload, uint32_t payloadlength);
 static int info_handler_mseed (MS3Record *msr, int terminate);
+static int read_input (char *buffer, size_t size, int noecho);
 static const char *auth_value_userpass (const char *server, void *data);
 static const char *auth_value_token (const char *server, void *data);
 static void auth_finish (const char *server, void *data);
 static int parameter_proc (SLCD *slconn, int argcount, char **argvec);
 static char *getoptval (int argcount, char **argvec, int argopt);
+static int normalize_time (const char *input, char *output, size_t outputsize);
 static void print_samples (MS3Record *msr, int maxlines);
 static int ping_server (SLCD *slconn);
 static void print_stderr (const char *message);
@@ -187,9 +195,10 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
   now_milli = (now_nano - ((int64_t)now_sec * 1000000000)) / 1000000;
   timep     = localtime (&now_sec);
 
-  snprintf (timestamp, sizeof (timestamp), "%04d-%02d-%02dT%02d:%02d:%02d.%03d",
-            timep->tm_year + 1900, timep->tm_mon + 1, timep->tm_mday,
-            timep->tm_hour, timep->tm_min, timep->tm_sec, (int)now_milli);
+  if (timep)
+    snprintf (timestamp, sizeof (timestamp), "%04d-%02d-%02dT%02d:%02d:%02d.%03d",
+              timep->tm_year + 1900, timep->tm_mon + 1, timep->tm_mday,
+              timep->tm_hour, timep->tm_min, timep->tm_sec, (int)now_milli);
 
   sl_log (0, 1, "%s (local), seq %" PRIu64 ", Received %u bytes of payload format %s\n",
           timestamp, packetinfo->seqnum, payloadlength,
@@ -227,7 +236,7 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
     }
 
     if (psamples)
-      print_samples (msr, (ppackets >= 1) ? 0 : 6);
+      print_samples (msr, (psamples >= 2) ? 0 : 6);
   }
   /* Handle miniSEED-encoded INFO packets */
   else if (packetinfo->payloadformat == SLPAYLOAD_MSEED2INFO ||
@@ -255,11 +264,11 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
     }
     else if (packetinfo->payloadsubformat == SLPAYLOAD_JSON_ERROR)
     {
-      print_info_json (payload, payloadlength, 0);
+      print_info_json (infofile, payload, payloadlength, 0);
     }
     else
     {
-      print_info_json (payload, payloadlength, formatlevel);
+      print_info_json (infofile, payload, payloadlength, formatlevel);
     }
   }
   /* Handle XML payloads (distinct from the legacy miniSEED-encoded XML INFO
@@ -268,7 +277,7 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
   {
     if (info_request == INFO_REQUEST_RAW)
     {
-      fprintf (stdout, "%.*s\n", (int)payloadlength, payload);
+      fprintf (infofile, "%.*s\n", (int)payloadlength, payload);
     }
     else
     {
@@ -281,8 +290,10 @@ packet_handler (SLCD *slconn, const SLpacketinfo *packetinfo,
             sl_formatstr (packetinfo->payloadformat, packetinfo->payloadsubformat));
   }
 
-  /* Write packet to dumpfile if defined */
-  if (dumpfile)
+  /* Write miniSEED data packets to dumpfile if defined */
+  if (dumpfile &&
+      (packetinfo->payloadformat == SLPAYLOAD_MSEED2 ||
+       packetinfo->payloadformat == SLPAYLOAD_MSEED3))
   {
     if (fwrite (payload, payloadlength, 1, outfile) == 0)
       sl_log (2, 0, "fwrite(): error writing data to %s\n", dumpfile);
@@ -330,8 +341,13 @@ info_handler_mseed (MS3Record *msr, int terminate)
       return -2;
     }
 
+    char *newbuffer;
+
+    /* Text up to any NUL in the record */
+    xml_bitsize = (int)strnlen (xml_bit, (size_t)xml_bitsize);
+
     /* Grow XML string buffer, include room (+1) for NULL terminator */
-    if ((xml_buffer = realloc (xml_buffer, (xml_length + xml_bitsize + 1))) == NULL)
+    if ((newbuffer = realloc (xml_buffer, (xml_length + xml_bitsize + 1))) == NULL)
     {
       sl_log (2, 0, "%s(): XML buffer memory allocation error\n", __func__);
 
@@ -341,16 +357,12 @@ info_handler_mseed (MS3Record *msr, int terminate)
 
       return -2;
     }
-
-    /* First character is terminator for initial buffer allocation */
-    if (xml_length == 0)
-    {
-      *xml_buffer = '\0';
-    }
+    xml_buffer = newbuffer;
 
     /* Append new XML to buffer */
-    strncat (xml_buffer, xml_bit, xml_bitsize);
+    memcpy (xml_buffer + xml_length, xml_bit, xml_bitsize);
     xml_length += xml_bitsize;
+    xml_buffer[xml_length] = '\0';
   }
 
   /* Check for an error condition */
@@ -372,14 +384,18 @@ info_handler_mseed (MS3Record *msr, int terminate)
   if (terminate)
   {
     /* Parse the XML for formatted output */
-    if (info_request == INFO_REQUEST_FORMAT)
+    if (xml_buffer == NULL)
     {
-      print_info_xml (xml_buffer, xml_length, formatlevel);
+      sl_log (2, 0, "INFO response contained no XML\n");
+    }
+    else if (info_request == INFO_REQUEST_FORMAT)
+    {
+      print_info_xml (infofile, xml_buffer, xml_length, formatlevel);
     }
     /* Dump the raw XML */
     else
     {
-      fprintf (stdout, "%s\n", xml_buffer);
+      fprintf (infofile, "%s\n", xml_buffer);
     }
 
     /* Clean up */
@@ -396,10 +412,56 @@ info_handler_mseed (MS3Record *msr, int terminate)
 } /* End of info_handler_mseed() */
 
 /***************************************************************************
- * auth_value:
+ * read_input:
+ *
+ * Read a line from standard input into 'buffer' of 'size' bytes, removing
+ * the trailing newline.  Terminal echo is disabled if 'noecho' is set and
+ * standard input is a terminal.
+ *
+ * Returns 0 on success and -1 on failure.
+ ***************************************************************************/
+static int
+read_input (char *buffer, size_t size, int noecho)
+{
+  char *result;
+#ifndef _WIN32
+  struct termios saved;
+  struct termios quiet;
+  int restore = 0;
+
+  if (noecho && isatty (STDIN_FILENO) && tcgetattr (STDIN_FILENO, &saved) == 0)
+  {
+    quiet = saved;
+    quiet.c_lflag &= ~(tcflag_t)ECHO;
+    restore = (tcsetattr (STDIN_FILENO, TCSAFLUSH, &quiet) == 0);
+  }
+#else
+  (void)noecho;
+#endif
+
+  result = fgets (buffer, (int)size, stdin);
+
+#ifndef _WIN32
+  if (restore)
+  {
+    tcsetattr (STDIN_FILENO, TCSAFLUSH, &saved);
+    fprintf (stderr, "\n");
+  }
+#endif
+
+  if (result == NULL)
+    return -1;
+
+  buffer[strcspn (buffer, "\r\n")] = '\0';
+
+  return 0;
+} /* End of read_input() */
+
+/***************************************************************************
+ * auth_value_userpass:
  *
  * A callback function registered at SLCD.auth_value() that should return
- * a string to be sumitted with the SeedLink AUTH command.
+ * a string to be submitted with the SeedLink AUTH command.
  *
  * In this case, the function prompts the user for a username and password
  * for interactive input.
@@ -412,23 +474,22 @@ auth_value_userpass (const char *server, void *data)
   (void)data; /* User-supplied data is not used in this case */
   char username[256] = {0};
   char password[256] = {0};
+  const char *value  = NULL;
   int printed;
 
   fprintf (stderr, "Enter username for %s: ", server);
-  if (fgets (username, sizeof (username), stdin) == NULL)
+  if (read_input (username, sizeof (username), 0))
   {
     fprintf (stderr, "%s() failed to read username\n", __func__);
-    return NULL;
+    goto cleanup;
   }
-  username[strcspn (username, "\n")] = '\0';
 
   fprintf (stderr, "Enter password: ");
-  if (fgets (password, sizeof (password), stdin) == NULL)
+  if (read_input (password, sizeof (password), 1))
   {
     fprintf (stderr, "%s() failed to read password\n", __func__);
-    return NULL;
+    goto cleanup;
   }
-  password[strcspn (password, "\n")] = '\0';
 
   /* Create AUTH value of "USERPASS <username> <password>" */
   printed = snprintf (auth_buffer, sizeof (auth_buffer),
@@ -438,11 +499,17 @@ auth_value_userpass (const char *server, void *data)
   if (printed < 0 || (size_t)printed >= sizeof (auth_buffer))
   {
     fprintf (stderr, "%s() Auth value is too large (%d bytes)\n", __func__, printed);
-
-    return NULL;
+    memset (auth_buffer, 0, sizeof (auth_buffer));
+    goto cleanup;
   }
 
-  return auth_buffer;
+  value = auth_buffer;
+
+cleanup:
+  memset (username, 0, sizeof (username));
+  memset (password, 0, sizeof (password));
+
+  return value;
 }
 
 /***************************************************************************
@@ -451,8 +518,8 @@ auth_value_userpass (const char *server, void *data)
  * A callback function registered at SLCD.auth_value() that should return
  * a string to be submitted with the SeedLink AUTH command.
  *
- * In this case, the function prompts the user for a username and password
- * for interactive input.
+ * In this case, the function prompts the user for a JWT token for
+ * interactive input.
  *
  * Returns authorization value string on success, and NULL on failure
  ***************************************************************************/
@@ -460,16 +527,16 @@ static const char *
 auth_value_token (const char *server, void *data)
 {
   (void)data; /* User-supplied data is not used in this case */
-  char token[4096] = {0};
+  char token[4096]  = {0};
+  const char *value = NULL;
   int printed;
 
-  fprintf (stderr, "Enter token for [%s]: ", server);
-  if (fgets (token, sizeof (token), stdin) == NULL)
+  fprintf (stderr, "Enter token for %s: ", server);
+  if (read_input (token, sizeof (token), 1))
   {
     fprintf (stderr, "%s() failed to read token\n", __func__);
-    return NULL;
+    goto cleanup;
   }
-  token[strcspn (token, "\n")] = '\0';
 
   /* Create AUTH value of "JWT <token>" */
   printed = snprintf (auth_buffer, sizeof (auth_buffer),
@@ -479,11 +546,16 @@ auth_value_token (const char *server, void *data)
   if (printed < 0 || (size_t)printed >= sizeof (auth_buffer))
   {
     fprintf (stderr, "%s() Auth value is too large (%d bytes)\n", __func__, printed);
-
-    return NULL;
+    memset (auth_buffer, 0, sizeof (auth_buffer));
+    goto cleanup;
   }
 
-  return auth_buffer;
+  value = auth_buffer;
+
+cleanup:
+  memset (token, 0, sizeof (token));
+
+  return value;
 }
 
 /***************************************************************************
@@ -516,8 +588,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
 {
   char starttimestr[32] = {0};
   char endtimestr[32]   = {0};
-  nstime_t nstime;
-  int error = 0;
+  int error             = 0;
   int optind;
 
   char *server_address = NULL;
@@ -527,6 +598,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
 
   char info_cmd[100] = {0};
   char *info_type    = NULL;
+  int printed;
 
   char *timewin   = NULL;
   char *timestart = NULL;
@@ -583,7 +655,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     }
     else if (strncmp (argvec[optind], "-u", 2) == 0)
     {
-      psamples = strspn (&argvec[optind][1], "u");
+      psamples += strspn (&argvec[optind][1], "u");
     }
     else if (strcmp (argvec[optind], "-d") == 0)
     {
@@ -706,6 +778,7 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
 
   /* Initialize the verbosity for the sl_log function */
   sl_loginit (verbose, NULL, NULL, NULL, NULL);
+  infofile = stdout;
 
   /* Open dumpfile if requested */
   if (dumpfile)
@@ -714,11 +787,12 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     {
       /* Re-direct all messages to standard error */
       sl_loginit (verbose, &print_stderr, NULL, &print_stderr, NULL);
+      infofile = stderr;
 
       outfile = stdout;
       setvbuf (stdout, NULL, _IONBF, 0);
     }
-    else if ((outfile = fopen (dumpfile, "a+b")) != NULL)
+    else if ((outfile = fopen (dumpfile, "ab")) != NULL)
     {
       setvbuf (outfile, NULL, _IONBF, 0);
     }
@@ -747,43 +821,36 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
   if (streamfile && sl_add_streamlist_file (slconn, streamfile, selectors) < 0)
     return -1;
 
-  if (timestart)
+  if (timestart && normalize_time (timestart, starttimestr, sizeof (starttimestr)))
   {
-    sl_isodatetime (starttimestr, timestart); /* Convert SeedLink-style (comma) time string */
-
-    /* Parse and normalize time string */
-    if ((nstime = ms_timestr2nstime (starttimestr)) == NSTERROR)
-    {
-      sl_log (2, 0, "start time not in recognized format: '%s' \n", timestart);
-      return -1;
-    }
-
-    ms_nstime2timestr_n (nstime, starttimestr, sizeof (starttimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+    sl_log (2, 0, "start time not in recognized format: '%s'\n", timestart);
+    return -1;
   }
 
-  if (timeend)
+  if (timeend && normalize_time (timeend, endtimestr, sizeof (endtimestr)))
   {
-    sl_isodatetime (endtimestr, timeend); /* Convert SeedLink-style (comma) time string */
-
-    /* Parse and normalize time string */
-    if ((nstime = ms_timestr2nstime (endtimestr)) == NSTERROR)
-    {
-      sl_log (2, 0, "end time not in recognized format: '%s' \n", timeend);
-      return -1;
-    }
-
-    ms_nstime2timestr_n (nstime, endtimestr, sizeof (endtimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+    sl_log (2, 0, "end time not in recognized format: '%s'\n", timeend);
+    return -1;
   }
 
   /* DEPRECATED, legacy support for time window argument */
   if (timewin)
   {
-    char *startptr = strdup (timewin);
+    char *startptr;
     char *endptr;
+
+    sl_log (1, 0, "option -tw is deprecated, use -ts and -te\n");
+
+    if ((startptr = strdup (timewin)) == NULL)
+    {
+      sl_log (2, 0, "cannot allocate memory\n");
+      return -1;
+    }
 
     if ((endptr = strchr (startptr, ':')) == NULL)
     {
       sl_log (2, 0, "time window (-tw) not in start:[end] format\n");
+      free (startptr);
       return -1;
     }
 
@@ -791,30 +858,18 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     *endptr = '\0';
     endptr++;
 
-    if (startptr[0] != '\0')
+    if (startptr[0] != '\0' && normalize_time (startptr, starttimestr, sizeof (starttimestr)))
     {
-      sl_isodatetime (starttimestr, startptr); /* Convert SeedLink-style (comma) time string */
-
-      if ((nstime = ms_timestr2nstime (starttimestr)) == NSTERROR)
-      {
-        sl_log (2, 0, "start time not in recognized format: '%s' \n", startptr);
-        return -1;
-      }
-
-      ms_nstime2timestr_n (nstime, starttimestr, sizeof (starttimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+      sl_log (2, 0, "start time not in recognized format: '%s'\n", startptr);
+      free (startptr);
+      return -1;
     }
 
-    if (endptr[0] != '\0')
+    if (endptr[0] != '\0' && normalize_time (endptr, endtimestr, sizeof (endtimestr)))
     {
-      sl_isodatetime (endtimestr, endptr); /* Convert SeedLink-style (comma) time string */
-
-      if ((nstime = ms_timestr2nstime (endtimestr)) == NSTERROR)
-      {
-        sl_log (2, 0, "end time not in recognized format: '%s' \n", endptr);
-        return -1;
-      }
-
-      ms_nstime2timestr_n (nstime, endtimestr, sizeof (endtimestr), ISOMONTHDAY_Z, NANO_MICRO_NONE);
+      sl_log (2, 0, "end time not in recognized format: '%s'\n", endptr);
+      free (startptr);
+      return -1;
     }
 
     free (startptr);
@@ -835,9 +890,15 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
       *tptr = ' ';
 
     if (multiselect)
-      snprintf (info_cmd, sizeof (info_cmd), "%s %s", info_type, multiselect);
+      printed = snprintf (info_cmd, sizeof (info_cmd), "%s %s", info_type, multiselect);
     else
-      snprintf (info_cmd, sizeof (info_cmd), "%s", info_type);
+      printed = snprintf (info_cmd, sizeof (info_cmd), "%s", info_type);
+
+    if (printed < 0 || (size_t)printed >= sizeof (info_cmd))
+    {
+      sl_log (2, 0, "INFO request is too long, maximum is %zu characters\n", sizeof (info_cmd) - 1);
+      return -1;
+    }
 
     if (sl_request_info (slconn, info_cmd))
     {
@@ -863,16 +924,19 @@ parameter_proc (SLCD *slconn, int argcount, char **argvec)
     if ((tptr = strchr (statefile, ':')) != NULL)
     {
       char *tail;
+      unsigned long interval;
 
       *tptr++ = '\0';
 
-      stateint = (unsigned int)strtoul (tptr, &tail, 0);
+      interval = strtoul (tptr, &tail, 0);
 
-      if (*tail || (stateint < 0 || stateint > 1e9))
+      if (*tptr == '\0' || *tail || interval > 1000000000UL)
       {
         sl_log (2, 0, "state saving interval specified incorrectly\n");
         return -1;
       }
+
+      stateint = (int)interval;
     }
 
     if (sl_recoverstate (slconn, statefile) < 0)
@@ -920,6 +984,33 @@ getoptval (int argcount, char **argvec, int argopt)
 } /* End of getoptval() */
 
 /***************************************************************************
+ * normalize_time:
+ * Convert an ISO or SeedLink-style (comma) time string to a normalized
+ * ISO time string in 'output' of 'outputsize' bytes.
+ *
+ * Returns 0 on success and -1 on unrecognized or too-long input.
+ ***************************************************************************/
+static int
+normalize_time (const char *input, char *output, size_t outputsize)
+{
+  nstime_t nstime;
+
+  /* sl_isodatetime() may append a 'Z' to the input */
+  if (strlen (input) + 2 > outputsize)
+    return -1;
+
+  sl_isodatetime (output, input);
+
+  if ((nstime = ms_timestr2nstime (output)) == NSTERROR)
+    return -1;
+
+  if (ms_nstime2timestr_n (nstime, output, outputsize, ISOMONTHDAY_Z, NANO_MICRO_NONE) == NULL)
+    return -1;
+
+  return 0;
+} /* End of normalize_time() */
+
+/***************************************************************************
  * print_samples:
  *
  * For binary sample types, 6 samples will be printed per line of output.
@@ -928,7 +1019,7 @@ getoptval (int argcount, char **argvec, int argopt)
  * Output will be limited to the first 'maxlines' lines of samples.
  * Set maxlines to zero to print all samples.
  *
- * Print paylod samples in the supplied record with a simple format.
+ * Print payload samples in the supplied record with a simple format.
  ***************************************************************************/
 static void
 print_samples (MS3Record *msr, int maxlines)
@@ -977,7 +1068,7 @@ print_samples (MS3Record *msr, int maxlines)
       sl_log (0, 0, "\n");
     }
 
-    /* Print ellipsis is not all samples were printed */
+    /* Print ellipsis if not all samples were printed */
     if (line < lines)
       sl_log (0, 0, "...\n");
   }
@@ -997,7 +1088,7 @@ print_samples (MS3Record *msr, int maxlines)
       cnt += 70;
     }
 
-    /* Print ellipsis is not all samples were printed */
+    /* Print ellipsis if not all samples were printed */
     if (line < lines)
       sl_log (0, 0, "...\n");
   }
@@ -1078,6 +1169,7 @@ print_json (const char *json, uint32_t jsonlength, int indent)
 {
   uint32_t idx;
   int instring = 0;
+  int escaped  = 0;
 
   if (!json)
     return -1;
@@ -1087,8 +1179,12 @@ print_json (const char *json, uint32_t jsonlength, int indent)
   sl_log (0, 0, "%*s", indent, "");
   for (idx = 0; idx < jsonlength; idx++)
   {
-    /* Toggle "in string" flag for double quotes */
-    if (json[idx] == '"')
+    /* Toggle "in string" flag for unescaped double quotes */
+    if (escaped)
+      escaped = 0;
+    else if (instring && json[idx] == '\\')
+      escaped = 1;
+    else if (json[idx] == '"')
       instring = (instring) ? 0 : 1;
 
     if (!instring)
@@ -1152,8 +1248,8 @@ usage (void)
            " -v              be more verbose, multiple flags can be used\n"
            " -P              ping the server, report the server ID and exit\n"
            " -p              print details of data packets, multiple flags can be used\n"
-           " -u              print unpacked samples of data packets\n"
-           " -T              Enable secure TLS connection, already enabled if port 18500\n"
+           " -u              print unpacked samples of data packets, -uu for all samples\n"
+           " -T              enable secure TLS connection, already enabled if port 18500\n"
            " -Ap             prompt for user and password authentication details (v4 only)\n"
            " -At             prompt for JWT authentication token (v4 only)\n"
            " -3 or -4        use SeedLink 3.x or 4.0 protocol explicitly\n"

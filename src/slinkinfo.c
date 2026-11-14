@@ -20,7 +20,7 @@
  * Format the specified JSON document into an identification summary.
  ***************************************************************************/
 void
-print_info_json (const char *json, size_t json_length, int verbose)
+print_info_json (FILE *out, const char *json, size_t json_length, int verbose)
 {
   yyjson_doc *doc  = yyjson_read (json, json_length, 0);
   yyjson_val *root = yyjson_doc_get_root (doc);
@@ -66,45 +66,44 @@ print_info_json (const char *json, size_t json_length, int verbose)
     const char *software     = yyjson_get_str (yyjson_obj_get (root, "software"));
     const char *organization = yyjson_get_str (yyjson_obj_get (root, "organization"));
 
-    printf ("SeedLink server: %s\n"
-            "Organization   : %s\n",
-            (software) ? software : "",
-            (organization) ? organization : "");
+    fprintf (out, "SeedLink server: %s\n"
+                  "Organization   : %s\n",
+             (software) ? software : "",
+             (organization) ? organization : "");
 
     const char *server_start = yyjson_get_str (yyjson_obj_get (root, "server_start"));
     if (server_start)
-      printf ("Start time     : %s\n",
-              (server_start) ? server_start : "");
+      fprintf (out, "Start time     : %s\n", server_start);
 
-    printf ("\n");
+    fprintf (out, "\n");
   }
 
   /* CAPABILITY */
   if (capability)
   {
-    fprintf (stdout, "Capabilities:\n");
+    fprintf (out, "Capabilities:\n");
     yyjson_arr_foreach (capability, idx, max, val)
     {
       const char *val_str = yyjson_get_str (val);
 
-      printf ("  %s\n",
-              (val_str) ? val_str : "");
+      fprintf (out, "  %s\n",
+               (val_str) ? val_str : "");
     }
   }
 
   /* FORMAT */
   if (format)
   {
-    fprintf (stdout, "Formats:\n");
+    fprintf (out, "Formats:\n");
     yyjson_obj_foreach (format, idx, max, key, val)
     {
       const char *key_str   = yyjson_get_str (key);
       yyjson_val *mimetype  = yyjson_obj_get (val, "mimetype");
       const char *mime_str  = yyjson_get_str (mimetype);
 
-      printf ("  %s: %s\n",
-              (key_str) ? key_str : "",
-              (mime_str) ? mime_str : "");
+      fprintf (out, "  %s: %s\n",
+               (key_str) ? key_str : "",
+               (mime_str) ? mime_str : "");
 
       yyjson_val *subformat = yyjson_obj_get (val, "subformat");
       if (subformat)
@@ -114,9 +113,9 @@ print_info_json (const char *json, size_t json_length, int verbose)
           const char *key_str2 = yyjson_get_str (key2);
           const char *val_str2 = yyjson_get_str (val2);
 
-          printf ("    %s: %s\n",
-                  (key_str2) ? key_str2 : "",
-                  (val_str2) ? val_str2 : "");
+          fprintf (out, "    %s: %s\n",
+                   (key_str2) ? key_str2 : "",
+                   (val_str2) ? val_str2 : "");
         }
       }
     }
@@ -125,15 +124,15 @@ print_info_json (const char *json, size_t json_length, int verbose)
   /* FILTER */
   if (filter)
   {
-    fprintf (stdout, "Filters:\n");
+    fprintf (out, "Filters:\n");
     yyjson_obj_foreach (filter, idx, max, key, val)
     {
       const char *key_str = yyjson_get_str (key);
       const char *val_str = yyjson_get_str (val);
 
-      printf ("  %s: %s\n",
-              (key_str) ? key_str : "",
-              (val_str) ? val_str : "");
+      fprintf (out, "  %s: %s\n",
+               (key_str) ? key_str : "",
+               (val_str) ? val_str : "");
     }
   }
 
@@ -153,17 +152,17 @@ print_info_json (const char *json, size_t json_length, int verbose)
       {
         if (verbose)
         {
-          printf ("%-12s %s, start seq: %" PRIu64 ", end seq: %" PRIu64 "\n",
-                  (id) ? id : "",
-                  (description) ? description : "",
-                  start_seq,
-                  end_seq);
+          fprintf (out, "%-12s %s, start seq: %" PRIu64 ", end seq: %" PRIu64 "\n",
+                   (id) ? id : "",
+                   (description) ? description : "",
+                   start_seq,
+                   end_seq);
         }
         else
         {
-          printf ("%-12s %s\n",
-                  (id) ? id : "",
-                  (description) ? description : "");
+          fprintf (out, "%-12s %s\n",
+                   (id) ? id : "",
+                   (description) ? description : "");
         }
       }
       else /* Station and Stream output */
@@ -178,21 +177,21 @@ print_info_json (const char *json, size_t json_length, int verbose)
 
           if (verbose)
           {
-            printf ("%-12s %-12s  %s - %s, format: %s, subformat: %s\n",
-                    (id) ? id : "",
-                    (streamid) ? streamid : "",
-                    (start_time) ? start_time : "",
-                    (end_time) ? end_time : "",
-                    (format) ? format : "",
-                    (subformat) ? subformat : "");
+            fprintf (out, "%-12s %-12s  %s - %s, format: %s, subformat: %s\n",
+                     (id) ? id : "",
+                     (streamid) ? streamid : "",
+                     (start_time) ? start_time : "",
+                     (end_time) ? end_time : "",
+                     (format) ? format : "",
+                     (subformat) ? subformat : "");
           }
           else
           {
-            printf ("%-12s %-12s  %s - %s\n",
-                    (id) ? id : "",
-                    (streamid) ? streamid : "",
-                    (start_time) ? start_time : "",
-                    (end_time) ? end_time : "");
+            fprintf (out, "%-12s %-12s  %s - %s\n",
+                     (id) ? id : "",
+                     (streamid) ? streamid : "",
+                     (start_time) ? start_time : "",
+                     (end_time) ? end_time : "");
           }
         }
       }
@@ -225,41 +224,41 @@ print_info_json (const char *json, size_t json_length, int verbose)
       const char *match          = yyjson_get_str (yyjson_obj_get (val, "match"));
       const char *reject         = yyjson_get_str (yyjson_obj_get (val, "reject"));
 
-      printf ("%s [%s:%s] using %s on port %s, connected at %s\n",
-              (host) ? host : "",
-              (ip_address) ? ip_address : "",
-              (client_port) ? client_port : "",
-              (type) ? type : "",
-              (server_port) ? server_port : "",
-              (connect_time) ? connect_time : "");
+      fprintf (out, "%s [%s:%s] using %s on port %s, connected at %s\n",
+               (host) ? host : "",
+               (ip_address) ? ip_address : "",
+               (client_port) ? client_port : "",
+               (type) ? type : "",
+               (server_port) ? server_port : "",
+               (connect_time) ? connect_time : "");
 
       if (client_id)
-        printf ("  Client ID: %s\n", client_id);
+        fprintf (out, "  Client ID: %s\n", client_id);
 
       if (lag_percent || lag_seconds)
-        printf ("  Lag: %.1f%%, %.1f seconds\n",
-                yyjson_get_real (lag_percent), yyjson_get_real (lag_seconds));
+        fprintf (out, "  Lag: %.1f%%, %.1f seconds\n",
+                 yyjson_get_num (lag_percent), yyjson_get_num (lag_seconds));
 
       if (tx_packets || tx_packet_rate || tx_bytes || tx_byte_rate)
-        printf ("  Transmit: %" PRIu64 " packets, %.1f packets/sec, %" PRIu64 " bytes, %.1f bytes/sec\n",
-                yyjson_get_uint (tx_packets), yyjson_get_real (tx_packet_rate),
-                yyjson_get_uint (tx_bytes), yyjson_get_real (tx_byte_rate));
+        fprintf (out, "  Transmit: %" PRIu64 " packets, %.1f packets/sec, %" PRIu64 " bytes, %.1f bytes/sec\n",
+                 yyjson_get_uint (tx_packets), yyjson_get_num (tx_packet_rate),
+                 yyjson_get_uint (tx_bytes), yyjson_get_num (tx_byte_rate));
 
       if (rx_packets || rx_packet_rate || rx_bytes || rx_byte_rate)
-        printf ("  Receive: %" PRIu64 " packets, %.1f packets/sec, %" PRIu64 " bytes, %.1f bytes/sec\n",
-                yyjson_get_uint (rx_packets), yyjson_get_real (rx_packet_rate),
-                yyjson_get_uint (rx_bytes), yyjson_get_real (rx_byte_rate));
+        fprintf (out, "  Receive: %" PRIu64 " packets, %.1f packets/sec, %" PRIu64 " bytes, %.1f bytes/sec\n",
+                 yyjson_get_uint (rx_packets), yyjson_get_num (rx_packet_rate),
+                 yyjson_get_uint (rx_bytes), yyjson_get_num (rx_byte_rate));
 
       if (stream_count)
-        printf ("  Stream count: %" PRIu64 "\n", yyjson_get_uint (stream_count));
+        fprintf (out, "  Stream count: %" PRIu64 "\n", yyjson_get_uint (stream_count));
 
       if (match)
-        printf ("  Match: %s\n", match);
+        fprintf (out, "  Match: %s\n", match);
 
       if (reject)
-        printf ("  Reject: %s\n", reject);
+        fprintf (out, "  Reject: %s\n", reject);
 
-      printf ("\n");
+      fprintf (out, "\n");
     }
   }
 
@@ -272,7 +271,7 @@ print_info_json (const char *json, size_t json_length, int verbose)
  * Format the specified XML document into an identification summary.
  ***************************************************************************/
 void
-print_info_xml (char *xml, size_t xml_length, int verbose)
+print_info_xml (FILE *out, char *xml, size_t xml_length, int verbose)
 {
   ezxml_t xmldoc;
 
@@ -298,16 +297,16 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
   {
     const char *software     = ezxml_attr (xmldoc, "software");
     const char *organization = ezxml_attr (xmldoc, "organization");
-    printf ("SeedLink server: %s\n"
-            "Organization   : %s\n",
-            (software) ? software : "",
-            (organization) ? organization : "");
+    fprintf (out, "SeedLink server: %s\n"
+                  "Organization   : %s\n",
+             (software) ? software : "",
+             (organization) ? organization : "");
 
     const char *started = ezxml_attr (xmldoc, "started");
     if (started)
-      printf ("Start time     : %s\n", started);
+      fprintf (out, "Start time     : %s\n", started);
 
-    printf ("\n");
+    fprintf (out, "\n");
   }
 
   /* STATION and STREAM and GAP or CONNECTION */
@@ -333,17 +332,17 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
       {
         if (verbose)
         {
-          printf ("%-12s %s, start seq: %s, end seq: %s\n",
-                  id,
-                  (description) ? description : "",
-                  begin_seq,
-                  end_seq);
+          fprintf (out, "%-12s %s, start seq: %s, end seq: %s\n",
+                   id,
+                   (description) ? description : "",
+                   (begin_seq) ? begin_seq : "",
+                   (end_seq) ? end_seq : "");
         }
         else
         {
-          printf ("%-12s %s\n",
-                  id,
-                  (description) ? description : "");
+          fprintf (out, "%-12s %s\n",
+                   id,
+                   (description) ? description : "");
         }
       }
       else /* Station and Stream output */
@@ -360,11 +359,11 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
                     (location) ? location : "",
                     (seedname) ? seedname : "");
 
-          printf ("%-12s %-12s  %s - %s\n",
-                  id,
-                  streamid,
-                  (begin_time) ? begin_time : "",
-                  (end_time) ? end_time : "");
+          fprintf (out, "%-12s %-12s  %s - %s\n",
+                   id,
+                   streamid,
+                   (begin_time) ? begin_time : "",
+                   (end_time) ? end_time : "");
 
           ezxml_t gap;
           for (gap = ezxml_child (stream, "gap"); gap; gap = ezxml_next (gap))
@@ -372,9 +371,9 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
             const char *begin_time = ezxml_attr (gap, "begin_time");
             const char *end_time   = ezxml_attr (gap, "end_time");
 
-            printf ("  Gap: %s - %s\n",
-                    (begin_time) ? begin_time : "",
-                    (end_time) ? end_time : "");
+            fprintf (out, "  Gap: %s - %s\n",
+                     (begin_time) ? begin_time : "",
+                     (end_time) ? end_time : "");
           }
         }
       }
@@ -389,15 +388,15 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
         const char *txcount      = ezxml_attr (connection, "txcount");
         const char *txbytes      = ezxml_attr (connection, "totBytes");
 
-        printf ("%s [:%s], connected at %s\n",
-                (host) ? host : "",
-                (client_port) ? client_port : "",
-                (connect_time) ? connect_time : "");
+        fprintf (out, "%s [:%s], connected at %s\n",
+                 (host) ? host : "",
+                 (client_port) ? client_port : "",
+                 (connect_time) ? connect_time : "");
 
         if (description)
-          printf ("  Client ID: %s\n", description);
+          fprintf (out, "  Client ID: %s\n", description);
 
-        printf ("  Station ID: %s\n", id);
+        fprintf (out, "  Station ID: %s\n", id);
 
         if (verbose)
         {
@@ -405,31 +404,31 @@ print_info_xml (char *xml, size_t xml_length, int verbose)
           for (; selector; selector = ezxml_next (selector))
           {
             const char *pattern = ezxml_attr (selector, "pattern");
-            printf ("    Selector: %s\n", (pattern) ? pattern : "");
+            fprintf (out, "    Selector: %s\n", (pattern) ? pattern : "");
           }
         }
 
         if (txcount || txbytes)
-          printf ("  Transmit: %s packets, %s bytes\n",
-                  (txcount) ? txcount : "",
-                  (txbytes) ? txbytes : "-");
+          fprintf (out, "  Transmit: %s packets, %s bytes\n",
+                   (txcount) ? txcount : "",
+                   (txbytes) ? txbytes : "-");
 
         if (verbose)
         {
           const char *current_seq = ezxml_attr (connection, "current_seq");
-          printf ("  Current sequence: %s\n", current_seq);
+          fprintf (out, "  Current sequence: %s\n", (current_seq) ? current_seq : "");
 
           const char *realtime = ezxml_attr (connection, "realtime");
-          printf ("  Realtime: %s\n", (realtime) ? realtime : "");
+          fprintf (out, "  Realtime: %s\n", (realtime) ? realtime : "");
 
           const char *window = (ezxml_child (connection, "window")) ? "yes" : "no";
-          printf ("  Time window: %s\n", window);
+          fprintf (out, "  Time window: %s\n", window);
 
           const char *end_of_data = ezxml_attr (connection, "end_of_data");
-          printf ("  End of data: %s\n", (end_of_data) ? end_of_data : "");
+          fprintf (out, "  End of data: %s\n", (end_of_data) ? end_of_data : "");
         }
 
-        printf ("\n");
+        fprintf (out, "\n");
       }
     }
   }

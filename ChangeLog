@@ -15,6 +15,22 @@
     pipelined v4 commands in groups.
   * Skip unparseable CA certificates when loading TLS CA files.
 - Exit with an error when the stream list file cannot be read
+- Fix sample limits, unsafe input handling and INFO output, and correct the manual
+  * Limit -u output to 6 lines of samples, print all samples with -uu or -u -u
+  * Reject over-long -ts, -te and -tw time strings instead of overflowing a buffer
+  * Reject INFO requests too long to send instead of truncating them
+  * Print INFO responses to stderr with -o - so stdout holds only data records
+  * Write only miniSEED data records to the -o dumpfile, not INFO responses
+  * Disable terminal echo when prompting for a password or token
+  * Handle escaped quotes when printing JSON INFO with -i
+  * Print integer-valued JSON lag and rate fields correctly
+  * Guard against missing XML INFO attributes and empty XML INFO responses
+  * Assemble XML INFO responses in linear time
+  * Reject an empty -x state saving interval and warn that -tw is deprecated
+  * Relink when bundled libraries change and preserve user LDFLAGS
+  * Describe SeedLink v4 selectors and the INFO types each protocol supports
+  * Document -ts/-te time formats, -x state file details and output streams
+  * Fix the selector type list, wildcard semantics and -pp example
 
 2026.224: version 5.0.0
 - Major new version based on libslink v4 with support for

@@ -7,7 +7,7 @@
 # Required compiler parameters
 CFLAGS += -I../libslink -I../libmseed -I../ezxml
 
-LDFLAGS = -L../libslink -L../libmseed -L../ezxml
+LDFLAGS += -L../libslink -L../libmseed -L../ezxml
 
 LDLIBS  = -lslink -lmseed -lezxml
 
@@ -22,10 +22,11 @@ BIN  = ../slinktool
 
 SRCS = slinkinfo.c slinktool.c
 OBJS = $(SRCS:.c=.o)
+LIBS = ../libslink/libslink.a ../libmseed/libmseed.a ../ezxml/libezxml.a
 
 all: $(BIN)
 
-$(BIN): $(OBJS)
+$(BIN): $(OBJS) $(LIBS)
 	$(CC) -o $(BIN) $(OBJS) $(LDFLAGS) $(LDLIBS)
 
 # Standard object building

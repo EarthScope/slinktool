@@ -1,4 +1,4 @@
-.TH SLINKTOOL 1 2026/08/12
+.TH SLINKTOOL 1 2026/11/14
 .SH NAME
 slinktool \- SeedLink client for data stream inspection, data collection
 and server testing
@@ -42,8 +42,9 @@ details of the payload received.
 
 .IP "-u         "
 Print data samples in data packets, implies at least one -p flag.
-By default only 6 lines of samples are printed (36 samples), adding
-more -u flags (e.g. -uu) will print all samples.
+By default only 6 lines of samples are printed (36 numeric samples
+or 420 characters of text), adding more -u flags (e.g. -uu) will
+print all samples.
 
 .IP "-T         "
 Enable a secure TLS connection.  TLS is also enabled automatically
@@ -92,7 +93,11 @@ this way the client can be stopped and started without data loss,
 assuming the data are still available on the server.  If
 \fIinterval\fR is specified the state will be saved every
 \fIinterval\fR packets that are received.  Otherwise the state will be
-saved only on normal program termination.
+saved only on normal program termination.  Stations matched by a
+wildcarded stream selection, or received in all-station mode, are
+tracked individually.  The state is written to
+\fIstatefile\fR.tmp and then renamed, so the directory containing
+the state file must be writable.
 
 .IP "-d"
 Configure the connection in "dial-up" mode.  The remote server will
@@ -106,11 +111,12 @@ with the remote server is made faster by minimizing acknowledgement
 checks.
 
 .IP "-o \fIdumpfile\fR"
-If specified, all packets (miniSEED records) received will be
-appended to this file.  The file is created if it does not exist.  A
-special mode for this option is to send all received packets to
-standard output when the dumpfile is specified as '-'.  In this case
-all output besides these records will be redirected to standard error.
+If specified, all miniSEED data records (miniSEED 2 or 3) received
+will be appended to this file.  INFO responses are not written to the
+file.  The file is created if it does not exist.  A special mode for
+this option is to send all received data records to standard output
+when the dumpfile is specified as '-'.  In this case all output
+besides these records will be redirected to standard error.
 
 .IP "-s \fIselectors\fR"
 This defines default selectors.  If no multi-station data streams are
@@ -132,17 +138,29 @@ examples and notes below.  If no selectors are provided for a given
 stream, the default selectors, if defined, will be used.
 
 .IP "-ts \fIstarttime\fR"
-Specify a start time to request from the server.
+Specify a start time to request from the server.  Times are in UTC
+and may be given in ISO 8601 form, \fIYYYY-MM-DDThh:mm:ss[.ffffff]\fR,
+or SeedLink comma-separated form, \fIYYYY,MM,DD,hh,mm,ss\fR.  Trailing
+fields may be omitted.
 Warning: time windowing might be disabled on the remote server.
 
 .IP "-te \fIendtime\fR"
-Specify an end time to request from the server.
+Specify an end time to request from the server, in the same formats
+as \fB-ts\fR.
 Warning: time windowing might be disabled on the remote server.
 
 .IP "-i \fItype\fR  (requires SeedLink >= 3)"
-Send an information request (INFO) and print the raw response.
-Standard info types include: ID, CAPABILITIES, STATIONS, STREAMS,
-CONNECTIONS, FORMATS, GAPS, ALL.
+Send an information request (INFO) and print the response without
+interpretation.  SeedLink v3 XML responses are printed as received,
+SeedLink v4 JSON responses are printed with indentation added.
+Standard info types are: ID, CAPABILITIES, STATIONS, STREAMS and
+CONNECTIONS.  GAPS and ALL are only available with SeedLink v3, and
+FORMATS only with SeedLink v4.  When combined with \fB-S\fR, the
+stream list is passed as a selection pattern with the request; the
+server might ignore it.
+
+Warning: informational (INFO) messages might be disabled on the server,
+and some types (e.g. CONNECTIONS) are often restricted.
 
 .IP "-F \fItype\fR  (requires SeedLink >= 3)"
 Send an information request (INFO), parse the response, and print a
@@ -152,17 +170,20 @@ formatted form.  Uses the same info types as \fB-i\fR.
 Increase the level of detail included in formatted INFO output.
 This flag can be used multiple times.
 
-Formatted INFO shortcuts:
+.IP "-I         "
+Equivalent to \fB-F ID\fR.
 
-.nf
--I   equivalent to -F ID
--L   equivalent to -F STATIONS
--Q   equivalent to -F STREAMS
--G   equivalent to -F GAPS
--C   equivalent to -F CONNECTIONS
-.fi
+.IP "-L         "
+Equivalent to \fB-F STATIONS\fR.
 
-Warning: informational (INFO) messages might be disabled on the server.
+.IP "-Q         "
+Equivalent to \fB-F STREAMS\fR.
+
+.IP "-G         "
+Equivalent to \fB-F GAPS\fR (SeedLink v3 only).
+
+.IP "-C         "
+Equivalent to \fB-F CONNECTIONS\fR.
 
 .IP "[host][:][port]"
 A required argument, specifies the address of the SeedLink server in
@@ -188,11 +209,11 @@ The '-s' argument could be used to indicate selectors to limit the
 type of packets sent by the SeedLink server (without selectors all
 packet types are sent).  The following would limit this connection
 to BHZ channel waveform data with a location code of 10 (see an
-explanation of SeedLink selectors below).  Additionally another
-verbose flag is given, causing slinktool to report detailed
-header information from data records.
+explanation of SeedLink selectors below).  Additionally two '-p'
+flags are given, causing slinktool to print detailed header
+information from each data record.
 
-.B > slinktool -vv -s 10BHZ.D -o data.mseed slink.host.com:18000
+.B > slinktool -v -pp -s 10BHZ.D -o data.mseed slink.host.com:18000
 
 .IP Multi-station mode example:
 The following example would connect to a SeedLink server on
@@ -218,7 +239,7 @@ Of course, a variety of different data selections can be made:
 .IP Wildcarding network and station codes
 Some SeedLink implementations support wildcarding of the network and
 station codes, when this is the case the only two wildcard characters
-recognized are '*' for one or more characters and '?' for any single
+recognized are '*' for zero or more characters and '?' for any single
 character.
 
 As an example, all US network data can be requested using the
@@ -232,22 +253,36 @@ SeedLink selectors are used to request specific types of data within a
 given data stream, in effect limiting the default action of sending
 all data types.  A data packet is sent to the client if it matches any
 positive selector (without leading "!") and doesn't match any negative
-selectors (with a leading "!").  The general format of selectors is
-LLSSS.T, where LL is location, SSS is channel and T is type (one of
-[DECOTL] for Data, Event, Calibration, Blockette, Timing, and Log
-records).  "LL", ".T", and "LLSSS." can be omitted, implying anything
-in that field.  It is also possible to use "?" in place of L and S as
-a single character wildcard.  Multiple selectors are separated by
+selectors (with a leading "!").  Multiple selectors are separated by
 space(s).
 
+The SeedLink v3 format of selectors is LLSSS.T, where LL is location,
+SSS is channel and T is type (one of [DECOTL] for Data, Event,
+Calibration, Opaque, Timing, and Log records).  "LL", ".T", and
+"LLSSS." can be omitted, implying anything in that field.  It is also
+possible to use "?" in place of L and S as a single character
+wildcard.
+
+The SeedLink v4 format of selectors is LL_B_S_SS.T, where LL is
+location, B is band, S is source and SS is subsource, the
+components of an FDSN source identifier channel.  The location may
+be "*" to match any location, and "?" and "*" may be used as
+wildcards.  When connected with SeedLink v4, selectors in v3 format
+are converted automatically, e.g. 00BHZ becomes 00_B_H_Z, and BHZ
+becomes *_B_H_Z.
+
 .nf
-Some examples:
+Some v3 examples:
 BH?          - BHZ, BHN, BHE (all record types)
 00BH?.D      - BHZ, BHN, BHE with location code '00' (data records)
 BH? !E       - BHZ, BHN, BHE (excluding detection records)
 BH? E        - BHZ, BHN, BHE & detection records of all channels
 !LCQ !LEP    - exclude LCQ and LEP channels
 !L !T        - exclude log and timing records
+
+Some v4 examples:
+*_B_H_?      - BHZ, BHN, BHE, any location
+00_B_H_Z.D   - BHZ with location code '00' (data records)
 .fi
 
 .SH "Stream list file"
@@ -295,10 +330,12 @@ TLS debugging output level (integer), increase for more detail.
 If set, allow unverified TLS certificates (TLS 1.2 connections only).
 
 .SH "NOTES"
-All diagnostic output from slinktool is printed to standard error
-(stderr), exceptions are when printing miniSEED packet details (the
--p flag), when printing unpacked samples (the -u flag) and when
-printing the raw or formatted responses to INFO requests.
+Diagnostic and error messages from slinktool are printed to standard
+error (stderr).  Packet details (the -p flag), unpacked samples (the
+-u flag), the per-packet line reported with -v, and responses to INFO
+requests are printed to standard output (stdout).  When the dumpfile
+is '-' (\fB-o -\fR) all of this output is printed to standard error
+so that standard output contains only data records.
 
 .SH AUTHOR
 .nf

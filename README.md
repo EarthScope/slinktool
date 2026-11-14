@@ -14,9 +14,9 @@ For further installation simply copy the resulting binary and man page
 ## Archiving miniSEED alternative
 
 The previous record archiving capability of slinktool, invoked with the `-A`,
- `-BUD`, and `-SDS` options, has been removed.
+`-BUD`, and `-SDS` options, has been removed.
 
-This functionality and more is supported in the dedicated `slachive`
+This functionality and more is supported in the dedicated `slarchive`
 program:
 
 https://github.com/EarthScope/slarchive
