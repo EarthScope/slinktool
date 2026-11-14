@@ -1,4 +1,4 @@
-2026.318:
+2026.318: version 5.1.0
 - Update libslink to v4.4.0 with these major changes:
   * Stations received via wildcarded stream list entries (e.g. `-S 'US_*'`)
     and in all-station mode are tracked individually, saved to the state

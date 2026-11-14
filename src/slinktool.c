@@ -29,7 +29,7 @@
 #include "slinkinfo.h"
 
 #define PACKAGE "slinktool"
-#define VERSION "5.0.0"
+#define VERSION "5.1.0"
 
 static uint8_t verbose     = 0;    /* flag to control general verbosity */
 static uint8_t formatlevel = 0;    /* flag to control format verbosity */
